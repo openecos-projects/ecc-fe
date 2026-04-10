@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Bazel
+bazel-*
+
+# Local generated workspaces
+workspace_projects/
+
+# Frontend build artifacts
+gui/node_modules/
+gui/dist/
+gui/.vite/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

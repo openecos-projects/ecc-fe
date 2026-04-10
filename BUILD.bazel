@@ -1,0 +1,27 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+py_library(
+    name = "ecos_server_lib",
+    srcs = glob(["server/**/*.py"]),
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "server_bin",
+    srcs = ["server/ecos_server/main.py"],
+    main = "server/ecos_server/main.py",
+    deps = [":ecos_server_lib"],
+)
+
+alias(
+    name = "server",
+    actual = ":server_bin",
+)
+
+py_test(
+    name = "workspace_flow_test",
+    srcs = ["tests/test_workspace_flow.py"],
+    main = "tests/test_workspace_flow.py",
+    deps = [":ecos_server_lib"],
+)

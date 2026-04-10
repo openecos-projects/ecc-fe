@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ecc-fe demo</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="panel">
+        <h1>ECC Project Wizard</h1>
+        <label for="project-root">项目根目录</label>
+        <input id="project-root" value="" placeholder="留空使用后端默认目录" />
+
+        <label for="project-name">项目名</label>
+        <input id="project-name" value="demo_project" />
+
+        <label for="top-module">Top Module</label>
+        <input id="top-module" value="top" />
+
+        <label for="clock">Clock</label>
+        <input id="clock" value="clk" />
+
+        <div class="actions">
+          <button id="btn-create">新建 Workspace</button>
+          <button id="btn-run" class="ghost">运行 rtl2gds</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>执行日志</h2>
+        <pre id="output">等待操作...</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/views/ECCView.js"></script>
+  </body>
+</html>
