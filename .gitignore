@@ -223,3 +223,6 @@ gui/.vite/
 *.swo
 .idea/
 .vscode/
+
+# Auto-generated docs
+docs/backend-architecture-mermaid.md
