@@ -41,6 +41,7 @@ class EngineFlow:
 
     def load(self) -> None:
         self.flow = workspace_data.load_flow(Path(self.workspace["flow_path"]))
+        self._rebuild_workspace_steps()
 
     def save(self) -> None:
         workspace_data.save_flow(Path(self.workspace["flow_path"]), self.flow)
@@ -82,13 +83,30 @@ class EngineFlow:
         return all(x.get("state") == StateEnum.Success.value for x in self.flow.get("steps", []))
 
     def create_step_workspaces(self) -> list[dict[str, str]]:
+        """Build step workspace dirs on disk and return a summary list."""
+        self._rebuild_workspace_steps()
+        for ws_step in self.workspace_steps:
+            builder.build_step_space(ws_step)
+            builder.build_step_config(ws_step)
+        return [
+            {
+                "step": ws_step["name"],
+                "tool": ws_step["tool"],
+                "directory": ws_step["directory"],
+            }
+            for ws_step in self.workspace_steps
+        ]
+
+    def _rebuild_workspace_steps(self) -> None:
+        """Reconstruct workspace_steps from flow + workspace (no disk writes).
+        Called on load() so workspace_steps survives a server restart.
+        """
         self.workspace_steps = []
-        created: list[dict[str, str]] = []
         pre_step: dict[str, Any] | None = None
         for flow_step in self.flow.get("steps", []):
             if pre_step is None:
-                input_def = self.workspace["origin_def"]
-                input_verilog = self.workspace["origin_verilog"]
+                input_def = self.workspace.get("origin_def", "")
+                input_verilog = self.workspace.get("origin_verilog", "")
             else:
                 input_def = pre_step["output"]["def"]
                 input_verilog = pre_step["output"]["verilog"]
@@ -100,18 +118,8 @@ class EngineFlow:
                 input_def=input_def,
                 input_verilog=input_verilog,
             )
-            builder.build_step_space(ws_step)
-            builder.build_step_config(ws_step)
             self.workspace_steps.append(ws_step)
             pre_step = ws_step
-            created.append(
-                {
-                    "step": ws_step["name"],
-                    "tool": ws_step["tool"],
-                    "directory": ws_step["directory"],
-                },
-            )
-        return created
 
     def get_workspace_step(self, name: str) -> dict[str, Any] | None:
         for step in self.workspace_steps:
