@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 from server.ecos_server.ecc.config import DEFAULT_PROJECTS_ROOT
 from server.ecos_server.ecc.routers import workspace as workspace_router
@@ -69,6 +73,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         except ValueError as exc:
             self._write_json({"response": "failed", "message": [str(exc)]}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.exception("unhandled error in API handler")
             self._write_json(
                 {"response": "error", "message": [f"Internal error: {exc}"]},
                 status=HTTPStatus.INTERNAL_SERVER_ERROR,

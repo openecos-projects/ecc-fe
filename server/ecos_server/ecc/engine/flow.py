@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from ..data import workspace as workspace_data
 from ..flow_spec import DEFAULT_FLOW_STEPS
@@ -171,6 +174,7 @@ class EngineFlow:
             return StateEnum.Incomplete
         except Exception:
             runtime = _format_runtime(time.time() - start)
+            logger.exception("step %r failed unexpectedly", step_name)
             self.set_state(
                 name=ws_step["name"],
                 tool=ws_step["tool"],
