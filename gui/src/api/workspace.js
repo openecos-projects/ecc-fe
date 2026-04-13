@@ -50,3 +50,9 @@ export function getHomePageApi() {
     data: {},
   });
 }
+
+export async function getExamplesApi() {
+  const res = await fetch("/api/examples");
+  const body = await res.json();
+  return body.data || [];
+}

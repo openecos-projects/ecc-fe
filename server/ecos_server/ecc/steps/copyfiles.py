@@ -68,12 +68,19 @@ class CopyFilesStep(BaseStep):
     # ------------------------------------------------------------------
 
     def _parse_filelist(self, filelist_path: Path) -> list[str]:
-        """Return every .v / .sv path found in the filelist, skipping comments."""
+        """Return resolved absolute paths for every .v / .sv entry in the filelist.
+        Relative paths are resolved relative to the filelist's parent directory.
+        Comment lines (# or //) and blank lines are skipped.
+        """
+        base_dir = filelist_path.parent
         paths: list[str] = []
         for raw_line in filelist_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or line.startswith("//"):
                 continue
             if line.endswith(".v") or line.endswith(".sv"):
-                paths.append(line)
+                p = Path(line)
+                if not p.is_absolute():
+                    p = base_dir / p
+                paths.append(str(p.resolve()))
         return paths

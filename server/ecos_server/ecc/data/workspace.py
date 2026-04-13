@@ -67,7 +67,15 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
 
     origin_def = _pick_first(origin_dir, [".def", ".def.gz"]) or str(origin_dir / f"{design}.def")
     origin_verilog = _pick_first(origin_dir, [".v", ".v.gz"]) or str(origin_dir / f"{design}.v")
-    filelist = str(origin_dir / "filelist") if (origin_dir / "filelist").exists() else ""
+
+    # Prefer the original filelist path stored in parameters (preserves relative .v paths),
+    # fall back to any filelist file found in origin/.
+    filelist = str(parameters.get("input_filelist", "")).strip()
+    if not filelist or not Path(filelist).exists():
+        filelist = _pick_first(origin_dir, [".f"]) or ""
+        if not filelist:
+            plain = origin_dir / "filelist"
+            filelist = str(plain) if plain.exists() else ""
 
     return {
         "directory": str(project_dir),
@@ -133,6 +141,8 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params.setdefault("Max fanout", 20)
     if spec.pdk_root:
         params["PDK Root"] = spec.pdk_root
+    if spec.filelist:
+        params["input_filelist"] = spec.filelist
     return params
 
 

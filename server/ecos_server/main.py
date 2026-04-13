@@ -16,11 +16,18 @@ from server.ecos_server.ecc.routers import workspace as workspace_router
 
 ROOT = Path(__file__).resolve().parents[2]
 GUI_DIR = ROOT / "gui"
+EXAMPLES_DIR = ROOT / "examples"
 
 
 class AppHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
+        if parsed.path == "/api/examples":
+            filelists = sorted(EXAMPLES_DIR.glob("*.f")) if EXAMPLES_DIR.exists() else []
+            return self._write_json({
+                "ok": True,
+                "data": [{"name": p.name, "path": str(p)} for p in filelists],
+            })
         if parsed.path == "/api/workspace/health":
             return self._write_json({"status": "ok"})
         if parsed.path == "/api/config":
