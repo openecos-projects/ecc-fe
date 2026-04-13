@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DEFAULT_FLOW_STEPS: Final[list[tuple[str, str]]] = [
-    ("step1", "ecc"),
+    ("copyfiles", "ecc"),
     ("step2", "ecc"),
     ("step3", "ecc"),
     ("step4", "ecc"),

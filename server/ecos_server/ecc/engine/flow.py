@@ -181,25 +181,32 @@ class EngineFlow:
             return StateEnum.Imcomplete
 
     def _run_single_step(self, step: dict[str, Any]) -> None:
+        from ..steps import STEP_REGISTRY
+
+        handler = STEP_REGISTRY.get(step["name"])
+        if handler is not None:
+            handler.run(step, self.workspace)
+        else:
+            self._run_stub_step(step)
+
+    def _run_stub_step(self, step: dict[str, Any]) -> None:
+        """Fallback stub for steps that have no registered handler yet."""
         step_name = step["name"]
         step_token = step_name.replace(" ", "_")
 
-        script = Path(step["script"]["main"])
-        script.write_text(
+        Path(step["script"]["main"]).write_text(
             "# auto-generated\n"
             f'puts "running {step_name} ({step["tool"]})"\n',
             encoding="utf-8",
         )
 
-        log_file = Path(step["log"]["file"])
-        log_file.write_text(
+        Path(step["log"]["file"]).write_text(
             f"[BEGIN] step={step_name} tool={step['tool']}\n"
             f"[END] step={step_name} tool={step['tool']}\n",
             encoding="utf-8",
         )
 
-        output_json = Path(step["output"]["json"])
-        output_json.write_text(
+        Path(step["output"]["json"]).write_text(
             json.dumps(
                 {"step": step_name, "tool": step["tool"], "state": "Success"},
                 indent=2,
