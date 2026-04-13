@@ -21,8 +21,7 @@ export function useWorkspace() {
   async function newProject(config) {
     const root = String(config.projectRoot || "").replace(/\/+$/, "");
     const name = String(config.projectName || "New_Chip_Design");
-    const directory =
-      config.directory || (root ? `${root}/${name}` : "");
+    const directory = config.directory || (root ? `${root}/${name}` : "");
     return createWorkspaceApi({
       directory,
       pdk: config.pdk || "ics55",
@@ -39,12 +38,12 @@ export function useWorkspace() {
     return loadWorkspaceApi(directory);
   }
 
-  async function runFlow(config = {}) {
-    return rtl2gdsApi({ rerun: Boolean(config.rerun) });
+  async function runFlow(workspaceId, config = {}) {
+    return rtl2gdsApi(workspaceId, { rerun: Boolean(config.rerun) });
   }
 
-  async function runStep(config) {
-    return runStepApi({
+  async function runStep(workspaceId, config) {
+    return runStepApi(workspaceId, {
       step: config.step,
       rerun: Boolean(config.rerun),
     });

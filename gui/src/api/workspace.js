@@ -26,28 +26,28 @@ export function createWorkspaceApi(payload) {
 export function loadWorkspaceApi(directory) {
   return postJson("/api/workspace/load_workspace", {
     cmd: "load_workspace",
-    data: { directory },
+    data: { directory, workspace_id: directory },
   });
 }
 
-export function rtl2gdsApi(payload = {}) {
+export function rtl2gdsApi(workspaceId, payload = {}) {
   return postJson("/api/workspace/rtl2gds", {
     cmd: "rtl2gds",
-    data: payload,
+    data: { ...payload, workspace_id: workspaceId },
   });
 }
 
-export function runStepApi(payload) {
+export function runStepApi(workspaceId, payload) {
   return postJson("/api/workspace/run_step", {
     cmd: "run_step",
-    data: payload,
+    data: { ...payload, workspace_id: workspaceId },
   });
 }
 
-export function getHomePageApi() {
+export function getHomePageApi(workspaceId) {
   return postJson("/api/workspace/get_home_page", {
     cmd: "home_page",
-    data: {},
+    data: { workspace_id: workspaceId },
   });
 }
 

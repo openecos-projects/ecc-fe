@@ -132,7 +132,7 @@ async function handleRunFlow() {
   if (!activeProjectDir) throw new Error("请先新建项目。");
   setLoading(runButton, true);
   try {
-    const result = await runFlow({ rerun: false });
+    const result = await runFlow(activeProjectDir, { rerun: false });
     // update all step states from reports
     (result.data.reports || []).forEach(({ step, state }) => setStepState(step, state));
     print({
@@ -149,7 +149,7 @@ async function handleRunFlow() {
 async function handleRunStep(stepName) {
   if (!activeProjectDir) throw new Error("请先新建项目。");
   setStepState(stepName, "Ongoing");
-  const result = await runStep({ step: stepName, rerun: true });
+  const result = await runStep(activeProjectDir, { step: stepName, rerun: true });
   const state = result.data.state || (result.response === "success" ? "Success" : "Incomplete");
   setStepState(stepName, state);
   print({
