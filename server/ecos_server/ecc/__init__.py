@@ -12,7 +12,7 @@ from .schemas import (
     ECCRequest,
     build_response,
 )
-from .services import EccService, ecc_service
+from .services import EccService
 
 __all__ = [
     "create_workspace",
@@ -26,5 +26,4 @@ __all__ = [
     "ECCRequest",
     "build_response",
     "EccService",
-    "ecc_service",
 ]

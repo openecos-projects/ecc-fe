@@ -132,6 +132,3 @@ class EccService:
             data={"path": self.workspace["home_path"]},
             message=[f"build home page success : {self.workspace['home_path']}"],
         )
-
-
-ecc_service = EccService
