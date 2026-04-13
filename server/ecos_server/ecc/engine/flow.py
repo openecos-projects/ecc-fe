@@ -164,21 +164,21 @@ class EngineFlow:
             self.set_state(
                 name=ws_step["name"],
                 tool=ws_step["tool"],
-                state=StateEnum.Imcomplete,
+                state=StateEnum.Incomplete,
                 runtime=runtime,
                 peak_memory=0.0,
             )
-            return StateEnum.Imcomplete
+            return StateEnum.Incomplete
         except Exception:
             runtime = _format_runtime(time.time() - start)
             self.set_state(
                 name=ws_step["name"],
                 tool=ws_step["tool"],
-                state=StateEnum.Imcomplete,
+                state=StateEnum.Incomplete,
                 runtime=runtime,
                 peak_memory=0.0,
             )
-            return StateEnum.Imcomplete
+            return StateEnum.Incomplete
 
     def _run_single_step(self, step: dict[str, Any]) -> None:
         from ..steps import STEP_REGISTRY

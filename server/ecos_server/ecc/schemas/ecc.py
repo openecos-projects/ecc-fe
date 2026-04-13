@@ -33,7 +33,7 @@ class StateEnum(str, Enum):
     Success = "Success"
     Ongoing = "Ongoing"
     Pending = "Pending"
-    Imcomplete = "Incomplete"
+    Incomplete = "Incomplete"
 
 
 @dataclass(slots=True)
