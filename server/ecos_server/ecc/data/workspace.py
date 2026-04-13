@@ -171,12 +171,15 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
     )
     copied["origin_def"] = str(origin_def)
 
-    origin_verilog = _copy_or_touch(
-        src=spec.origin_verilog,
-        dst=origin_dir / Path(spec.origin_verilog).name if spec.origin_verilog else origin_dir / f"{design}.v",
-        placeholder=f"module {parameters['Top module']}(); endmodule\n",
-    )
-    copied["origin_verilog"] = str(origin_verilog)
+    # Skip generating a placeholder verilog when a filelist is provided —
+    # the real .v files will be copied into origin/ by the copyfiles step.
+    if spec.origin_verilog or not spec.filelist:
+        origin_verilog = _copy_or_touch(
+            src=spec.origin_verilog,
+            dst=origin_dir / Path(spec.origin_verilog).name if spec.origin_verilog else origin_dir / f"{design}.v",
+            placeholder=f"module {parameters['Top module']}(); endmodule\n",
+        )
+        copied["origin_verilog"] = str(origin_verilog)
 
     copied_rtl = _copy_rtl_list(origin_dir=origin_dir, rtl_list=spec.rtl_list)
     if copied_rtl:
