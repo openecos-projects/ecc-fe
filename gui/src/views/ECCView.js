@@ -99,6 +99,9 @@ function setStepState(stepName, state) {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 async function handleWizardCreate() {
+  if (!filelistInput.value.trim()) {
+    throw new Error("请先指定 filelist.f 路径。");
+  }
   setLoading(createButton, true);
   try {
     const config = {
