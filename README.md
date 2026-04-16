@@ -26,8 +26,9 @@ ecc-fe/
 │   ├── thirdparty/              # Placeholder for external tool submodules
 │   ├── tools/
 │   │   └── fe/                  # Step workspace builder & sub-flow
-│   │       ├── builder.py       # build_step(), build_step_space(), build_step_config()
+│   ├── builder.py       # build_step(), build_step_space(), build_step_config()
 │   │       ├── subflow.py       # EccSubFlowEnum, build_subflow(), init_subflow()
+│   │       ├── service.py       # get_step_info() — query step resources by ID
 │   │       ├── base.py          # BaseStep interface
 │   │       └── copyfiles.py     # CopyFilesStep (example step implementation)
 │   └── utility/                 # Shared utilities (json, log, file, filelist)
@@ -128,6 +129,21 @@ python3 -m pytest test/ -x
 bazel test //:all_tests
 bazel test //:test_engine_flow
 ```
+
+## Key Files
+
+| Feature | File |
+|---------|------|
+| CLI entry point | `fecompiler/cli/main.py` |
+| Global config | `fecompiler/config.py` |
+| Flow step definitions | `fecompiler/allflow/builder.py` |
+| Flow orchestration | `fecompiler/engine/flow.py` |
+| Workspace create / load | `fecompiler/data/workspace.py` |
+| Step path structure | `fecompiler/tools/fe/builder.py` |
+| Step resource query | `fecompiler/tools/fe/service.py` |
+| Sub-step definitions | `fecompiler/tools/fe/subflow.py` |
+| Step state enums | `fecompiler/data/step.py` |
+| Step registry | `fecompiler/tools/fe/__init__.py` |
 
 ## Documentation
 

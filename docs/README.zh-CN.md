@@ -154,5 +154,7 @@ bazel test //:test_engine_flow
 | 流程编排 | `fecompiler/engine/flow.py` |
 | workspace 创建/读取 | `fecompiler/data/workspace.py` |
 | 步骤路径结构 | `fecompiler/tools/fe/builder.py` |
+| 步骤资源查询 | `fecompiler/tools/fe/service.py` |
 | 子步骤定义 | `fecompiler/tools/fe/subflow.py` |
 | 步骤状态枚举 | `fecompiler/data/step.py` |
+| 步骤注册表 | `fecompiler/tools/fe/__init__.py` |
