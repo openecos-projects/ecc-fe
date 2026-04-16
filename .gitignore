@@ -226,3 +226,4 @@ gui/.vite/
 
 # Auto-generated docs
 docs/backend-architecture-mermaid.md
+.claude/
