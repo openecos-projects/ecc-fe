@@ -22,6 +22,7 @@ class EngineFlow:
         self.workspace = workspace
         self.workspace_steps: list[WorkspaceStep] = []
         self.flow = workspace_data.load_flow(Path(self.workspace["flow_path"]))
+        self._flow_logger = _build_flow_logger(workspace["directory"])
 
     def has_init(self) -> bool:
         return len(self.flow.get("steps", [])) > 0
@@ -159,38 +160,42 @@ class EngineFlow:
             return StateEnum.Success
 
         start = time.time()
-        self.set_state(name=ws_step["name"], tool=ws_step["tool"], state=StateEnum.Ongoing)
+        self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
+        self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
         try:
             self._run_single_step(ws_step)
             success = self._check_step_result(ws_step)
             runtime = _format_runtime(time.time() - start)
             if success:
                 self.set_state(
-                    name=ws_step["name"],
-                    tool=ws_step["tool"],
+                    name=ws_step.name,
+                    tool=ws_step.tool,
                     state=StateEnum.Success,
                     runtime=runtime,
                     peak_memory=0.0,
                 )
+                self._flow_logger.info("[SUCCESS] %-20s  elapsed=%s", step_name, runtime)
                 return StateEnum.Success
             self.set_state(
-                name=ws_step["name"],
-                tool=ws_step["tool"],
+                name=ws_step.name,
+                tool=ws_step.tool,
                 state=StateEnum.Incomplete,
                 runtime=runtime,
                 peak_memory=0.0,
             )
+            self._flow_logger.warning("[FAILED]  %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
         except Exception:
             runtime = _format_runtime(time.time() - start)
             logger.exception("step %r failed unexpectedly", step_name)
             self.set_state(
-                name=ws_step["name"],
-                tool=ws_step["tool"],
+                name=ws_step.name,
+                tool=ws_step.tool,
                 state=StateEnum.Incomplete,
                 runtime=runtime,
                 peak_memory=0.0,
             )
+            self._flow_logger.error("[ERROR]   %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
 
     def _run_single_step(self, step: WorkspaceStep) -> None:
@@ -273,3 +278,28 @@ def _format_runtime(seconds: float) -> str:
     mm = (sec % 3600) // 60
     ss = sec % 60
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+
+def _build_flow_logger(workspace_dir: str) -> logging.Logger:
+    """Return a logger that writes to <workspace>/log/flow.log."""
+    import logging.handlers
+
+    log_path = Path(workspace_dir) / "log" / "flow.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log = logging.getLogger(f"fecompiler.flow.{Path(workspace_dir).name}")
+    log.setLevel(logging.DEBUG)
+    log.propagate = False
+
+    # avoid adding duplicate handlers if EngineFlow is recreated
+    if not log.handlers:
+        handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        log.addHandler(handler)
+
+    return log
