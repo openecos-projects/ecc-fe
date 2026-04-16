@@ -1,27 +1,77 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
+# ── Core library ──────────────────────────────────────────────────────────────
+
 py_library(
-    name = "ecos_server_lib",
-    srcs = glob(["server/**/*.py"]),
+    name = "fecompiler",
+    srcs = glob(["fecompiler/**/*.py"]),
     imports = ["."],
     visibility = ["//visibility:public"],
 )
 
 py_binary(
-    name = "server_bin",
-    srcs = ["server/ecos_server/main.py"],
-    main = "server/ecos_server/main.py",
-    deps = [":ecos_server_lib"],
+    name = "fecompiler_bin",
+    srcs = ["fecompiler/cli/main.py"],
+    main = "fecompiler/cli/main.py",
+    deps = [":fecompiler"],
 )
 
 alias(
-    name = "server",
-    actual = ":server_bin",
+    name = "cli",
+    actual = ":fecompiler_bin",
+)
+
+# ── Individual test targets ───────────────────────────────────────────────────
+
+py_test(
+    name = "test_utility",
+    srcs = ["test/test_utility.py"],
+    main = "test/test_utility.py",
+    imports = ["."],
+    deps = [":fecompiler"],
 )
 
 py_test(
-    name = "workspace_flow_test",
-    srcs = ["tests/test_workspace_flow.py"],
-    main = "tests/test_workspace_flow.py",
-    deps = [":ecos_server_lib"],
+    name = "test_data_step",
+    srcs = ["test/test_data_step.py"],
+    main = "test/test_data_step.py",
+    imports = ["."],
+    deps = [":fecompiler"],
+)
+
+py_test(
+    name = "test_allflow_builder",
+    srcs = ["test/test_allflow_builder.py"],
+    main = "test/test_allflow_builder.py",
+    imports = ["."],
+    deps = [":fecompiler"],
+)
+
+py_test(
+    name = "test_data_workspace",
+    srcs = ["test/test_data_workspace.py"],
+    main = "test/test_data_workspace.py",
+    imports = ["."],
+    deps = [":fecompiler"],
+)
+
+py_test(
+    name = "test_engine_flow",
+    srcs = ["test/test_engine_flow.py"],
+    main = "test/test_engine_flow.py",
+    imports = ["."],
+    deps = [":fecompiler"],
+)
+
+# ── Convenience target: run all tests ─────────────────────────────────────────
+
+test_suite(
+    name = "all_tests",
+    tests = [
+        ":test_utility",
+        ":test_data_step",
+        ":test_allflow_builder",
+        ":test_data_workspace",
+        ":test_engine_flow",
+    ],
 )
