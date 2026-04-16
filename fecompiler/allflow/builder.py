@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Final
 
-# (step_name, tool) — generic step names, ecc-fe is tool-agnostic
+# (step_name, tool) — sim runs first via verilator; step1-7 are EDA placeholders
 DEFAULT_FLOW_STEPS: Final[list[tuple[str, str]]] = [
+    ("sim",   "verilator"),
     ("step1", "ecc"),
     ("step2", "ecc"),
     ("step3", "ecc"),

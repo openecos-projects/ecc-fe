@@ -18,8 +18,8 @@ def test_default_flow_steps_is_non_empty():
 
 def test_default_flow_steps_first_entry_is_floorplan():
     name, tool = DEFAULT_FLOW_STEPS[0]
-    assert name == "step1"
-    assert tool == "ecc"
+    assert name == "sim"
+    assert tool == "verilator"
 
 
 def test_default_flow_steps_all_entries_are_2_tuples():
@@ -30,8 +30,11 @@ def test_default_flow_steps_all_entries_are_2_tuples():
 
 
 def test_default_flow_steps_all_use_ecc_tool():
-    for _, tool in DEFAULT_FLOW_STEPS:
-        assert tool == "ecc"
+    for name, tool in DEFAULT_FLOW_STEPS:
+        if name == "sim":
+            assert tool == "verilator"
+        else:
+            assert tool == "ecc"
 
 
 # ── sanitize_step_token ───────────────────────────────────────────────────────

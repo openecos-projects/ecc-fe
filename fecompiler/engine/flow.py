@@ -255,6 +255,11 @@ class EngineFlow:
         Path(step.report["step"]).write_text(f"report: {step_name}\n", encoding="utf-8")
 
     def _check_step_result(self, step: WorkspaceStep) -> bool:
+        from fecompiler.tools.fe import STEP_REGISTRY
+        handler = STEP_REGISTRY.get(step.name)
+        if handler is not None:
+            return handler.check_result(step)
+        # default: check DEF / verilog / GDS
         return (
             Path(step.output["def"]).exists()
             and Path(step.output["verilog"]).exists()

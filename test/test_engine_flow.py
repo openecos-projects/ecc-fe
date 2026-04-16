@@ -17,9 +17,14 @@ FIRST_STEP, FIRST_TOOL = DEFAULT_FLOW_STEPS[0]
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _build_engine(tmp_path: Path) -> tuple[EngineFlow, dict]:
+    # provide a minimal valid RTL so the verilator sim step can lint-pass
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws"),
         parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws"))

@@ -152,8 +152,9 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params.setdefault("Top module",          "top")
     params.setdefault("Clock",               "clk")
     params.setdefault("Frequency max [MHz]", 100)
-    if spec.filelist:
-        params["input_filelist"] = spec.filelist
+    # NOTE: input_filelist is NOT stored in parameters.json
+    # load_workspace() discovers it by scanning origin/ for .f files,
+    # which contain absolute paths after _copy_filelist_sources().
     return params
 
 
@@ -183,11 +184,7 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
         if copied:
             (origin_dir / "filelist").write_text("\n".join(copied) + "\n", encoding="utf-8")
     elif spec.filelist and os.path.isfile(spec.filelist):
-        dst = origin_dir / Path(spec.filelist).name
-        try:
-            shutil.copy2(spec.filelist, dst)
-        except OSError:
-            pass
+        _copy_filelist_sources(origin_dir, spec.filelist)
 
     # SDC
     sdc = origin_dir / f"{design}.sdc"
@@ -241,6 +238,42 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
             "step": [], "memory": [], "runtime": [], "instance": [], "frequency": [],
         },
     })
+
+
+def _copy_filelist_sources(origin_dir: Path, filelist_path: str) -> None:
+    """Parse filelist, copy every .v/.sv to origin/, write new filelist with absolute paths."""
+    src_filelist = Path(filelist_path).expanduser().resolve()
+    base_dir     = src_filelist.parent
+    copied: list[str] = []
+
+    for raw in src_filelist.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        if not (line.endswith(".v") or line.endswith(".sv")):
+            continue
+        src = Path(line) if Path(line).is_absolute() else base_dir / line
+        src = src.resolve()
+        if not src.is_file():
+            continue
+        dst = origin_dir / src.name
+        try:
+            shutil.copy2(src, dst)
+            copied.append(str(dst))   # absolute path in origin/
+        except OSError:
+            pass
+
+    # also copy the filelist itself
+    try:
+        shutil.copy2(src_filelist, origin_dir / src_filelist.name)
+    except OSError:
+        pass
+
+    # write a clean filelist in origin/ with absolute paths
+    if copied:
+        (origin_dir / src_filelist.name).write_text(
+            "\n".join(copied) + "\n", encoding="utf-8"
+        )
 
 
 def _copy_rtl_list(origin_dir: Path, rtl_list: list[str]) -> list[str]:
