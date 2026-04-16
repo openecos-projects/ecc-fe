@@ -11,6 +11,7 @@ from fecompiler.utility.json import json_read, json_write
 class StepEnum(Enum):
     """Generic flow step names used by ecc-fe."""
 
+    LINT  = "lint"
     SIM   = "sim"
     STEP1 = "step1"
     STEP2 = "step2"

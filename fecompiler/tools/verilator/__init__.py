@@ -1,5 +1,5 @@
 """Verilator tool package."""
 
-from .runner import VerilatorStep
+from .runner import VerilatorLintStep, VerilatorSimStep
 
-__all__ = ["VerilatorStep"]
+__all__ = ["VerilatorLintStep", "VerilatorSimStep"]
