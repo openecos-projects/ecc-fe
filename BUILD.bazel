@@ -21,6 +21,27 @@ alias(
     actual = ":fecompiler_bin",
 )
 
+# ── Example run: adder design using docs/examples/filelist.f ──────────────────
+#
+#   bazel run //:run_adder
+#
+# Equivalent to:
+#   python3 -m fecompiler.cli.main \
+#       --design adder --top adder --filelist docs/examples/filelist.f
+
+py_binary(
+    name = "run_adder",
+    srcs = ["fecompiler/cli/main.py"],
+    main = "fecompiler/cli/main.py",
+    args = [
+        "--design", "adder",
+        "--top",    "adder",
+        "--filelist", "docs/examples/filelist.f",
+    ],
+    deps = [":fecompiler"],
+    data = glob(["docs/examples/**"]),
+)
+
 # ── Individual test targets ───────────────────────────────────────────────────
 
 py_test(
