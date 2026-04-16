@@ -3,8 +3,8 @@
 `ecc-fe` is a pure Python framework for chip design flow orchestration,
 aligned with [ecos-studio/ecc](https://github.com/ecos-studio/ecc) (`chipcompiler/`).
 
-All EDA steps run as stubs — the focus is on directory structure, state
-tracking, and flow orchestration rather than real EDA execution.
+Verilator lint and simulation are integrated as real steps; remaining EDA
+steps run as stubs focused on directory structure and state tracking.
 
 ## Repository Layout
 
@@ -22,35 +22,56 @@ ecc-fe/
 │   │   ├── step.py              # StepEnum, StateEnum, StepMetrics
 │   │   └── workspace.py         # WorkspaceStep, CreateWorkspaceData, create/load_workspace
 │   ├── engine/                  # Flow orchestration
-│   │   └── flow.py              # EngineFlow
+│   │   └── flow.py              # EngineFlow  (writes log/flow.log)
 │   ├── thirdparty/              # Placeholder for external tool submodules
 │   ├── tools/
-│   │   └── fe/                  # Step workspace builder & sub-flow
-│   ├── builder.py       # build_step(), build_step_space(), build_step_config()
-│   │       ├── subflow.py       # EccSubFlowEnum, build_subflow(), init_subflow()
-│   │       ├── service.py       # get_step_info() — query step resources by ID
-│   │       ├── base.py          # BaseStep interface
-│   │       └── copyfiles.py     # CopyFilesStep (example step implementation)
+│   │   ├── fe/                  # Step workspace builder & sub-flow
+│   │   │   ├── builder.py       # build_step(), build_step_space(), build_step_config()
+│   │   │   ├── subflow.py       # EccSubFlowEnum, build_subflow(), init_subflow()
+│   │   │   ├── service.py       # get_step_info() — query step resources by ID
+│   │   │   └── base.py          # BaseStep interface
+│   │   └── verilator/           # Verilator tool integration
+│   │       ├── runner.py        # VerilatorLintStep, VerilatorSimStep
+│   │       └── subflow.py       # LintSubFlowEnum, SimSubFlowEnum
 │   └── utility/                 # Shared utilities (json, log, file, filelist)
-├── test/                        # Tests
+├── docs/
+│   └── examples/                # Example RTL (adder.v, mux.v, filelist.f)
+├── test/                        # pytest tests
 ├── workspace_projects/          # Default project output directory (git-ignored)
 └── BUILD.bazel
+```
+
+## Flow Steps
+
+```
+lint  (verilator)   ← verilator --lint-only  →  report/lint.txt
+sim   (verilator)   ← compile + simulate     →  report/sim.log  (needs testbench)
+step1 (ecc)  ]
+step2 (ecc)  ]      ← EDA stubs (placeholder for real tools)
+...          ]
+step7 (ecc)  ]
 ```
 
 ## How It Works
 
 ```
 cli/main.py
-  └── data/workspace.py     create_workspace()  →  builds origin/ home/ log/
+  └── data/workspace.py     create_workspace()
+        ├── parse filelist.f → copy .v files to origin/
+        ├── write home/flow.json  (all steps Unstart)
+        └── write origin/filelist.f  (absolute paths)
   └── engine/flow.py        EngineFlow
-        └── tools/fe/       build_step()        →  defines all paths for a step
-                            build_step_space()  →  creates directories on disk
-                            init_subflow()      →  writes subflow.json
-        └── _run_stub_step()                    →  writes placeholder output files
-        └── set_state()                         →  updates flow.json
+        ├── create_step_workspaces()  →  mkdir lint_verilator/ sim_verilator/ step{1..7}_ecc/
+        └── run_all()
+              ├── [START]   lint  → VerilatorLintStep.run()  → lint.txt
+              ├── [SUCCESS] lint  → flow.json updated
+              ├── [START]   sim   → VerilatorSimStep.run()   → sim.log (skipped if no testbench)
+              ├── [SUCCESS] sim
+              └── step1~7   → _run_stub_step()
+              → writes log/flow.log on every step
 ```
 
-Each project directory looks like:
+## Project Directory Structure
 
 ```text
 workspace_projects/<design>/
@@ -59,21 +80,20 @@ workspace_projects/<design>/
 │   ├── parameters.json     # design parameters
 │   └── home.json
 ├── origin/
-│   ├── <design>.def        # placeholder DEF
-│   ├── <design>.v          # placeholder Verilog
+│   ├── <design>.v          # copied from filelist sources
+│   ├── filelist.f          # absolute-path filelist (copied)
 │   └── <design>.sdc        # auto-generated SDC
 ├── log/
-└── step{1..7}_fe/
-    ├── config/             # flow_config.json, db/cts/drc/... configs
-    ├── data/               # fp/ pl/ cts/ no/ to/ rt/ sta/ drc/
-    ├── output/             # .def.gz  .v  .gds  .json  .png
-    ├── feature/            # step.json  db.json  map.json
-    ├── report/             # step.rpt  db.rpt  sta/
-    ├── log/                # step.log
-    ├── script/             # step_main.tcl
-    ├── analysis/           # metrics.json  statis.csv
-    ├── subflow.json        # ordered sub-step list with per-sub-step state
-    └── checklist.json
+│   └── flow.log            # step start / success / failed with timestamps
+├── lint_verilator/
+│   ├── report/lint.txt     # verilator lint output
+│   └── subflow.json        # sub-steps: lint → report
+├── sim_verilator/
+│   ├── report/sim.log      # simulation output (if testbench provided)
+│   └── subflow.json        # sub-steps: compile → simulate → report
+└── step{1..7}_ecc/         # EDA stub steps
+    ├── config/  data/  output/  feature/  report/  log/  script/  analysis/
+    └── subflow.json
 ```
 
 ## Quick Start
@@ -81,46 +101,51 @@ workspace_projects/<design>/
 ```bash
 cd /home/luyoung/ecc-fe
 
-# Create a project and run all steps
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top
+# Create project from filelist and run all steps
+python3 -m fecompiler.cli.main \
+    --design adder --top adder \
+    --filelist docs/examples/filelist.f
 
-# Specify a custom workspace path
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top \
-    --workspace /path/to/demo1
+# Custom workspace path
+python3 -m fecompiler.cli.main \
+    --design adder --top adder \
+    --filelist docs/examples/filelist.f \
+    --workspace /path/to/adder
 
-# Re-run all steps even if already successful
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top --rerun
+# Re-run all steps
+python3 -m fecompiler.cli.main --design adder --top adder \
+    --filelist docs/examples/filelist.f --rerun
 ```
 
 Projects are created under `workspace_projects/<design>/` by default
 (defined in `fecompiler/config.py`).
 
+### Bazel
+
+```bash
+# Run the built-in adder example
+bazel run //:run_adder
+
+# Pass custom arguments
+bazel run //:cli -- --design mydesign --top mydesign_top \
+    --filelist path/to/filelist.f
+```
+
 ### How `-m fecompiler.cli.main` works
 
 Python's `-m` flag runs a module as a script. Starting from the current
-directory, Python looks for a package named `fecompiler`, then follows the
-dotted path `cli.main` to find `fecompiler/cli/main.py` and calls its
-`main()` function. No installation needed — just run from the repo root.
+directory it resolves `fecompiler/cli/main.py` and calls `main()`.
+No installation needed — just run from the repo root.
 
 ## Tests
 
 ```bash
 cd /home/luyoung/ecc-fe
 
-# Run all tests
-python3 -m pytest test/
-
-# Run a single file
-python3 -m pytest test/test_engine_flow.py
-
-# Run a single test function
-python3 -m pytest test/test_engine_flow.py::test_run_all_succeeds
-
-# Verbose output
-python3 -m pytest test/ -v
-
-# Stop on first failure
-python3 -m pytest test/ -x
+python3 -m pytest test/           # all tests
+python3 -m pytest test/ -v        # verbose
+python3 -m pytest test/ -x        # stop on first failure
+python3 -m pytest test/test_examples.py  # integration tests (writes to workspace_projects/test_adder/)
 ```
 
 ### Bazel
@@ -137,11 +162,11 @@ bazel test //:test_engine_flow
 | CLI entry point | `fecompiler/cli/main.py` |
 | Global config | `fecompiler/config.py` |
 | Flow step definitions | `fecompiler/allflow/builder.py` |
-| Flow orchestration | `fecompiler/engine/flow.py` |
+| Flow orchestration + logging | `fecompiler/engine/flow.py` |
 | Workspace create / load | `fecompiler/data/workspace.py` |
 | Step path structure | `fecompiler/tools/fe/builder.py` |
 | Step resource query | `fecompiler/tools/fe/service.py` |
-| Sub-step definitions | `fecompiler/tools/fe/subflow.py` |
+| Verilator lint step | `fecompiler/tools/verilator/runner.py` |
 | Step state enums | `fecompiler/data/step.py` |
 | Step registry | `fecompiler/tools/fe/__init__.py` |
 
