@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Integration tests using docs/examples — filelist.f + verilator lint/sim."""
+"""Integration tests using docs/examples — filelist.f + slang elab + verilator lint/sim."""
 
 from __future__ import annotations
 
@@ -40,7 +40,6 @@ def adder_workspace():
 # ── workspace creation from filelist ─────────────────────────────────────────
 
 def test_filelist_sources_copied_to_origin():
-    """adder.v and mux.v referenced in filelist.f must appear in origin/."""
     origin = TEST_WS_DIR / "origin"
     assert (origin / "adder.v").exists()
     assert (origin / "mux.v").exists()
@@ -68,6 +67,28 @@ def test_load_workspace_finds_filelist():
     assert Path(ws["input_filelist"]).exists()
 
 
+# ── slang elab step ───────────────────────────────────────────────────────────
+
+def test_elab_step_state_is_success():
+    ws     = load_workspace(str(TEST_WS_DIR))
+    engine = EngineFlow(workspace=ws)
+    step   = engine.get_step("elab", "slang")
+    assert step is not None
+    assert step["state"] == "Success"
+
+
+def test_elab_report_written():
+    elab_txt = TEST_WS_DIR / "elab_slang" / "report" / "elab.txt"
+    assert elab_txt.exists()
+    assert "error:" not in elab_txt.read_text().lower()
+
+
+def test_elab_subflow_all_success():
+    subflow = json.loads((TEST_WS_DIR / "elab_slang" / "subflow.json").read_text())
+    for sub in subflow["steps"]:
+        assert sub["state"] == "Success", f"sub-step {sub['name']} not Success"
+
+
 # ── lint step ─────────────────────────────────────────────────────────────────
 
 def test_lint_step_state_is_success():
@@ -84,12 +105,6 @@ def test_lint_report_written():
     assert "%Error" not in lint_txt.read_text()
 
 
-def test_lint_subflow_all_success():
-    subflow = json.loads((TEST_WS_DIR / "lint_verilator" / "subflow.json").read_text())
-    for sub in subflow["steps"]:
-        assert sub["state"] == "Success", f"sub-step {sub['name']} not Success"
-
-
 # ── sim step ──────────────────────────────────────────────────────────────────
 
 def test_sim_step_state_is_success():
@@ -98,12 +113,6 @@ def test_sim_step_state_is_success():
     step   = engine.get_step("sim", "verilator")
     assert step is not None
     assert step["state"] == "Success"
-
-
-def test_sim_subflow_all_success():
-    subflow = json.loads((TEST_WS_DIR / "sim_verilator" / "subflow.json").read_text())
-    for sub in subflow["steps"]:
-        assert sub["state"] == "Success", f"sub-step {sub['name']} not Success"
 
 
 # ── full flow ─────────────────────────────────────────────────────────────────

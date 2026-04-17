@@ -5,10 +5,12 @@ from .base import BaseStep
 from .subflow import EccSubFlowEnum, build_subflow, init_subflow, update_substep
 from .service import get_step_info
 
+from fecompiler.tools.slang.runner import SlangElabStep
 from fecompiler.tools.verilator.runner import VerilatorLintStep, VerilatorSimStep
 
 # Step registry: maps step_name → handler instance.
 STEP_REGISTRY: dict[str, BaseStep] = {
+    "elab": SlangElabStep(),
     "lint": VerilatorLintStep(),
     "sim":  VerilatorSimStep(),
 }
@@ -24,6 +26,7 @@ __all__ = [
     "init_subflow",
     "update_substep",
     "get_step_info",
+    "SlangElabStep",
     "VerilatorLintStep",
     "VerilatorSimStep",
 ]

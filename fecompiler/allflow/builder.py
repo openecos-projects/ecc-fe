@@ -6,8 +6,9 @@ from typing import Final
 
 # (step_name, tool) — sim runs first via verilator; step1-7 are EDA placeholders
 DEFAULT_FLOW_STEPS: Final[list[tuple[str, str]]] = [
-    ("lint",  "verilator"),   # RTL 语法检查
-    ("sim",   "verilator"),   # 编译 + 功能仿真（需要 testbench）
+    ("elab",  "slang"),      # SV elaboration / semantic check
+    ("lint",  "verilator"),  # RTL 语法检查
+    ("sim",   "verilator"),  # 编译 + 功能仿真（需要 testbench）
     ("step1", "ecc"),
     ("step2", "ecc"),
     ("step3", "ecc"),
