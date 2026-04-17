@@ -1,0 +1,3 @@
+[submodule "fecompiler/thirdparty/slang"]
+	path = fecompiler/thirdparty/slang
+	url = git@github.com:MikePopoloski/slang.git
