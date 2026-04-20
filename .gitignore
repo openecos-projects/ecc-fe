@@ -227,3 +227,7 @@ gui/.vite/
 # Auto-generated docs
 docs/backend-architecture-mermaid.md
 .claude/
+
+# Third-party SoC / CPU sources (temporary placeholders)
+fecompiler/thirdparty/SoC/
+docs/examples/cl3/
