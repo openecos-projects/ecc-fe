@@ -137,6 +137,22 @@ Python's `-m` flag runs a module as a script. Starting from the current
 directory it resolves `fecompiler/cli/main.py` and calls `main()`.
 No installation needed — just run from the repo root.
 
+## Building Third-party Tools
+
+Slang and Verilator binaries are **not committed** to the repo. After cloning, you must build them from source once:
+
+```bash
+# Slang (elaboration step)
+cmake -S fecompiler/thirdparty/slang -B fecompiler/thirdparty/slang/build -DCMAKE_BUILD_TYPE=Release
+cmake --build fecompiler/thirdparty/slang/build --parallel
+cp fecompiler/thirdparty/slang/build/bin/slang fecompiler/tools/slang/bin/
+
+# Verilator (lint + simulation step)
+cmake -S fecompiler/thirdparty/verilator -B fecompiler/thirdparty/verilator/build -DCMAKE_BUILD_TYPE=Release
+cmake --build fecompiler/thirdparty/verilator/build --target verilator -j$(nproc)
+cp fecompiler/thirdparty/verilator/bin/verilator fecompiler/tools/verilator/bin/
+```
+
 ## Tests
 
 ```bash
