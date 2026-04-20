@@ -1,0 +1,101 @@
+[soc-sim] loaded image: out/min_payload.soc.bin (276 bytes)
+[soc-sim][mrom] addr=0x20000000 data=0x200002b7
+[soc-sim][mrom] addr=0x20000004 data=0x10028293
+[soc-sim][mrom] addr=0x20000008 data=0x80000337
+[soc-sim][mrom] addr=0x2000000c data=0x00030313
+[soc-sim][mrom] addr=0x20000010 data=0x01400393
+[soc-sim][mrom] addr=0x20000014 data=0x0023de93
+[soc-sim][mrom] addr=0x20000018 data=0x000e8e63
+[soc-sim][mrom] addr=0x2000001c data=0x0002af03
+[soc-sim][mrom] addr=0x20000020 data=0x01e32023
+[soc-sim] warning: difftest_step is stubbed (always pass)
+[soc-sim][difftest] call=1
+[soc-sim][commit] pc=0x20000000 npc=0x20000004 inst=0x200002b7 rd=5 wen=1 wdata=0x20000000 skip=0
+[soc-sim][commit] pc=0x20000004 npc=0x20000008 inst=0x10028293 rd=5 wen=1 wdata=0x20000100 skip=0
+[soc-sim][mrom] addr=0x20000024 data=0x00428293
+[soc-sim][difftest] call=2
+[soc-sim][commit] pc=0x20000008 npc=0x2000000c inst=0x80000337 rd=6 wen=1 wdata=0x80000000 skip=0
+[soc-sim][commit] pc=0x2000000c npc=0x20000010 inst=0x00030313 rd=6 wen=1 wdata=0x80000000 skip=0
+[soc-sim][difftest] call=3
+[soc-sim][commit] pc=0x20000010 npc=0x20000014 inst=0x01400393 rd=7 wen=1 wdata=0x00000014 skip=0
+[soc-sim][commit] pc=0x20000014 npc=0x20000018 inst=0x0023de93 rd=29 wen=1 wdata=0x00000005 skip=0
+[soc-sim][mrom] addr=0x20000028 data=0x00430313
+[soc-sim][mrom] addr=0x2000002c data=0xfffe8e93
+[soc-sim][mrom] addr=0x20000030 data=0xfe9ff06f
+[soc-sim][mrom] addr=0x20000034 data=0x0033f393
+[soc-sim][mrom] addr=0x20000038 data=0x00038e63
+[soc-sim][mrom] addr=0x2000003c data=0x0002ce03
+[soc-sim][mrom] addr=0x20000100 data=0x100002b7
+[soc-sim][difftest] call=4
+[soc-sim][commit] pc=0x20000018 npc=0x2000001c inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x2000001c npc=0x20000020 inst=0x0002af03 rd=30 wen=1 wdata=0x100002b7 skip=1
+[soc-sim][mrom] addr=0x20000040 data=0x01c30023
+[soc-sim][mrom] addr=0x20000044 data=0x00128293
+[soc-sim][difftest] call=5
+[soc-sim][commit] pc=0x20000020 npc=0x20000024 inst=0x01e32023 rd=0 wen=0 wdata=0x900002b7 skip=0
+[soc-sim][commit] pc=0x20000024 npc=0x20000028 inst=0x00428293 rd=5 wen=1 wdata=0x20000104 skip=0
+[soc-sim][mrom] addr=0x20000048 data=0x00130313
+[soc-sim][difftest] call=6
+[soc-sim][commit] pc=0x20000028 npc=0x2000002c inst=0x00430313 rd=6 wen=1 wdata=0x80000004 skip=0
+[soc-sim][commit] pc=0x2000002c npc=0x20000030 inst=0xfffe8e93 rd=29 wen=1 wdata=0x00000004 skip=0
+[soc-sim][difftest] call=7
+[soc-sim][commit] pc=0x20000030 npc=0x20000018 inst=0xfe9ff06f rd=0 wen=1 wdata=0x20000034 skip=0
+[soc-sim][mrom] addr=0x2000004c data=0xfff38393
+[soc-sim][mrom] addr=0x20000050 data=0xfe9ff06f
+[soc-sim][mrom] addr=0x20000054 data=0x0ff0000f
+[soc-sim][mrom] addr=0x20000058 data=0x800002b7
+[soc-sim][mrom] addr=0x2000005c data=0x00028293
+[soc-sim][mrom] addr=0x20000104 data=0x00c28293
+[soc-sim][difftest] call=8
+[soc-sim][commit] pc=0x20000018 npc=0x2000001c inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x2000001c npc=0x20000020 inst=0x0002af03 rd=30 wen=1 wdata=0x00c28293 skip=1
+[soc-sim][difftest] call=9
+[soc-sim][commit] pc=0x20000020 npc=0x20000024 inst=0x01e32023 rd=0 wen=0 wdata=0xa0000108 skip=0
+[soc-sim][commit] pc=0x20000024 npc=0x20000028 inst=0x00428293 rd=5 wen=1 wdata=0x20000108 skip=0
+[soc-sim][difftest] call=10
+[soc-sim][commit] pc=0x20000028 npc=0x2000002c inst=0x00430313 rd=6 wen=1 wdata=0x80000008 skip=0
+[soc-sim][commit] pc=0x2000002c npc=0x20000030 inst=0xfffe8e93 rd=29 wen=1 wdata=0x00000003 skip=0
+[soc-sim][mrom] addr=0x20000108 data=0x00000513
+[soc-sim][difftest] call=11
+[soc-sim][commit] pc=0x20000030 npc=0x20000018 inst=0xfe9ff06f rd=0 wen=1 wdata=0x20000034 skip=0
+[soc-sim][difftest] call=12
+[soc-sim][commit] pc=0x20000018 npc=0x2000001c inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x2000001c npc=0x20000020 inst=0x0002af03 rd=30 wen=1 wdata=0x00000513 skip=1
+[soc-sim][difftest] call=13
+[soc-sim][commit] pc=0x20000020 npc=0x20000024 inst=0x01e32023 rd=0 wen=0 wdata=0xa0000110 skip=0
+[soc-sim][commit] pc=0x20000024 npc=0x20000028 inst=0x00428293 rd=5 wen=1 wdata=0x2000010c skip=0
+[soc-sim][difftest] call=14
+[soc-sim][commit] pc=0x20000028 npc=0x2000002c inst=0x00430313 rd=6 wen=1 wdata=0x8000000c skip=0
+[soc-sim][commit] pc=0x2000002c npc=0x20000030 inst=0xfffe8e93 rd=29 wen=1 wdata=0x00000002 skip=0
+[soc-sim][mrom] addr=0x2000010c data=0x00a2a023
+[soc-sim][difftest] call=15
+[soc-sim][commit] pc=0x20000030 npc=0x20000018 inst=0xfe9ff06f rd=0 wen=1 wdata=0x20000034 skip=0
+[soc-sim][difftest] call=16
+[soc-sim][commit] pc=0x20000018 npc=0x2000001c inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x2000001c npc=0x20000020 inst=0x0002af03 rd=30 wen=1 wdata=0x00a2a023 skip=1
+[soc-sim][commit] pc=0x20000020 npc=0x20000024 inst=0x01e32023 rd=0 wen=0 wdata=0xa0000118 skip=0
+[soc-sim][commit] pc=0x20000024 npc=0x20000028 inst=0x00428293 rd=5 wen=1 wdata=0x20000110 skip=0
+[soc-sim][commit] pc=0x20000028 npc=0x2000002c inst=0x00430313 rd=6 wen=1 wdata=0x80000010 skip=0
+[soc-sim][commit] pc=0x2000002c npc=0x20000030 inst=0xfffe8e93 rd=29 wen=1 wdata=0x00000001 skip=0
+[soc-sim][mrom] addr=0x20000110 data=0x0000006f
+[soc-sim][commit] pc=0x20000030 npc=0x20000018 inst=0xfe9ff06f rd=0 wen=1 wdata=0x20000034 skip=0
+[soc-sim][commit] pc=0x20000018 npc=0x2000001c inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x2000001c npc=0x20000020 inst=0x0002af03 rd=30 wen=1 wdata=0x0000006f skip=1
+[soc-sim][commit] pc=0x20000020 npc=0x20000024 inst=0x01e32023 rd=0 wen=0 wdata=0xa0000120 skip=0
+[soc-sim][commit] pc=0x20000024 npc=0x20000028 inst=0x00428293 rd=5 wen=1 wdata=0x20000114 skip=0
+[soc-sim][commit] pc=0x20000028 npc=0x2000002c inst=0x00430313 rd=6 wen=1 wdata=0x80000014 skip=0
+[soc-sim][commit] pc=0x2000002c npc=0x20000030 inst=0xfffe8e93 rd=29 wen=1 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x20000030 npc=0x20000018 inst=0xfe9ff06f rd=0 wen=1 wdata=0x20000034 skip=0
+[soc-sim][commit] pc=0x20000018 npc=0x20000034 inst=0x000e8e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][commit] pc=0x20000034 npc=0x20000038 inst=0x0033f393 rd=7 wen=1 wdata=0x00000000 skip=0
+[soc-sim][mrom] addr=0x20000060 data=0x00028067
+[soc-sim][commit] pc=0x20000038 npc=0x20000054 inst=0x00038e63 rd=28 wen=0 wdata=0x00000000 skip=0
+[soc-sim][mrom] addr=0x20000064 data=0x00028067
+[soc-sim][mrom] addr=0x20000068 data=0x00000000
+[soc-sim][commit] pc=0x20000054 npc=0x20000058 inst=0x0ff0000f rd=0 wen=0 wdata=0x000000ff skip=0
+[soc-sim][commit] pc=0x20000058 npc=0x2000005c inst=0x800002b7 rd=5 wen=1 wdata=0x80000000 skip=0
+[soc-sim][commit] pc=0x2000005c npc=0x20000060 inst=0x00028293 rd=5 wen=1 wdata=0x80000000 skip=0
+[soc-sim][commit] pc=0x20000060 npc=0x80000000 inst=0x00028067 rd=0 wen=1 wdata=0x20000064 skip=0
+[soc-sim][milestone] entered payload pc=0x80000000
+[soc-sim][commit] pc=0x80000000 npc=0x00000000 inst=0x00000000 rd=0 wen=0 wdata=0x00000000 skip=0
+[soc-sim] timeout after 1500000 cycles

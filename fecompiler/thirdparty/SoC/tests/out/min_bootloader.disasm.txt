@@ -1,0 +1,32 @@
+
+bazel-soc-test/out/min_bootloader.elf:     file format elf32-littleriscv
+
+
+Disassembly of section .text:
+
+20000000 <_start>:
+20000000:	200002b7          	lui	t0,0x20000
+20000004:	10028293          	addi	t0,t0,256 # 20000100 <_payload_src>
+20000008:	80000337          	lui	t1,0x80000
+2000000c:	00030313          	mv	t1,t1
+20000010:	01400393          	li	t2,20
+20000014:	0023de93          	srli	t4,t2,0x2
+20000018:	000e8e63          	beqz	t4,20000034 <_start+0x34>
+2000001c:	0002af03          	lw	t5,0(t0)
+20000020:	01e32023          	sw	t5,0(t1) # 80000000 <_payload_dst>
+20000024:	00428293          	addi	t0,t0,4
+20000028:	00430313          	addi	t1,t1,4
+2000002c:	fffe8e93          	addi	t4,t4,-1
+20000030:	fe9ff06f          	j	20000018 <_start+0x18>
+20000034:	0033f393          	andi	t2,t2,3
+20000038:	00038e63          	beqz	t2,20000054 <_start+0x54>
+2000003c:	0002ce03          	lbu	t3,0(t0)
+20000040:	01c30023          	sb	t3,0(t1)
+20000044:	00128293          	addi	t0,t0,1
+20000048:	00130313          	addi	t1,t1,1
+2000004c:	fff38393          	addi	t2,t2,-1
+20000050:	fe9ff06f          	j	20000038 <_start+0x38>
+20000054:	0ff0000f          	fence
+20000058:	800002b7          	lui	t0,0x80000
+2000005c:	00028293          	mv	t0,t0
+20000060:	00028067          	jr	t0 # 80000000 <_payload_dst>
