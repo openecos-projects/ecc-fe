@@ -231,3 +231,8 @@ docs/backend-architecture-mermaid.md
 # Third-party SoC / CPU sources (temporary placeholders)
 fecompiler/thirdparty/SoC/
 docs/examples/cl3/
+
+# Verilator build artifacts
+fecompiler/thirdparty/verilator/build/
+fecompiler/thirdparty/verilator/bin/
+fecompiler/thirdparty/verilator/include/
