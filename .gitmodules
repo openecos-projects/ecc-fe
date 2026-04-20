@@ -1,3 +1,6 @@
 [submodule "fecompiler/thirdparty/slang"]
 	path = fecompiler/thirdparty/slang
 	url = git@github.com:MikePopoloski/slang.git
+[submodule "fecompiler/thirdparty/verilator"]
+	path = fecompiler/thirdparty/verilator
+	url = git@github.com:verilator/verilator.git
