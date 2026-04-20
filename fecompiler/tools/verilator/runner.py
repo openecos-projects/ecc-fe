@@ -9,7 +9,6 @@ from typing import Any
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
 
-VERILATOR_BIN = Path("/usr/local/bin/verilator")
 from fecompiler.tools.verilator.subflow import (
     LintSubFlowEnum,
     SimSubFlowEnum,
@@ -20,6 +19,30 @@ from fecompiler.utility.json import json_write
 
 
 # ── shared helper ─────────────────────────────────────────────────────────────
+
+_LOCAL_VERILATOR_BIN = Path(__file__).parent / "bin" / "verilator"
+_SYSTEM_VERILATOR_BIN = Path("/usr/local/bin/verilator")
+_LOCAL_VERILATOR_INCLUDE = Path(__file__).parent / "include"
+_SYSTEM_VERILATOR_INCLUDE = Path("/usr/local/share/verilator/include")
+
+
+def _verilator_cmd() -> str:
+    """Return verilator executable path (repo-local first, then system)."""
+    if _LOCAL_VERILATOR_BIN.exists():
+        return str(_LOCAL_VERILATOR_BIN)
+    if _SYSTEM_VERILATOR_BIN.exists():
+        return str(_SYSTEM_VERILATOR_BIN)
+    return "verilator"
+
+
+def _verilator_include_args() -> list[str]:
+    """Return include arg for verilator runtime headers if present."""
+    if _LOCAL_VERILATOR_INCLUDE.exists():
+        return [f"-I{_LOCAL_VERILATOR_INCLUDE}"]
+    if _SYSTEM_VERILATOR_INCLUDE.exists():
+        return [f"-I{_SYSTEM_VERILATOR_INCLUDE}"]
+    return []
+
 
 def _rtl_files(workspace: dict[str, Any]) -> list[str]:
     """Collect RTL files from filelist or origin verilog."""
@@ -74,8 +97,14 @@ class VerilatorLintStep(BaseStep):
         top   = workspace.get("top_module", "top")
         lint_path = Path(step.report["dir"]) / "lint.txt"
 
-        cmd    = [str(VERILATOR_BIN), "--lint-only", "-Wno-fatal",
-                  "-I/usr/local/share/verilator/include", "--top", top] + files
+        cmd = [
+            _verilator_cmd(),
+            "--lint-only",
+            "-Wno-fatal",
+            *_verilator_include_args(),
+            "--top",
+            top,
+        ] + files
         result = subprocess.run(cmd, capture_output=True, text=True)
         lint_path.write_text(
             (result.stdout + result.stderr).strip() or "lint OK",
@@ -130,7 +159,7 @@ class VerilatorSimStep(BaseStep):
         obj_dir = Path(step.directory) / "obj_dir"
 
         cmd = [
-            str(VERILATOR_BIN), "--binary", "-j", "0",
+            _verilator_cmd(), "--binary", "-j", "0",
             "--top", top,
             f"-Mdir={obj_dir}",
             "-o", str(sim_bin),

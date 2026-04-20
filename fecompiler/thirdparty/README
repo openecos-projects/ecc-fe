@@ -1,1 +1,36 @@
-# thirdparty — placeholder for external EDA tool submodules
+# thirdparty
+
+Build third-party tools from source, then install them into the repo-local
+default tool paths under `fecompiler/tools/*`.
+
+Use a fixed build parallelism (`8`) to avoid saturating CPU resources.
+
+## Build and Install (CPU-friendly)
+
+```bash
+cd /home/luyoung/ecc-fe
+
+# 1) Slang: build + install to fecompiler/tools/slang
+cmake -S fecompiler/thirdparty/slang \
+      -B fecompiler/thirdparty/slang/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/home/luyoung/ecc-fe/fecompiler/tools/slang
+cmake --build fecompiler/thirdparty/slang/build --parallel 8
+cmake --install fecompiler/thirdparty/slang/build
+
+# 2) Verilator: build + install to fecompiler/tools/verilator
+cmake -S fecompiler/thirdparty/verilator \
+      -B fecompiler/thirdparty/verilator/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/home/luyoung/ecc-fe/fecompiler/tools/verilator
+cmake --build fecompiler/thirdparty/verilator/build --parallel 8
+cmake --install fecompiler/thirdparty/verilator/build
+```
+
+## Quick Check
+
+```bash
+ls -l fecompiler/tools/slang/bin/slang
+ls -l fecompiler/tools/verilator/bin/verilator
+ls -l fecompiler/tools/verilator/bin/verilator_bin
+```
