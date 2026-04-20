@@ -8,6 +8,8 @@ from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+
+VERILATOR_BIN = Path("/usr/local/bin/verilator")
 from fecompiler.tools.verilator.subflow import (
     LintSubFlowEnum,
     SimSubFlowEnum,
@@ -72,7 +74,8 @@ class VerilatorLintStep(BaseStep):
         top   = workspace.get("top_module", "top")
         lint_path = Path(step.report["dir"]) / "lint.txt"
 
-        cmd    = ["verilator", "--lint-only", "-Wno-fatal", "--top", top] + files
+        cmd    = [str(VERILATOR_BIN), "--lint-only", "-Wno-fatal",
+                  "-I/usr/local/share/verilator/include", "--top", top] + files
         result = subprocess.run(cmd, capture_output=True, text=True)
         lint_path.write_text(
             (result.stdout + result.stderr).strip() or "lint OK",
@@ -127,7 +130,7 @@ class VerilatorSimStep(BaseStep):
         obj_dir = Path(step.directory) / "obj_dir"
 
         cmd = [
-            "verilator", "--binary", "-j", "0",
+            str(VERILATOR_BIN), "--binary", "-j", "0",
             "--top", top,
             f"-Mdir={obj_dir}",
             "-o", str(sim_bin),
