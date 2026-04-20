@@ -67,6 +67,23 @@ def test_load_workspace_finds_filelist():
     assert Path(ws["input_filelist"]).exists()
 
 
+# ── prepare step ──────────────────────────────────────────────────────────────
+
+def test_prepare_step_state_is_success():
+    ws     = load_workspace(str(TEST_WS_DIR))
+    engine = EngineFlow(workspace=ws)
+    step   = engine.get_step("prepare", "fe")
+    assert step is not None
+    assert step["state"] == "Success"
+
+
+def test_prepare_merged_filelist_written():
+    merged = TEST_WS_DIR / "prepare_fe" / "output" / "merged_rtl.f"
+    assert merged.exists()
+    lines = [l.strip() for l in merged.read_text().splitlines() if l.strip()]
+    assert len(lines) >= 2
+
+
 # ── slang elab step ───────────────────────────────────────────────────────────
 
 def test_elab_step_state_is_success():

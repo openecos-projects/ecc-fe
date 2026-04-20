@@ -22,10 +22,54 @@ class EngineFlow:
         self.workspace = workspace
         self.workspace_steps: list[WorkspaceStep] = []
         self.flow = workspace_data.load_flow(Path(self.workspace["flow_path"]))
+        self._sync_flow_steps()
         self._flow_logger = _build_flow_logger(workspace["directory"])
 
     def has_init(self) -> bool:
         return len(self.flow.get("steps", [])) > 0
+
+    def _sync_flow_steps(self) -> None:
+        """Make existing flow.json compatible with current DEFAULT_FLOW_STEPS.
+
+        Preserves state/runtime/info for matched steps and appends any newly added
+        default steps with Unstart state.
+        """
+        existing = self.flow.get("steps", [])
+        if not existing:
+            return
+
+        index = {(s.get("name"), s.get("tool")): s for s in existing}
+        synced: list[dict[str, Any]] = []
+        changed = False
+
+        for name, tool in DEFAULT_FLOW_STEPS:
+            matched = index.pop((name, tool), None)
+            if matched is None:
+                changed = True
+                synced.append(
+                    {
+                        "name": name,
+                        "tool": tool,
+                        "state": StateEnum.Unstart.value,
+                        "runtime": "",
+                        "peak memory (mb)": 0,
+                        "info": {},
+                    }
+                )
+                continue
+            synced.append(matched)
+
+        # Keep unknown historical steps at the tail to avoid destructive migration.
+        if index:
+            changed = True
+            synced.extend(index.values())
+
+        if [s.get("name") for s in existing] != [s.get("name") for s in synced]:
+            changed = True
+
+        if changed:
+            self.flow["steps"] = synced
+            self.save()
 
     def init_default_steps(self) -> None:
         self.flow["steps"] = [

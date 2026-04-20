@@ -16,10 +16,10 @@ def test_default_flow_steps_is_non_empty():
     assert len(DEFAULT_FLOW_STEPS) > 0
 
 
-def test_default_flow_steps_first_entry_is_floorplan():
+def test_default_flow_steps_first_entry_is_prepare():
     name, tool = DEFAULT_FLOW_STEPS[0]
-    assert name == "elab"
-    assert tool == "slang"
+    assert name == "prepare"
+    assert tool == "fe"
 
 
 def test_default_flow_steps_all_entries_are_2_tuples():
@@ -31,7 +31,9 @@ def test_default_flow_steps_all_entries_are_2_tuples():
 
 def test_default_flow_steps_all_use_ecc_tool():
     for name, tool in DEFAULT_FLOW_STEPS:
-        if name in ("elab", "lint", "sim"):
+        if name == "prepare":
+            assert tool == "fe"
+        elif name in ("elab", "lint", "sim"):
             assert tool in ("slang", "verilator")
         else:
             assert tool == "ecc"
