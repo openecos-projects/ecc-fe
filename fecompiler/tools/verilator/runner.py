@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -24,12 +25,24 @@ _LOCAL_VERILATOR_BIN = Path(__file__).parent / "bin" / "verilator"
 _SYSTEM_VERILATOR_BIN = Path("/usr/local/bin/verilator")
 _LOCAL_VERILATOR_INCLUDE = Path(__file__).parent / "include"
 _SYSTEM_VERILATOR_INCLUDE = Path("/usr/local/share/verilator/include")
+_WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
+_WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 
 
 def _verilator_cmd() -> str:
     """Return verilator executable path (repo-local first, then system)."""
+    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
+    workspace_bin = (
+        Path(workspace_dir) / _WORKSPACE_REL_VERILATOR_BIN if workspace_dir else None
+    )
+    cwd_bin = Path.cwd() / _WORKSPACE_REL_VERILATOR_BIN
+
     if _LOCAL_VERILATOR_BIN.exists():
         return str(_LOCAL_VERILATOR_BIN)
+    if workspace_bin is not None and workspace_bin.exists():
+        return str(workspace_bin)
+    if cwd_bin.exists():
+        return str(cwd_bin)
     if _SYSTEM_VERILATOR_BIN.exists():
         return str(_SYSTEM_VERILATOR_BIN)
     return "verilator"
@@ -37,8 +50,18 @@ def _verilator_cmd() -> str:
 
 def _verilator_include_args() -> list[str]:
     """Return include arg for verilator runtime headers if present."""
+    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
+    workspace_include = (
+        Path(workspace_dir) / _WORKSPACE_REL_VERILATOR_INCLUDE if workspace_dir else None
+    )
+    cwd_include = Path.cwd() / _WORKSPACE_REL_VERILATOR_INCLUDE
+
     if _LOCAL_VERILATOR_INCLUDE.exists():
         return [f"-I{_LOCAL_VERILATOR_INCLUDE}"]
+    if workspace_include is not None and workspace_include.exists():
+        return [f"-I{workspace_include}"]
+    if cwd_include.exists():
+        return [f"-I{cwd_include}"]
     if _SYSTEM_VERILATOR_INCLUDE.exists():
         return [f"-I{_SYSTEM_VERILATOR_INCLUDE}"]
     return []
