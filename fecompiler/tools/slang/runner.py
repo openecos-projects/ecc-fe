@@ -14,8 +14,7 @@ from fecompiler.utility.json import json_write
 
 # ── slang binary location ─────────────────────────────────────────────────────
 
-_THIRDPARTY = Path(__file__).parent.parent.parent / "thirdparty"
-_SLANG_BIN  = _THIRDPARTY / "slang" / "build" / "bin" / "slang"
+_SLANG_BIN = Path(__file__).parent / "bin" / "slang"
 
 
 def _slang_cmd() -> str:
