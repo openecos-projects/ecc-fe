@@ -61,6 +61,13 @@ class CreateWorkspaceData:
     origin_def: str = ""
     origin_verilog: str = ""
     filelist: str = ""
+    cpu_filelist: str = ""
+    soc_filelist: str = ""
+    testbench: str = ""
+    sim_cpp_sources: list[str] = field(default_factory=list)
+    sim_cflags: list[str] = field(default_factory=list)
+    sim_ldflags: list[str] = field(default_factory=list)
+    sim_run_args: list[str] = field(default_factory=list)
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -122,6 +129,14 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     filelist = str(parameters.get("input_filelist", "")).strip()
     if not filelist or not Path(filelist).exists():
         filelist = _pick_first(origin_dir, [".f", ".fl", ".filelist"]) or ""
+    cpu_filelist = str(parameters.get("cpu_filelist", "")).strip()
+    soc_filelist = str(parameters.get("soc_filelist", "")).strip()
+    prepared_manifest = str(parameters.get("prepared_manifest", "")).strip()
+    testbench = str(parameters.get("testbench", "")).strip()
+    sim_cpp_sources = _to_str_list(parameters.get("sim_cpp_sources", []))
+    sim_cflags = _to_str_list(parameters.get("sim_cflags", []))
+    sim_ldflags = _to_str_list(parameters.get("sim_ldflags", []))
+    sim_run_args = _to_str_list(parameters.get("sim_run_args", []))
 
     return {
         "directory":       str(project_dir),
@@ -133,6 +148,14 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         "origin_def":      origin_def,
         "origin_verilog":  origin_verilog,
         "input_filelist":  filelist,
+        "cpu_filelist":    cpu_filelist,
+        "soc_filelist":    soc_filelist,
+        "prepared_manifest": prepared_manifest,
+        "testbench":       testbench,
+        "sim_cpp_sources": sim_cpp_sources,
+        "sim_cflags":      sim_cflags,
+        "sim_ldflags":     sim_ldflags,
+        "sim_run_args":    sim_run_args,
     }
 
 
@@ -152,9 +175,22 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params.setdefault("Top module",          "top")
     params.setdefault("Clock",               "clk")
     params.setdefault("Frequency max [MHz]", 100)
-    # NOTE: input_filelist is NOT stored in parameters.json
-    # load_workspace() discovers it by scanning origin/ for .f files,
-    # which contain absolute paths after _copy_filelist_sources().
+    if spec.cpu_filelist:
+        params["cpu_filelist"] = str(Path(spec.cpu_filelist).expanduser().resolve())
+    if spec.soc_filelist:
+        params["soc_filelist"] = str(Path(spec.soc_filelist).expanduser().resolve())
+    if spec.testbench:
+        params["testbench"] = str(Path(spec.testbench).expanduser().resolve())
+    if spec.sim_cpp_sources:
+        params["sim_cpp_sources"] = [
+            str(Path(p).expanduser().resolve()) for p in spec.sim_cpp_sources if str(p).strip()
+        ]
+    if spec.sim_cflags:
+        params["sim_cflags"] = [str(x).strip() for x in spec.sim_cflags if str(x).strip()]
+    if spec.sim_ldflags:
+        params["sim_ldflags"] = [str(x).strip() for x in spec.sim_ldflags if str(x).strip()]
+    if spec.sim_run_args:
+        params["sim_run_args"] = [str(x) for x in spec.sim_run_args if str(x)]
     return params
 
 
@@ -322,3 +358,17 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def _to_str_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        out: list[str] = []
+        for item in raw:
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+    if isinstance(raw, str):
+        text = raw.strip()
+        return [text] if text else []
+    return []

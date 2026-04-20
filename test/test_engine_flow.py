@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
@@ -206,3 +207,168 @@ def test_load_restores_state_from_disk(tmp_path):
     engine2 = EngineFlow(workspace=load_workspace(ws["directory"]))
     engine2.load()
     assert engine2.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Success"
+
+
+def test_sim_compile_failure_is_incomplete(tmp_path):
+    bad_rtl = tmp_path / "bad_top.v"
+    bad_rtl.write_text("module chip_top( ; endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb.cpp"
+    tb.write_text("int main(){return 0;}\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_bad"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(bad_rtl),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_bad"))
+    ws["testbench"] = str(tb)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    assert state == StateEnum.Incomplete
+    assert engine.get_step("sim", "verilator")["state"] == "Incomplete"
+
+
+def test_prepare_merges_cpu_and_soc_filelists(tmp_path):
+    cpu_root = tmp_path / "cpu"
+    soc_root = tmp_path / "soc"
+    cpu_inc = cpu_root / "include"
+    soc_inc = soc_root / "include"
+    cpu_root.mkdir()
+    soc_root.mkdir()
+    cpu_inc.mkdir()
+    soc_inc.mkdir()
+
+    (cpu_root / "cpu_top.sv").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    (soc_root / "soc_top.v").write_text("module soc_top(); endmodule\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text(
+        "+incdir+include\n+define+CPU_CFG=1\ncpu_top.sv\n",
+        encoding="utf-8",
+    )
+    (soc_root / "filelist.soc.f").write_text(
+        "+incdir+include\n+define+SOC_CFG=1\nsoc_top.v\n",
+        encoding="utf-8",
+    )
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        cpu_filelist=str(cpu_root / "filelist.cpu.f"),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_prepare"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("prepare", rerun=True)
+
+    merged = Path(ws["directory"]) / "prepare_fe" / "output" / "merged_rtl.f"
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    lines = [l.strip() for l in merged.read_text(encoding="utf-8").splitlines() if l.strip()]
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert state == StateEnum.Success
+    assert len(lines) == 2
+    assert ws["prepared_manifest"] == str(manifest)
+    assert set(prepared["rtl_files"]) == set(lines)
+    assert set(prepared["incdirs"]) == {str(cpu_inc.resolve()), str(soc_inc.resolve())}
+    assert prepared["defines"] == ["CPU_CFG=1", "SOC_CFG=1"]
+
+
+def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):
+    cpu_root = tmp_path / "cpu"
+    sub_root = cpu_root / "sub"
+    inc_a = cpu_root / "inc_a"
+    inc_b = cpu_root / "inc_b"
+    cpu_root.mkdir()
+    sub_root.mkdir()
+    inc_a.mkdir()
+    inc_b.mkdir()
+
+    (cpu_root / "cpu_top.sv").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    (sub_root / "sub_top.v").write_text("module sub_top(); endmodule\n", encoding="utf-8")
+    (cpu_root / "nested.f").write_text(
+        "+incdir+inc_b\n+define+SUB_CFG=1\nsub/sub_top.v\n",
+        encoding="utf-8",
+    )
+    (cpu_root / "filelist.cpu.f").write_text(
+        "+incdir+inc_a+inc_b\n+define+CPU_CFG=1+SUB_CFG=1\n-f nested.f\ncpu_top.sv\n",
+        encoding="utf-8",
+    )
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare_nested"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        cpu_filelist=str(cpu_root / "filelist.cpu.f"),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_prepare_nested"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("prepare", rerun=True)
+
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert state == StateEnum.Success
+    assert len(prepared["rtl_files"]) == 2
+    assert set(prepared["incdirs"]) == {str(inc_a.resolve()), str(inc_b.resolve())}
+    assert prepared["defines"] == ["CPU_CFG=1", "SUB_CFG=1"]
+
+
+def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb_main.cpp"
+    helper = tmp_path / "tb_helper.cpp"
+    inc = tmp_path / "include"
+    inc.mkdir()
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_opts"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        testbench=str(tb),
+        sim_cpp_sources=[str(helper)],
+        sim_cflags=[f"-I{inc}", "-O2"],
+        sim_ldflags=["-lm"],
+        sim_run_args=["--image", "tests/out/min2.soc.bin", "--max-cycles", "100"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_opts"))
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        run_calls.append(list(cmd))
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    compile_cmd = next(c for c in run_calls if "--binary" in c)
+    simulate_cmd = next(c for c in run_calls if "--binary" not in c)
+
+    assert state == StateEnum.Success
+    assert str(tb.resolve()) in compile_cmd
+    assert str(helper.resolve()) in compile_cmd
+    assert "-CFLAGS" in compile_cmd
+    assert f"-I{inc}" in compile_cmd[compile_cmd.index("-CFLAGS") + 1]
+    assert "-LDFLAGS" in compile_cmd
+    assert "-lm" in compile_cmd[compile_cmd.index("-LDFLAGS") + 1]
+    assert simulate_cmd[-4:] == ["--image", "tests/out/min2.soc.bin", "--max-cycles", "100"]

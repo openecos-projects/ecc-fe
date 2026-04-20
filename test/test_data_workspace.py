@@ -100,3 +100,28 @@ def test_create_workspace_default_design_from_dir_name(tmp_path):
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "my_chip"))
     assert ws["design"] == "my_chip"
+
+
+def test_create_workspace_persists_sim_options(tmp_path):
+    tb = tmp_path / "tb.cpp"
+    helper = tmp_path / "helper.cpp"
+    tb.write_text("int main(){return 0;}\n", encoding="utf-8")
+    helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        testbench=str(tb),
+        sim_cpp_sources=[str(helper)],
+        sim_cflags=["-I/tmp/inc", "-O2"],
+        sim_ldflags=["-lm"],
+        sim_run_args=["--image", "tests/out/min2.soc.bin"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws"))
+
+    assert ws["testbench"] == str(tb.resolve())
+    assert ws["sim_cpp_sources"] == [str(helper.resolve())]
+    assert ws["sim_cflags"] == ["-I/tmp/inc", "-O2"]
+    assert ws["sim_ldflags"] == ["-lm"]
+    assert ws["sim_run_args"] == ["--image", "tests/out/min2.soc.bin"]

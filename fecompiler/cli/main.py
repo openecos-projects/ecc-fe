@@ -27,6 +27,33 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Clock frequency in MHz (default: 100)")
     parser.add_argument("--rtl",       default="", help="RTL verilog file path (optional)")
     parser.add_argument("--filelist",  default="", help="Filelist path (optional)")
+    parser.add_argument("--cpu-filelist", default="", help="CPU filelist path (optional)")
+    parser.add_argument("--soc-filelist", default="", help="SoC filelist path (optional)")
+    parser.add_argument("--testbench", default="", help="Main C++ testbench path for sim (optional)")
+    parser.add_argument(
+        "--sim-cpp",
+        action="append",
+        default=[],
+        help="Additional C++ source for verilator sim compile (repeatable)",
+    )
+    parser.add_argument(
+        "--sim-cflag",
+        action="append",
+        default=[],
+        help="Extra C/C++ compiler flag passed by verilator -CFLAGS (repeatable)",
+    )
+    parser.add_argument(
+        "--sim-ldflag",
+        action="append",
+        default=[],
+        help="Extra linker flag passed by verilator -LDFLAGS (repeatable)",
+    )
+    parser.add_argument(
+        "--sim-arg",
+        action="append",
+        default=[],
+        help="Runtime argument passed to simulation binary (repeatable)",
+    )
     parser.add_argument("--rerun",     action="store_true", help="Re-run all steps")
     return parser
 
@@ -51,6 +78,13 @@ def run(argv: Sequence[str] | None = None) -> int:
             },
             origin_verilog=args.rtl,
             filelist=args.filelist,
+            cpu_filelist=args.cpu_filelist,
+            soc_filelist=args.soc_filelist,
+            testbench=args.testbench,
+            sim_cpp_sources=args.sim_cpp,
+            sim_cflags=args.sim_cflag,
+            sim_ldflags=args.sim_ldflag,
+            sim_run_args=args.sim_arg,
         )
         ws = create_workspace(spec)
 

@@ -16,7 +16,7 @@ from fecompiler.tools.verilator.subflow import (
     init_lint_subflow,
     init_sim_subflow,
 )
-from fecompiler.utility.json import json_write
+from fecompiler.utility.json import json_read, json_write
 
 
 # ── shared helper ─────────────────────────────────────────────────────────────
@@ -68,7 +68,11 @@ def _verilator_include_args() -> list[str]:
 
 
 def _rtl_files(workspace: dict[str, Any]) -> list[str]:
-    """Collect RTL files from filelist or origin verilog."""
+    """Collect RTL files (prefer prepare manifest, then filelist / origin)."""
+    prepared = _prepared_inputs(workspace)
+    if prepared:
+        return [str(p) for p in prepared.get("rtl_files", [])]
+
     filelist = workspace.get("input_filelist", "")
     if filelist and Path(filelist).exists():
         return [
@@ -81,6 +85,82 @@ def _rtl_files(workspace: dict[str, Any]) -> list[str]:
     if verilog and Path(verilog).exists():
         return [verilog]
     return []
+
+
+def _prepared_inputs(workspace: dict[str, Any]) -> dict[str, Any]:
+    """Load normalized prepare artifact if available."""
+    manifest = str(workspace.get("prepared_manifest", "")).strip()
+    if manifest and Path(manifest).exists():
+        data = json_read(manifest)
+        if isinstance(data, dict) and data.get("rtl_files"):
+            return data
+    return {}
+
+
+def _incdir_args(workspace: dict[str, Any]) -> list[str]:
+    """Return verilator include-dir args from prepare manifest + RTL parent dirs."""
+    prepared = _prepared_inputs(workspace)
+    seen: set[str] = set()
+    incdirs: list[str] = []
+
+    for inc in prepared.get("incdirs", []) if prepared else []:
+        text = str(inc).strip()
+        if text and text not in seen:
+            seen.add(text)
+            incdirs.append(text)
+
+    # Real-world RTL often uses relative includes from each source directory.
+    for rtl in _rtl_files(workspace):
+        parent = str(Path(rtl).expanduser().resolve().parent)
+        if parent and parent not in seen:
+            seen.add(parent)
+            incdirs.append(parent)
+
+    return [f"+incdir+{inc}" for inc in incdirs]
+
+
+def _define_args(workspace: dict[str, Any]) -> list[str]:
+    """Return verilator preprocessor define args from prepare manifest."""
+    prepared = _prepared_inputs(workspace)
+    return [f"+define+{define}" for define in prepared.get("defines", [])] if prepared else []
+
+
+def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
+    """Return C++ simulation sources (testbench first, then extras)."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    tb = str(workspace.get("testbench", "")).strip()
+    if tb:
+        seen.add(tb)
+        ordered.append(tb)
+
+    for src in workspace.get("sim_cpp_sources", []) or []:
+        s = str(src).strip()
+        if s and s not in seen:
+            seen.add(s)
+            ordered.append(s)
+    return ordered
+
+
+def _sim_cflags_args(workspace: dict[str, Any]) -> list[str]:
+    user_flags = [str(f).strip() for f in workspace.get("sim_cflags", []) or [] if str(f).strip()]
+    has_std = any(flag.startswith("-std=") for flag in user_flags)
+    flags = ([] if has_std else ["-std=c++20"]) + user_flags
+    if not flags:
+        return []
+    return ["-CFLAGS", " ".join(flags)]
+
+
+def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
+    flags = [str(f).strip() for f in workspace.get("sim_ldflags", []) or [] if str(f).strip()]
+    if not flags:
+        return []
+    return ["-LDFLAGS", " ".join(flags)]
+
+
+def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
+    return [str(arg) for arg in workspace.get("sim_run_args", []) or []]
 
 
 def _update_substep(step: WorkspaceStep, name: str, ok: bool,
@@ -125,6 +205,8 @@ class VerilatorLintStep(BaseStep):
             "--lint-only",
             "-Wno-fatal",
             *_verilator_include_args(),
+            *_incdir_args(workspace),
+            *_define_args(workspace),
             "--top",
             top,
         ] + files
@@ -161,19 +243,33 @@ class VerilatorSimStep(BaseStep):
         self._write_report(step)
 
     def check_result(self, step: WorkspaceStep) -> bool:
+        compile_state, compile_info = self._substep_status(step, SimSubFlowEnum.compile.value)
+        if compile_state == "Incomplete":
+            return False
+        if compile_info.get("skipped") == "no testbench":
+            return True
+
         sim_log = Path(step.report["dir"]) / "sim.log"
         if not sim_log.exists():
-            # no testbench → compile skipped → treat as success
-            return True
+            return False
         content = sim_log.read_text(encoding="utf-8")
         return "FAILED" not in content and "%Error" not in content
 
     def _run_compile(self, step: WorkspaceStep,
                      workspace: dict[str, Any]) -> bool:
-        tb = workspace.get("testbench", "")
-        if not tb or not Path(tb).exists():
+        cpp_sources = _sim_cpp_sources(workspace)
+        if not cpp_sources:
             _update_substep(step, SimSubFlowEnum.compile.value, ok=True,
                             info={"skipped": "no testbench"})
+            return False
+        missing = [src for src in cpp_sources if not Path(src).exists()]
+        if missing:
+            _update_substep(
+                step,
+                SimSubFlowEnum.compile.value,
+                ok=False,
+                info={"error": "missing sim C++ source", "missing_sources": missing},
+            )
             return False
 
         files   = _rtl_files(workspace)
@@ -182,11 +278,18 @@ class VerilatorSimStep(BaseStep):
         obj_dir = Path(step.directory) / "obj_dir"
 
         cmd = [
-            _verilator_cmd(), "--binary", "-j", "0",
+            _verilator_cmd(), "--binary", "-j", "8",
+            "-Wno-fatal",
+            "--trace",
+            *_verilator_include_args(),
+            *_incdir_args(workspace),
+            *_define_args(workspace),
+            *_sim_cflags_args(workspace),
+            *_sim_ldflags_args(workspace),
             "--top", top,
-            f"-Mdir={obj_dir}",
+            "--Mdir", str(obj_dir),
             "-o", str(sim_bin),
-        ] + files + [tb]
+        ] + files + cpp_sources
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         (Path(step.log["dir"]) / "compile.log").write_text(
@@ -206,20 +309,45 @@ class VerilatorSimStep(BaseStep):
                             info={"skipped": "not compiled"})
             return
 
-        result = subprocess.run([str(sim_bin)], capture_output=True, text=True)
+        result = subprocess.run(
+            [str(sim_bin), *_sim_run_args(workspace)],
+            capture_output=True,
+            text=True,
+        )
         sim_log.write_text(result.stdout + result.stderr, encoding="utf-8")
         _update_substep(step, SimSubFlowEnum.simulate.value,
                         ok=result.returncode == 0)
 
     def _write_report(self, step: WorkspaceStep) -> None:
         sim_log   = Path(step.report["dir"]) / "sim.log"
-        sim_ok    = not sim_log.exists() or (
+        compile_state, compile_info = self._substep_status(step, SimSubFlowEnum.compile.value)
+        if compile_info.get("skipped") == "no testbench":
+            sim_ok = True
+        elif not sim_log.exists():
+            sim_ok = False
+        else:
+            sim_ok = (
             "FAILED" not in sim_log.read_text() and
             "%Error" not in sim_log.read_text()
         )
+
+        if compile_info.get("skipped"):
+            compile_status = "skipped"
+        elif compile_state == "Success":
+            compile_status = "done"
+        else:
+            compile_status = "fail"
+
         json_write(step.report["step"], {
-            "compile":  "done" if (Path(step.output["dir"]) /
-                        f"{step.name}_sim").exists() else "skipped",
+            "compile":  compile_status,
             "simulate": "pass" if sim_ok else "fail",
         })
         _update_substep(step, SimSubFlowEnum.report.value, ok=True)
+
+    @staticmethod
+    def _substep_status(step: WorkspaceStep, name: str) -> tuple[str, dict[str, Any]]:
+        data = json_read(step.subflow.get("path", ""))
+        for entry in data.get("steps", []):
+            if entry.get("name") == name:
+                return str(entry.get("state", "")), dict(entry.get("info", {}) or {})
+        return "", {}

@@ -41,11 +41,11 @@ CFG_CXXFLAGS_NO_UNUSED =
 # Compiler flags that turn on extra warnings
 CFG_CXXFLAGS_WEXTRA = 
 # Compiler flags that enable coroutine support
-CFG_CXXFLAGS_COROUTINES = 
+CFG_CXXFLAGS_COROUTINES = -fcoroutines
 # Compiler flags when creating a precompiled header
 CFG_CXXFLAGS_PCH = -x c++-header
 # Compiler option to put in front of filename to read precompiled header
-CFG_CXXFLAGS_PCH_I = 
+CFG_CXXFLAGS_PCH_I = -include
 # Compiler's filename prefix for precompiled headers, .gch if clang, empty if GCC
 CFG_GCH_IF_CLANG = 
 # Linker flags
