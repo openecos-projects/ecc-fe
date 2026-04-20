@@ -1,0 +1,10 @@
+prefix=/home/luyoung/ecc-fe/fecompiler/tools/slang
+includedir="${prefix}/include"
+libdir="${prefix}/lib"
+
+Name: slang
+Description: SystemVerilog compiler and language services
+URL: https://sv-lang.com/
+Version: 10.0.248
+Cflags: -I"${includedir}"
+Libs: -L"${libdir}" -lsvlang
