@@ -44,8 +44,10 @@ ecc-fe/
 ## Flow Steps
 
 ```
-lint  (verilator)   ← verilator --lint-only  →  report/log.txt
-sim   (verilator)   ← compile + simulate     →  report/log.txt  (needs testbench)
+prepare (fe)        ← merge CPU/SoC/filelist inputs
+elab   (slang)      ← slang --lint-only      →  report/log.txt
+lint   (verilator)  ← verilator --lint-only  →  report/log.txt
+sim    (verilator)  ← compile + simulate     →  report/log.txt / report/cases/*
 step1 (ecc)  ]
 step2 (ecc)  ]      ← EDA stubs (placeholder for real tools)
 ...          ]
@@ -61,12 +63,12 @@ cli/main.py
         ├── write home/flow.json  (all steps Unstart)
         └── write origin/filelist.f  (absolute paths)
   └── engine/flow.py        EngineFlow
-        ├── create_step_workspaces()  →  mkdir lint_verilator/ sim_verilator/ step{1..7}_ecc/
+        ├── create_step_workspaces()  →  mkdir prepare_fe/ elab_slang/ lint_verilator/ sim_verilator/ step{1..7}_ecc/
         └── run_all()
-              ├── [START]   lint  → VerilatorLintStep.run()  → log.txt
-              ├── [SUCCESS] lint  → flow.json updated
-              ├── [START]   sim   → VerilatorSimStep.run()   → log.txt (skipped if no testbench)
-              ├── [SUCCESS] sim
+              ├── [START]   prepare  → merge rtl inputs
+              ├── [START]   elab     → slang checks
+              ├── [START]   lint     → verilator lint
+              ├── [START]   sim      → compile + run (single image or multi-image cases)
               └── step1~7   → _run_stub_step()
               → writes log/log.txt on every step
 ```
@@ -89,7 +91,16 @@ workspace_projects/<design>/
 │   ├── report/log.txt      # verilator lint output
 │   └── subflow.json        # sub-steps: lint → report
 ├── sim_verilator/
-│   ├── report/log.txt      # simulation output (if testbench provided)
+│   ├── report/log.txt      # simulation summary / single-run output
+│   ├── report/cases/       # multi-image mode: one folder per case
+│   │   └── <case>/log.txt
+│   ├── report/cases.json   # machine-readable case results
+│   ├── report/runs/        # per-run history (not overwritten)
+│   │   └── <run_id>/
+│   │       ├── log.txt
+│   │       ├── cases.json
+│   │       └── cases/<case>/log.txt
+│   └── report/build_programs.log.txt  # build_test.sh output when building programs/*.c
 │   └── subflow.json        # sub-steps: compile → simulate → report
 └── step{1..7}_ecc/         # EDA stub steps
     ├── config/  data/  output/  feature/  report/  log/  script/  analysis/
@@ -120,16 +131,72 @@ python3 -m fecompiler.cli.main --design adder --top adder \
 Projects are created under `workspace_projects/<design>/` by default
 (defined in `fecompiler/config.py`).
 
+### CPU+SoC Example (CLI)
+
+```bash
+# Full flow with one image
+python3 -m fecompiler.cli.main \
+    --design cl3_soc_phase2_full \
+    --top ysyxSoCTop \
+    --cpu-filelist docs/examples/cl3/filelist.cpu.f \
+    --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
+    --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
+    --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
+    --sim-cflag=-Ifecompiler/thirdparty/SoC \
+    --sim-image fecompiler/thirdparty/SoC/tests/out/min2.soc.bin \
+    --sim-arg=--max-cycles \
+    --sim-arg=2000000 \
+    --rerun
+
+# Re-run only sim on existing workspace and reuse compiled sim binary
+python3 -m fecompiler.cli.main \
+    --design cl3_soc_phase2_full \
+    --top ysyxSoCTop \
+    --workspace workspace_projects/cl3_soc_phase2_full \
+    --sim-only \
+    --sim-reuse-binary \
+    --sim-all-tests \
+    --sim-arg=--max-cycles \
+    --sim-arg=2000000
+```
+
 ### Bazel
 
 ```bash
-# Run the built-in adder example
-bazel run //:run_adder
+# Run CL3 CPU+SoC flow (single image)
+bazel run //:run_cl3_soc
+
+# Run CL3 CPU+SoC flow for all prebuilt *.soc.bin tests
+bazel run //:run_cl3_soc_all_tests
+
+# Re-run only sim on existing workspace (reuse compiled sim binary)
+bazel run //:run_cl3_soc_sim_only_all_tests
 
 # Pass custom arguments
 bazel run //:cli -- --design mydesign --top mydesign_top \
     --filelist path/to/filelist.f
 ```
+
+### Bazel Regression Commands (CPU+SoC)
+
+Use these two commands in daily regression. The `--test_env=PATH="$PATH"` is
+important so Bazel test sandbox can find local `slang/verilator` and RISC-V toolchain.
+
+```bash
+# 1) Full CPU+SoC end-to-end test
+bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
+
+# 2) All tests
+bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
+```
+
+Main logs for `test_cpu_soc_flow`:
+
+- `workspace_projects/cpu_soc_test/log/log.txt` (flow-level step status)
+- `workspace_projects/cpu_soc_test/sim_verilator/log/log.txt` (compile stage log)
+- `workspace_projects/cpu_soc_test/sim_verilator/report/log.txt` (latest simulation summary)
+- `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt` (latest per-case log)
+- `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt` (history per run, retained)
 
 ### How `-m fecompiler.cli.main` works
 
@@ -139,18 +206,26 @@ No installation needed — just run from the repo root.
 
 ## Building Third-party Tools
 
-Slang and Verilator binaries are **not committed** to the repo. After cloning, you must build them from source once:
+`fecompiler/tools/slang/bin/slang` and `fecompiler/tools/verilator/bin/*` are provided as the default tool binaries in this repository.
+
+If you want to rebuild/update them from `fecompiler/thirdparty/*`, use:
 
 ```bash
-# Slang (elaboration step)
-cmake -S fecompiler/thirdparty/slang -B fecompiler/thirdparty/slang/build -DCMAKE_BUILD_TYPE=Release
-cmake --build fecompiler/thirdparty/slang/build --parallel
-cp fecompiler/thirdparty/slang/build/bin/slang fecompiler/tools/slang/bin/
+# Slang (elaboration step, limit CPU cores with -j8)
+cmake -S fecompiler/thirdparty/slang \
+      -B fecompiler/thirdparty/slang/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/home/luyoung/ecc-fe/fecompiler/tools/slang
+cmake --build fecompiler/thirdparty/slang/build -j8
+cmake --install fecompiler/thirdparty/slang/build
 
-# Verilator (lint + simulation step)
-cmake -S fecompiler/thirdparty/verilator -B fecompiler/thirdparty/verilator/build -DCMAKE_BUILD_TYPE=Release
-cmake --build fecompiler/thirdparty/verilator/build --target verilator -j$(nproc)
-cp fecompiler/thirdparty/verilator/bin/verilator fecompiler/tools/verilator/bin/
+# Verilator (lint + simulation step, limit CPU cores with -j8)
+cmake -S fecompiler/thirdparty/verilator \
+      -B fecompiler/thirdparty/verilator/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/home/luyoung/ecc-fe/fecompiler/tools/verilator
+cmake --build fecompiler/thirdparty/verilator/build -j8
+cmake --install fecompiler/thirdparty/verilator/build
 ```
 
 ## Tests
@@ -162,6 +237,7 @@ python3 -m pytest test/           # all tests
 python3 -m pytest test/ -v        # verbose
 python3 -m pytest test/ -x        # stop on first failure
 python3 -m pytest test/test_examples.py  # integration tests (writes to workspace_projects/test_adder/)
+python3 -m pytest test/test_cpu_soc_flow.py  # CPU+SoC end-to-end API flow tests
 ```
 
 ### Bazel
@@ -182,6 +258,8 @@ bazel test //:test_engine_flow
 | Workspace create / load | `fecompiler/data/workspace.py` |
 | Step path structure | `fecompiler/tools/fe/builder.py` |
 | Step resource query | `fecompiler/tools/fe/service.py` |
+| Prepare step | `fecompiler/tools/prepare/runner.py` |
+| Slang elab step | `fecompiler/tools/slang/runner.py` |
 | Verilator lint step | `fecompiler/tools/verilator/runner.py` |
 | Step state enums | `fecompiler/data/step.py` |
 | Step registry | `fecompiler/tools/fe/__init__.py` |
@@ -189,3 +267,4 @@ bazel test //:test_engine_flow
 ## Documentation
 
 - Chinese walkthrough: [`docs/README.zh-CN.md`](docs/README.zh-CN.md)
+- Test-suite details by file: [`test/README.md`](test/README.md)

@@ -28,8 +28,27 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
 - `test_allflow_builder.py`
 - `test_data_workspace.py`
 - `test_engine_flow.py`
+- `test_cpu_soc_flow.py`
 
 `test_examples.py` 是集成测试，当前不在 `//:all_tests` 里，需通过 `pytest` 运行。
+
+CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
+
+```bash
+# 单独跑 CPU+SoC 全流程
+bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
+
+# 跑全部 Bazel 测试
+bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
+```
+
+`test_cpu_soc_flow` 主要日志目录：
+
+- `workspace_projects/cpu_soc_test/log/log.txt`
+- `workspace_projects/cpu_soc_test/sim_verilator/log/log.txt`
+- `workspace_projects/cpu_soc_test/sim_verilator/report/log.txt`
+- `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt`
+- `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（历史保留，不覆盖）
 
 ---
 
@@ -221,6 +240,39 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
 
 ---
 
+## 7) test/test_cpu_soc_flow.py
+
+### 测什么
+
+单 workspace (`cpu_soc_test`) 的 CPU+SoC 全流程回归：
+
+- `prepare -> elab -> lint -> sim` 逐步成功。
+- `sim` 支持在同一个项目里先编译 `SoC/tests/programs/*.c`，再批量执行所有生成的 `.soc.bin`。
+- 每个 case 的最新日志落到 `report/cases/<case>/log.txt`。
+- 每次运行都保留历史日志到 `report/runs/<run_id>/cases/<case>/log.txt`（不覆盖旧日志）。
+
+### 怎么测
+
+- `setUpClass` 里创建 `workspace_projects/cpu_soc_test`。
+- 先跑 prepare/elab/lint。
+- sim 阶段用后端 API 参数：
+  - `sim_build_all_programs=True`
+  - `sim_programs_dir=.../SoC/tests/programs`
+  - `sim_tests_out_dir=.../SoC/tests/out`
+  - `sim_all_tests=True`
+  - `sim_tests_dir=.../SoC/tests/out`
+- 再执行一次 sim，校验 `runs/` 历史目录新增且旧日志仍存在。
+
+### 用到的 API
+
+- `fecompiler.data.workspace.CreateWorkspaceData`
+- `fecompiler.data.workspace.create_workspace`
+- `fecompiler.data.workspace.load_workspace`
+- `fecompiler.engine.flow.EngineFlow`
+- `fecompiler.data.step.StateEnum`
+
+---
+
 ## 建议的日常使用方式
 
 - 开发阶段先跑：
@@ -229,4 +281,3 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
   - `python3 -m pytest test/test_data_workspace.py test/test_engine_flow.py -q`
 - 发布前跑一次：
   - `python3 -m pytest test -q`
-
