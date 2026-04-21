@@ -95,7 +95,7 @@ def test_elab_step_state_is_success():
 
 
 def test_elab_report_written():
-    elab_txt = TEST_WS_DIR / "elab_slang" / "report" / "elab.txt"
+    elab_txt = TEST_WS_DIR / "elab_slang" / "report" / "log.txt"
     assert elab_txt.exists()
     assert "error:" not in elab_txt.read_text().lower()
 
@@ -117,7 +117,7 @@ def test_lint_step_state_is_success():
 
 
 def test_lint_report_written():
-    lint_txt = TEST_WS_DIR / "lint_verilator" / "report" / "lint.txt"
+    lint_txt = TEST_WS_DIR / "lint_verilator" / "report" / "log.txt"
     assert lint_txt.exists()
     assert "%Error" not in lint_txt.read_text()
 

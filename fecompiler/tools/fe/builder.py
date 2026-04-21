@@ -103,7 +103,7 @@ def build_step(
         },
         log={
             "dir":  f"{sd}/log",
-            "file": f"{sd}/log/{step_name}.log",
+            "file": f"{sd}/log/log.txt",
         },
         script={
             "dir":  f"{sd}/script",

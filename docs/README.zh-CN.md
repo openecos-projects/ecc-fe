@@ -105,7 +105,7 @@ demo1/
     ├── output/             # .def.gz  .v  .gds  .json  .png
     ├── feature/            # step.json  db.json  map.json
     ├── report/             # step.rpt  db.rpt  sta/
-    ├── log/                # step.log
+    ├── log/                # log.txt
     ├── script/             # step_main.tcl
     ├── analysis/           # metrics.json  statis.csv
     ├── subflow.json        # 子步骤列表及各子步骤状态

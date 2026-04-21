@@ -42,7 +42,7 @@ class SlangElabStep(BaseStep):
     """Run slang elaboration check on RTL.
 
     Sub-steps: elaborate → report
-    Success: elab.txt exists and contains no 'error:'
+    Success: log.txt exists and contains no 'error:'
     """
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
@@ -51,10 +51,10 @@ class SlangElabStep(BaseStep):
         self._write_report(step)
 
     def check_result(self, step: WorkspaceStep) -> bool:
-        elab_path = Path(step.report["dir"]) / "elab.txt"
-        if not elab_path.exists():
+        log_path = Path(step.report["dir"]) / "log.txt"
+        if not log_path.exists():
             return False
-        content = elab_path.read_text(encoding="utf-8")
+        content = log_path.read_text(encoding="utf-8")
         return "error:" not in content.lower() or "0 errors" in content
 
     # ── internal ──────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ class SlangElabStep(BaseStep):
                        workspace: dict[str, Any]) -> None:
         files     = self._rtl_files(workspace)
         top       = workspace.get("top_module", "top")
-        elab_path = Path(step.report["dir"]) / "elab.txt"
+        log_path = Path(step.report["dir"]) / "log.txt"
 
         cmd = [
             _slang_cmd(),
@@ -133,19 +133,19 @@ class SlangElabStep(BaseStep):
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         output = (result.stdout + result.stderr).strip() or "Build succeeded: 0 errors, 0 warnings"
-        elab_path.write_text(output, encoding="utf-8")
+        log_path.write_text(output, encoding="utf-8")
 
         ok = result.returncode == 0
         self._update_substep(step, SlangSubFlowEnum.elaborate.value, ok=ok)
 
     def _write_report(self, step: WorkspaceStep) -> None:
-        elab_path = Path(step.report["dir"]) / "elab.txt"
-        content   = elab_path.read_text(encoding="utf-8") if elab_path.exists() else ""
+        log_path = Path(step.report["dir"]) / "log.txt"
+        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         ok        = "error:" not in content.lower() or "0 errors" in content
 
         json_write(step.report["step"], {
             "elaborate": "pass" if ok else "fail",
-            "report":    str(elab_path),
+            "report":    str(log_path),
         })
         self._update_substep(step, SlangSubFlowEnum.report.value, ok=True)
 

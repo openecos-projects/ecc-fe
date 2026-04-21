@@ -18,8 +18,7 @@ def build_verilator_step(
     Extends the standard WorkspaceStep paths with verilator-specific outputs:
       output/sim_bin   — compiled simulation binary
       output/vcd       — waveform dump
-      report/lint.txt  — lint report
-      report/sim.log   — simulation stdout/stderr
+      report/log.txt   — lint / simulation report log
     """
     design    = workspace["design"]
     step_dir  = Path(workspace["directory"]) / f"{step_name}_verilator"
@@ -28,6 +27,6 @@ def build_verilator_step(
     return {
         "sim_bin": f"{sd}/output/{design}_sim",
         "vcd":     f"{sd}/output/{design}.vcd",
-        "lint":    f"{sd}/report/lint.txt",
-        "sim_log": f"{sd}/report/sim.log",
+        "lint":    f"{sd}/report/log.txt",
+        "sim_log": f"{sd}/report/log.txt",
     }

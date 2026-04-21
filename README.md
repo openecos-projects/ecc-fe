@@ -44,8 +44,8 @@ ecc-fe/
 ## Flow Steps
 
 ```
-lint  (verilator)   ← verilator --lint-only  →  report/lint.txt
-sim   (verilator)   ← compile + simulate     →  report/sim.log  (needs testbench)
+lint  (verilator)   ← verilator --lint-only  →  report/log.txt
+sim   (verilator)   ← compile + simulate     →  report/log.txt  (needs testbench)
 step1 (ecc)  ]
 step2 (ecc)  ]      ← EDA stubs (placeholder for real tools)
 ...          ]
@@ -63,9 +63,9 @@ cli/main.py
   └── engine/flow.py        EngineFlow
         ├── create_step_workspaces()  →  mkdir lint_verilator/ sim_verilator/ step{1..7}_ecc/
         └── run_all()
-              ├── [START]   lint  → VerilatorLintStep.run()  → lint.txt
+              ├── [START]   lint  → VerilatorLintStep.run()  → log.txt
               ├── [SUCCESS] lint  → flow.json updated
-              ├── [START]   sim   → VerilatorSimStep.run()   → sim.log (skipped if no testbench)
+              ├── [START]   sim   → VerilatorSimStep.run()   → log.txt (skipped if no testbench)
               ├── [SUCCESS] sim
               └── step1~7   → _run_stub_step()
               → writes log/flow.log on every step
@@ -86,10 +86,10 @@ workspace_projects/<design>/
 ├── log/
 │   └── flow.log            # step start / success / failed with timestamps
 ├── lint_verilator/
-│   ├── report/lint.txt     # verilator lint output
+│   ├── report/log.txt      # verilator lint output
 │   └── subflow.json        # sub-steps: lint → report
 ├── sim_verilator/
-│   ├── report/sim.log      # simulation output (if testbench provided)
+│   ├── report/log.txt      # simulation output (if testbench provided)
 │   └── subflow.json        # sub-steps: compile → simulate → report
 └── step{1..7}_ecc/         # EDA stub steps
     ├── config/  data/  output/  feature/  report/  log/  script/  analysis/
