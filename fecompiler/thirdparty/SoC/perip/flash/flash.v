@@ -11,8 +11,8 @@ module flash (
 );
   wire reset = ss;
 
-  typedef enum [2:0] { cmd_t, addr_t, data_t, err_t } state_t;
-  reg [2:0]  state;
+  typedef enum logic [2:0] { cmd_t, addr_t, data_t, err_t } state_t;
+  state_t state;
   reg [7:0]  counter;
   reg [7:0]  cmd;
   reg [23:0] addr;
