@@ -1,5 +1,5 @@
 
-/home/luyoung/ecc-fe/docs/examples/cl3//tests/out/add.elf:     file format elf32-littleriscv
+/home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/tests/out/add.elf:     file format elf32-littleriscv
 
 
 Disassembly of section .text:
