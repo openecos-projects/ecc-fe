@@ -479,6 +479,50 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
     assert (report_dir / "cases" / "b.soc" / "log.txt").exists()
 
 
+def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb_main.cpp"
+    img = tmp_path / "tests" / "out" / "single.soc.bin"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"\x01")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_single_case"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        testbench=str(tb),
+        sim_run_args=["--image", str(img), "--max-cycles", "100"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_single_case"))
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="ok-single\n", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+    assert state == StateEnum.Success
+
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    assert (report_dir / "cases" / "single.soc" / "log.txt").exists()
+    runs_root = report_dir / "runs"
+    run_dirs = sorted([p for p in runs_root.iterdir() if p.is_dir()])
+    assert run_dirs
+    latest_run = run_dirs[-1]
+    assert (latest_run / "cases" / "single.soc" / "log.txt").exists()
+
+
 def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
     rtl = tmp_path / "chip_top.v"
     rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")

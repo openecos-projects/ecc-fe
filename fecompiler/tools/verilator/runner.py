@@ -280,6 +280,18 @@ def _sim_cases(workspace: dict[str, Any]) -> list[dict[str, Any]]:
     return _sim_cases_from_images(_sim_images(workspace), _sim_run_args(workspace))
 
 
+def _image_from_run_args(args: list[str]) -> str:
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--image" and i + 1 < len(args):
+            return str(_resolve_path(args[i + 1]))
+        if arg.startswith("--image="):
+            return str(_resolve_path(arg.split("=", 1)[1]))
+        i += 1
+    return ""
+
+
 def _run_tag() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
@@ -707,14 +719,69 @@ class VerilatorSimStep(BaseStep):
             )
             return
 
+        # Keep a universal report layout: even single-run mode writes cases/<case>/log.txt.
+        run_args = _sim_run_args(workspace)
+        run_id = _run_tag()
+        runs_root.mkdir(parents=True, exist_ok=True)
+        case_root.mkdir(parents=True, exist_ok=True)
+
+        image = _image_from_run_args(run_args)
+        case_name = _safe_case_name(Path(image).stem) if image else "default"
+
+        run_root = runs_root / run_id
+        run_case_dir = run_root / "cases" / case_name
+        run_case_dir.mkdir(parents=True, exist_ok=True)
+        latest_case_dir = case_root / case_name
+        latest_case_dir.mkdir(parents=True, exist_ok=True)
+
+        run_case_log = run_case_dir / "log.txt"
+        latest_case_log = latest_case_dir / "log.txt"
+
         result = subprocess.run(
-            [str(sim_bin), *_sim_run_args(workspace)],
+            [str(sim_bin), *run_args],
             capture_output=True,
             text=True,
         )
-        sim_log.write_text(result.stdout + result.stderr, encoding="utf-8")
-        _update_substep(step, SimSubFlowEnum.simulate.value,
-                        ok=result.returncode == 0)
+        output = result.stdout + result.stderr
+        run_case_log.write_text(output, encoding="utf-8")
+        latest_case_log.write_text(output, encoding="utf-8")
+
+        case_ok = result.returncode == 0 and "FAILED" not in output and "%Error" not in output
+        summary = (
+            f"[{case_name}] rc={result.returncode} image={image or '-'} "
+            f"latest_log={latest_case_log} run_log={run_case_log}\n"
+        )
+        sim_log.write_text(summary, encoding="utf-8")
+        (run_root / "log.txt").write_text(summary, encoding="utf-8")
+
+        cases_report = {
+            "run_id": run_id,
+            "cases": [
+                {
+                    "name": case_name,
+                    "image": image,
+                    "returncode": int(result.returncode),
+                    "ok": case_ok,
+                    "log": str(run_case_log),
+                    "latest_log": str(latest_case_log),
+                    "run_id": run_id,
+                }
+            ],
+        }
+        json_write(str(cases_json), cases_report)
+        json_write(str(run_root / "cases.json"), cases_report)
+
+        _update_substep(
+            step,
+            SimSubFlowEnum.simulate.value,
+            ok=case_ok,
+            info={
+                "cases": 1,
+                "failed_cases": [] if case_ok else [case_name],
+                "run_id": run_id,
+                "run_dir": str(run_root),
+            },
+        )
 
     def _write_report(self, step: WorkspaceStep) -> None:
         sim_log   = Path(step.report["dir"]) / "log.txt"
