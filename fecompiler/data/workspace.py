@@ -69,6 +69,15 @@ class CreateWorkspaceData:
     sim_ldflags: list[str] = field(default_factory=list)
     sim_run_args: list[str] = field(default_factory=list)
     sim_images: list[str] = field(default_factory=list)
+    sim_all_tests: bool = False
+    sim_tests_dir: str = ""
+    sim_build_all_programs: bool = False
+    sim_program_names: list[str] = field(default_factory=list)
+    sim_program_sources: list[str] = field(default_factory=list)
+    sim_programs_dir: str = ""
+    sim_tests_out_dir: str = ""
+    sim_soc_root: str = ""
+    sim_build_test_script: str = ""
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -139,6 +148,15 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     sim_ldflags = _to_str_list(parameters.get("sim_ldflags", []))
     sim_run_args = _to_str_list(parameters.get("sim_run_args", []))
     sim_images = _to_str_list(parameters.get("sim_images", []))
+    sim_all_tests = _to_bool(parameters.get("sim_all_tests", False))
+    sim_tests_dir = str(parameters.get("sim_tests_dir", "")).strip()
+    sim_build_all_programs = _to_bool(parameters.get("sim_build_all_programs", False))
+    sim_program_names = _to_str_list(parameters.get("sim_program_names", []))
+    sim_program_sources = _to_str_list(parameters.get("sim_program_sources", []))
+    sim_programs_dir = str(parameters.get("sim_programs_dir", "")).strip()
+    sim_tests_out_dir = str(parameters.get("sim_tests_out_dir", "")).strip()
+    sim_soc_root = str(parameters.get("sim_soc_root", "")).strip()
+    sim_build_test_script = str(parameters.get("sim_build_test_script", "")).strip()
 
     return {
         "directory":       str(project_dir),
@@ -159,6 +177,15 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         "sim_ldflags":     sim_ldflags,
         "sim_run_args":    sim_run_args,
         "sim_images":      sim_images,
+        "sim_all_tests":   sim_all_tests,
+        "sim_tests_dir":   sim_tests_dir,
+        "sim_build_all_programs": sim_build_all_programs,
+        "sim_program_names": sim_program_names,
+        "sim_program_sources": sim_program_sources,
+        "sim_programs_dir": sim_programs_dir,
+        "sim_tests_out_dir": sim_tests_out_dir,
+        "sim_soc_root": sim_soc_root,
+        "sim_build_test_script": sim_build_test_script,
     }
 
 
@@ -198,6 +225,26 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
         params["sim_images"] = [
             str(Path(p).expanduser().resolve()) for p in spec.sim_images if str(p).strip()
         ]
+    if spec.sim_all_tests:
+        params["sim_all_tests"] = True
+    if spec.sim_tests_dir:
+        params["sim_tests_dir"] = str(Path(spec.sim_tests_dir).expanduser().resolve())
+    if spec.sim_build_all_programs:
+        params["sim_build_all_programs"] = True
+    if spec.sim_program_names:
+        params["sim_program_names"] = [str(x).strip() for x in spec.sim_program_names if str(x).strip()]
+    if spec.sim_program_sources:
+        params["sim_program_sources"] = [
+            str(Path(p).expanduser().resolve()) for p in spec.sim_program_sources if str(p).strip()
+        ]
+    if spec.sim_programs_dir:
+        params["sim_programs_dir"] = str(Path(spec.sim_programs_dir).expanduser().resolve())
+    if spec.sim_tests_out_dir:
+        params["sim_tests_out_dir"] = str(Path(spec.sim_tests_out_dir).expanduser().resolve())
+    if spec.sim_soc_root:
+        params["sim_soc_root"] = str(Path(spec.sim_soc_root).expanduser().resolve())
+    if spec.sim_build_test_script:
+        params["sim_build_test_script"] = str(Path(spec.sim_build_test_script).expanduser().resolve())
     return params
 
 
@@ -379,3 +426,17 @@ def _to_str_list(raw: Any) -> list[str]:
         text = raw.strip()
         return [text] if text else []
     return []
+
+
+def _to_bool(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    return False

@@ -72,6 +72,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory used by --sim-all-tests (default: fecompiler/thirdparty/SoC/tests/out)",
     )
     parser.add_argument(
+        "--sim-build-all-programs",
+        action="store_true",
+        help="Build all C programs under --sim-programs-dir to *.soc.bin before sim",
+    )
+    parser.add_argument(
+        "--sim-programs-dir",
+        default="fecompiler/thirdparty/SoC/tests/programs",
+        help="Directory of C programs used by --sim-build-all-programs (default: fecompiler/thirdparty/SoC/tests/programs)",
+    )
+    parser.add_argument(
+        "--sim-program",
+        action="append",
+        default=[],
+        help="Specific C program name/path to build before sim (repeatable)",
+    )
+    parser.add_argument(
+        "--sim-tests-out-dir",
+        default="fecompiler/thirdparty/SoC/tests/out",
+        help="Output directory for built *.soc.bin (default: fecompiler/thirdparty/SoC/tests/out)",
+    )
+    parser.add_argument(
         "--sim-only",
         action="store_true",
         help="Run only sim step on existing workspace",
@@ -128,7 +149,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     sim_images = _resolve_sim_images(args)
-    if args.sim_all_tests and not sim_images:
+    if args.sim_all_tests and not sim_images and not args.sim_build_all_programs:
         print(
             f"Error: no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}",
             file=sys.stderr,
@@ -163,6 +184,12 @@ def run(argv: Sequence[str] | None = None) -> int:
             sim_ldflags=args.sim_ldflag,
             sim_run_args=args.sim_arg,
             sim_images=sim_images,
+            sim_all_tests=args.sim_all_tests,
+            sim_tests_dir=args.sim_tests_dir,
+            sim_build_all_programs=args.sim_build_all_programs,
+            sim_program_names=args.sim_program,
+            sim_programs_dir=args.sim_programs_dir,
+            sim_tests_out_dir=args.sim_tests_out_dir,
         )
         ws = create_workspace(spec)
 
@@ -194,6 +221,22 @@ def run(argv: Sequence[str] | None = None) -> int:
     if sim_images:
         ws["sim_images"] = sim_images
         updates["sim_images"] = sim_images
+    if args.sim_all_tests:
+        ws["sim_all_tests"] = True
+        ws["sim_tests_dir"] = str(Path(args.sim_tests_dir).expanduser().resolve())
+        updates["sim_all_tests"] = True
+        updates["sim_tests_dir"] = ws["sim_tests_dir"]
+    if args.sim_build_all_programs:
+        ws["sim_build_all_programs"] = True
+        updates["sim_build_all_programs"] = True
+    if args.sim_build_all_programs or args.sim_program:
+        ws["sim_programs_dir"] = str(Path(args.sim_programs_dir).expanduser().resolve())
+        ws["sim_tests_out_dir"] = str(Path(args.sim_tests_out_dir).expanduser().resolve())
+        updates["sim_programs_dir"] = ws["sim_programs_dir"]
+        updates["sim_tests_out_dir"] = ws["sim_tests_out_dir"]
+    if args.sim_program:
+        ws["sim_program_names"] = [str(x).strip() for x in args.sim_program if str(x).strip()]
+        updates["sim_program_names"] = ws["sim_program_names"]
     ws["sim_reuse_binary"] = bool(args.sim_reuse_binary or args.sim_only)
     _persist_parameter_overrides(ws, updates)
 

@@ -159,6 +159,20 @@ py_test(
     deps = [":fecompiler"],
 )
 
+py_test(
+    name = "test_cpu_soc_flow",
+    srcs = ["test/test_cpu_soc_flow.py"],
+    main = "test/test_cpu_soc_flow.py",
+    imports = ["."],
+    deps = [":fecompiler"],
+    data = glob([
+        "docs/examples/cl3/**",
+        "fecompiler/thirdparty/SoC/**",
+        "fecompiler/tools/slang/**",
+        "fecompiler/tools/verilator/**",
+    ]),
+)
+
 # ── Convenience target: run all tests ─────────────────────────────────────────
 
 test_suite(
@@ -169,5 +183,6 @@ test_suite(
         ":test_allflow_builder",
         ":test_data_workspace",
         ":test_engine_flow",
+        ":test_cpu_soc_flow",
     ],
 )

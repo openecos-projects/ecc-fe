@@ -117,6 +117,15 @@ def test_create_workspace_persists_sim_options(tmp_path):
         sim_ldflags=["-lm"],
         sim_run_args=["--image", "tests/out/min2.soc.bin"],
         sim_images=["tests/out/min2.soc.bin", "tests/out/add.soc.bin"],
+        sim_all_tests=True,
+        sim_tests_dir=str(tmp_path / "tests" / "out"),
+        sim_build_all_programs=True,
+        sim_program_names=["min2", "add"],
+        sim_program_sources=[str(tmp_path / "tests" / "programs" / "min2.c")],
+        sim_programs_dir=str(tmp_path / "tests" / "programs"),
+        sim_tests_out_dir=str(tmp_path / "tests" / "out"),
+        sim_soc_root=str(tmp_path / "soc"),
+        sim_build_test_script=str(tmp_path / "soc" / "scripts" / "build_test.sh"),
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws"))
@@ -130,3 +139,14 @@ def test_create_workspace_persists_sim_options(tmp_path):
         str(Path("tests/out/min2.soc.bin").resolve()),
         str(Path("tests/out/add.soc.bin").resolve()),
     ]
+    assert ws["sim_all_tests"] is True
+    assert ws["sim_build_all_programs"] is True
+    assert ws["sim_program_names"] == ["min2", "add"]
+    assert ws["sim_program_sources"] == [
+        str((tmp_path / "tests" / "programs" / "min2.c").resolve()),
+    ]
+    assert ws["sim_programs_dir"] == str((tmp_path / "tests" / "programs").resolve())
+    assert ws["sim_tests_dir"] == str((tmp_path / "tests" / "out").resolve())
+    assert ws["sim_tests_out_dir"] == str((tmp_path / "tests" / "out").resolve())
+    assert ws["sim_soc_root"] == str((tmp_path / "soc").resolve())
+    assert ws["sim_build_test_script"] == str((tmp_path / "soc" / "scripts" / "build_test.sh").resolve())

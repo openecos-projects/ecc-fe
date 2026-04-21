@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ _LOCAL_VERILATOR_INCLUDE = Path(__file__).parent / "include"
 _SYSTEM_VERILATOR_INCLUDE = Path("/usr/local/share/verilator/include")
 _WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
 _WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
+_WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
 
 
 def _verilator_cmd() -> str:
@@ -166,16 +167,68 @@ def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
     return [str(arg) for arg in workspace.get("sim_run_args", []) or []]
 
 
+def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:
+    p = Path(path_text).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    if base is not None:
+        return (base / p).resolve()
+    return (_invocation_root() / p).resolve()
+
+
+def _workspace_soc_root(workspace: dict[str, Any]) -> Path | None:
+    explicit_root = str(workspace.get("sim_soc_root", "")).strip()
+    if explicit_root:
+        p = _resolve_path(explicit_root)
+        if p.exists():
+            return p
+
+    soc_filelist = str(workspace.get("soc_filelist", "")).strip()
+    if soc_filelist:
+        p = _resolve_path(soc_filelist)
+        if p.exists():
+            return p.parent
+
+    root = _invocation_root()
+    candidate = root / _WORKSPACE_REL_SOC_ROOT
+    if candidate.exists():
+        return candidate.resolve()
+
+    return None
+
+
+def _soc_tests_out_dir(workspace: dict[str, Any]) -> Path:
+    explicit = str(workspace.get("sim_tests_out_dir", "")).strip()
+    if explicit:
+        return _resolve_path(explicit)
+
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is not None:
+        return soc_root / "tests" / "out"
+    return _invocation_root() / "tests" / "out"
+
+
 def _sim_images(workspace: dict[str, Any]) -> list[str]:
+    seen: set[str] = set()
     images: list[str] = []
+
     for image in workspace.get("sim_images", []) or []:
         text = str(image).strip()
         if not text:
             continue
-        p = Path(text).expanduser()
-        if not p.is_absolute():
-            p = _invocation_root() / p
-        images.append(str(p.resolve()))
+        canonical = str(_resolve_path(text))
+        if canonical not in seen:
+            seen.add(canonical)
+            images.append(canonical)
+
+    if workspace.get("sim_all_tests"):
+        tests_dir_raw = str(workspace.get("sim_tests_dir", "")).strip()
+        tests_dir = _resolve_path(tests_dir_raw) if tests_dir_raw else _soc_tests_out_dir(workspace)
+        for image in sorted(tests_dir.glob("*.soc.bin")):
+            canonical = str(image.resolve())
+            if canonical not in seen:
+                seen.add(canonical)
+                images.append(canonical)
     return images
 
 
@@ -201,12 +254,11 @@ def _safe_case_name(name: str) -> str:
     return token or "case"
 
 
-def _sim_cases(workspace: dict[str, Any]) -> list[dict[str, Any]]:
-    images = _sim_images(workspace)
+def _sim_cases_from_images(images: list[str], run_args: list[str]) -> list[dict[str, Any]]:
     if not images:
         return []
 
-    base_args = _strip_image_args(_sim_run_args(workspace))
+    base_args = _strip_image_args(run_args)
     seen: dict[str, int] = {}
     cases: list[dict[str, Any]] = []
     for image in images:
@@ -222,6 +274,120 @@ def _sim_cases(workspace: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return cases
+
+
+def _sim_cases(workspace: dict[str, Any]) -> list[dict[str, Any]]:
+    return _sim_cases_from_images(_sim_images(workspace), _sim_run_args(workspace))
+
+
+def _run_tag() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+
+def _build_test_script(workspace: dict[str, Any]) -> Path:
+    explicit = str(workspace.get("sim_build_test_script", "")).strip()
+    if explicit:
+        return _resolve_path(explicit)
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is not None:
+        return soc_root / "scripts" / "build_test.sh"
+    return _invocation_root() / "scripts" / "build_test.sh"
+
+
+def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
+    explicit_sources = workspace.get("sim_program_sources", []) or []
+    if explicit_sources:
+        out: list[Path] = []
+        seen: set[str] = set()
+        for item in explicit_sources:
+            text = str(item).strip()
+            if not text:
+                continue
+            p = _resolve_path(text)
+            key = str(p)
+            if key not in seen:
+                seen.add(key)
+                out.append(p)
+        return out
+
+    explicit_dir = str(workspace.get("sim_programs_dir", "")).strip()
+    if explicit_dir:
+        programs_dir = _resolve_path(explicit_dir)
+    else:
+        soc_root = _workspace_soc_root(workspace)
+        programs_dir = soc_root / "tests" / "programs" if soc_root is not None else (_invocation_root() / "tests" / "programs")
+
+    names = [str(x).strip() for x in workspace.get("sim_program_names", []) or [] if str(x).strip()]
+    if names:
+        out = []
+        seen = set()
+        for name in names:
+            p = Path(name)
+            if p.suffix != ".c":
+                p = p.with_suffix(".c")
+            source = _resolve_path(str(p), base=programs_dir)
+            key = str(source)
+            if key not in seen:
+                seen.add(key)
+                out.append(source)
+        return out
+
+    if workspace.get("sim_build_all_programs"):
+        return sorted(programs_dir.glob("*.c"))
+    return []
+
+
+def _prepare_sim_images(workspace: dict[str, Any], *,
+                        build_log_path: Path | None = None) -> tuple[list[str], bool]:
+    images = _sim_images(workspace)
+    sources = _program_sources_to_build(workspace)
+    if not sources:
+        return images, True
+
+    build_script = _build_test_script(workspace)
+    out_dir = _soc_tests_out_dir(workspace)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not build_script.exists():
+        if build_log_path is not None:
+            build_log_path.write_text(f"build_test.sh not found: {build_script}\n", encoding="utf-8")
+        return images, False
+
+    seen: set[str] = set(images)
+    lines: list[str] = []
+    ok = True
+    for src in sources:
+        name = src.stem
+        cmd = [
+            str(build_script),
+            "--src", str(src),
+            "--name", name,
+            "--out_dir", str(out_dir),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            output = (result.stdout + result.stderr).strip()
+            rc = int(result.returncode)
+        except OSError as exc:
+            output = str(exc)
+            rc = 1
+        lines.append(f"[build_program] name={name} rc={rc} src={src}")
+        if output:
+            lines.append(output)
+        img = out_dir / f"{name}.soc.bin"
+        if rc == 0 and img.exists():
+            canonical = str(img.resolve())
+            if canonical not in seen:
+                seen.add(canonical)
+                images.append(canonical)
+        else:
+            ok = False
+            lines.append(f"[build_program] missing image: {img}")
+
+    if build_log_path is not None:
+        build_log_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    return images, ok
 
 
 def _invocation_root() -> Path:
@@ -440,22 +606,39 @@ class VerilatorSimStep(BaseStep):
                       compiled: bool) -> None:
         sim_bin = Path(step.output["dir"]) / f"{workspace['design']}_sim"
         sim_log = Path(step.report["dir"]) / "log.txt"
-        cases = _sim_cases(workspace)
+        build_log = Path(step.report["dir"]) / "build_programs.log.txt"
         cases_json = Path(step.report["dir"]) / "cases.json"
         case_root = Path(step.report["dir"]) / "cases"
-
-        if cases_json.exists():
-            cases_json.unlink()
-        if case_root.exists():
-            shutil.rmtree(case_root)
+        runs_root = Path(step.report["dir"]) / "runs"
 
         if not compiled or not sim_bin.exists():
             _update_substep(step, SimSubFlowEnum.simulate.value, ok=True,
                             info={"skipped": "not compiled"})
             return
 
+        images, build_ok = _prepare_sim_images(workspace, build_log_path=build_log)
+        if not build_ok:
+            sim_log.write_text(
+                "build test programs failed; see build_programs.log.txt\n",
+                encoding="utf-8",
+            )
+            _update_substep(
+                step,
+                SimSubFlowEnum.simulate.value,
+                ok=False,
+                info={"error": "build programs failed", "log": str(build_log)},
+            )
+            return
+
+        cases = _sim_cases_from_images(images, _sim_run_args(workspace))
         if cases:
             case_root.mkdir(parents=True, exist_ok=True)
+            runs_root.mkdir(parents=True, exist_ok=True)
+            run_id = _run_tag()
+            run_root = runs_root / run_id
+            run_case_root = run_root / "cases"
+            run_case_root.mkdir(parents=True, exist_ok=True)
+            run_summary_log = run_root / "log.txt"
 
             all_ok = True
             failed_cases: list[str] = []
@@ -465,9 +648,12 @@ class VerilatorSimStep(BaseStep):
             for case in cases:
                 case_name = str(case["name"])
                 image = str(case["image"])
-                case_dir = case_root / case_name
-                case_dir.mkdir(parents=True, exist_ok=True)
-                case_log = case_dir / "log.txt"
+                latest_case_dir = case_root / case_name
+                latest_case_dir.mkdir(parents=True, exist_ok=True)
+                latest_case_log = latest_case_dir / "log.txt"
+                run_case_dir = run_case_root / case_name
+                run_case_dir.mkdir(parents=True, exist_ok=True)
+                run_case_log = run_case_dir / "log.txt"
 
                 if not Path(image).exists():
                     output = f"image not found: {image}\n"
@@ -481,7 +667,8 @@ class VerilatorSimStep(BaseStep):
                     output = result.stdout + result.stderr
                     rc = int(result.returncode)
 
-                case_log.write_text(output, encoding="utf-8")
+                latest_case_log.write_text(output, encoding="utf-8")
+                run_case_log.write_text(output, encoding="utf-8")
                 case_ok = rc == 0 and "FAILED" not in output and "%Error" not in output
                 if not case_ok:
                     all_ok = False
@@ -493,20 +680,30 @@ class VerilatorSimStep(BaseStep):
                         "image": image,
                         "returncode": rc,
                         "ok": case_ok,
-                        "log": str(case_log),
+                        "log": str(run_case_log),
+                        "latest_log": str(latest_case_log),
+                        "run_id": run_id,
                     }
                 )
                 summary_lines.append(
-                    f"[{case_name}] rc={rc} image={image} log={case_log}"
+                    f"[{case_name}] rc={rc} image={image} latest_log={latest_case_log} run_log={run_case_log}"
                 )
 
-            sim_log.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-            json_write(str(Path(step.report["dir"]) / "cases.json"), {"cases": cases_report})
+            summary_text = "\n".join(summary_lines) + "\n"
+            sim_log.write_text(summary_text, encoding="utf-8")
+            run_summary_log.write_text(summary_text, encoding="utf-8")
+            json_write(str(cases_json), {"run_id": run_id, "cases": cases_report})
+            json_write(str(run_root / "cases.json"), {"run_id": run_id, "cases": cases_report})
             _update_substep(
                 step,
                 SimSubFlowEnum.simulate.value,
                 ok=all_ok,
-                info={"cases": len(cases_report), "failed_cases": failed_cases},
+                info={
+                    "cases": len(cases_report),
+                    "failed_cases": failed_cases,
+                    "run_id": run_id,
+                    "run_dir": str(run_root),
+                },
             )
             return
 
