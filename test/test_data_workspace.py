@@ -116,6 +116,7 @@ def test_create_workspace_persists_sim_options(tmp_path):
         sim_cflags=["-I/tmp/inc", "-O2"],
         sim_ldflags=["-lm"],
         sim_run_args=["--image", "tests/out/min2.soc.bin"],
+        sim_images=["tests/out/min2.soc.bin", "tests/out/add.soc.bin"],
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws"))
@@ -125,3 +126,7 @@ def test_create_workspace_persists_sim_options(tmp_path):
     assert ws["sim_cflags"] == ["-I/tmp/inc", "-O2"]
     assert ws["sim_ldflags"] == ["-lm"]
     assert ws["sim_run_args"] == ["--image", "tests/out/min2.soc.bin"]
+    assert ws["sim_images"] == [
+        str(Path("tests/out/min2.soc.bin").resolve()),
+        str(Path("tests/out/add.soc.bin").resolve()),
+    ]

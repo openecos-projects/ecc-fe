@@ -372,3 +372,145 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
     assert "-LDFLAGS" in compile_cmd
     assert "-lm" in compile_cmd[compile_cmd.index("-LDFLAGS") + 1]
     assert simulate_cmd[-4:] == ["--image", "tests/out/min2.soc.bin", "--max-cycles", "100"]
+
+
+def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb_main.cpp"
+    helper = tmp_path / "tb_helper.cpp"
+    inc = tmp_path / "fecompiler" / "thirdparty" / "SoC"
+    inc.mkdir(parents=True)
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_rel_inc"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        testbench=str(tb),
+        sim_cpp_sources=[str(helper)],
+        sim_cflags=["-Ifecompiler/thirdparty/SoC"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_rel_inc"))
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        run_calls.append(list(cmd))
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path))
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    compile_cmd = next(c for c in run_calls if "--binary" in c)
+    cflags = compile_cmd[compile_cmd.index("-CFLAGS") + 1]
+
+    assert state == StateEnum.Success
+    assert f"-I{inc.resolve()}" in cflags
+
+
+def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb_main.cpp"
+    helper = tmp_path / "tb_helper.cpp"
+    img1 = tmp_path / "tests" / "out" / "a.soc.bin"
+    img2 = tmp_path / "tests" / "out" / "b.soc.bin"
+    img1.parent.mkdir(parents=True, exist_ok=True)
+    img1.write_bytes(b"\x01")
+    img2.write_bytes(b"\x02")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_multi"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        testbench=str(tb),
+        sim_cpp_sources=[str(helper)],
+        sim_run_args=["--max-cycles", "100"],
+        sim_images=[str(img1), str(img2)],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_multi"))
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        run_calls.append(list(cmd))
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        image = ""
+        if "--image" in cmd:
+            image = cmd[cmd.index("--image") + 1]
+        return SimpleNamespace(returncode=0, stdout=f"ok:{image}\n", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    assert state == StateEnum.Success
+    sim_calls = [c for c in run_calls if "--binary" not in c]
+    assert len(sim_calls) == 2
+
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    cases_json = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert len(cases_json["cases"]) == 2
+    assert (report_dir / "cases" / "a.soc" / "log.txt").exists()
+    assert (report_dir / "cases" / "b.soc" / "log.txt").exists()
+
+
+def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    img = tmp_path / "tests" / "out" / "min2.soc.bin"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"\x00")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_reuse"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        sim_run_args=["--image", str(img), "--max-cycles", "100"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_reuse"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+
+    sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "chip_sim"
+    sim_bin.parent.mkdir(parents=True, exist_ok=True)
+    sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    sim_bin.chmod(0o755)
+    ws["sim_reuse_binary"] = True
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        run_calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    state = engine.run_step("sim", rerun=True)
+
+    assert state == StateEnum.Success
+    assert all("--binary" not in call for call in run_calls)
