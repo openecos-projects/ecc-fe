@@ -11,6 +11,7 @@ from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.tools.slang.runner import SlangElabStep
 
 FIRST_STEP, FIRST_TOOL = DEFAULT_FLOW_STEPS[0]
 
@@ -514,3 +515,21 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
 
     assert state == StateEnum.Success
     assert all("--binary" not in call for call in run_calls)
+
+
+def test_elab_check_result_rejects_20_errors_log(tmp_path):
+    step = SimpleNamespace(report={"dir": str(tmp_path)})
+    (tmp_path / "log.txt").write_text(
+        "Build failed: 20 errors, 0 warnings\nerror: something bad\n",
+        encoding="utf-8",
+    )
+    assert SlangElabStep().check_result(step) is False
+
+
+def test_elab_check_result_accepts_zero_errors_log(tmp_path):
+    step = SimpleNamespace(report={"dir": str(tmp_path)})
+    (tmp_path / "log.txt").write_text(
+        "Build succeeded: 0 errors, 0 warnings\n",
+        encoding="utf-8",
+    )
+    assert SlangElabStep().check_result(step) is True

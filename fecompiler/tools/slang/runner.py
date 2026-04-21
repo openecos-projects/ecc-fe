@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,7 @@ class SlangElabStep(BaseStep):
         if not log_path.exists():
             return False
         content = log_path.read_text(encoding="utf-8")
-        return "error:" not in content.lower() or "0 errors" in content
+        return self._is_elab_log_ok(content)
 
     # ── internal ──────────────────────────────────────────────────────────────
 
@@ -116,13 +117,14 @@ class SlangElabStep(BaseStep):
 
     def _run_elaborate(self, step: WorkspaceStep,
                        workspace: dict[str, Any]) -> None:
-        files     = self._rtl_files(workspace)
+        files = self._rtl_files(workspace)
         top       = workspace.get("top_module", "top")
         log_path = Path(step.report["dir"]) / "log.txt"
 
         cmd = [
             _slang_cmd(),
             "--lint-only",
+            "--timescale", "1ns/1ps",
             "--top", top,
             "--diag-column",
             "--diag-location",
@@ -141,7 +143,7 @@ class SlangElabStep(BaseStep):
     def _write_report(self, step: WorkspaceStep) -> None:
         log_path = Path(step.report["dir"]) / "log.txt"
         content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        ok        = "error:" not in content.lower() or "0 errors" in content
+        ok = self._is_elab_log_ok(content)
 
         json_write(step.report["step"], {
             "elaborate": "pass" if ok else "fail",
@@ -162,3 +164,10 @@ class SlangElabStep(BaseStep):
         path = step.subflow.get("path", "")
         if path:
             json_write(path, step.subflow)
+
+    @staticmethod
+    def _is_elab_log_ok(content: str) -> bool:
+        text = content.lower()
+        if "error:" not in text:
+            return True
+        return re.search(r"\b0\s+errors\b", text) is not None
