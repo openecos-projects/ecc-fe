@@ -21,25 +21,100 @@ alias(
     actual = ":fecompiler_bin",
 )
 
-# ── Example run: adder design using docs/examples/filelist.f ──────────────────
+# ── Example run: CL3 CPU + SoC full frontend flow ────────────────────────────
 #
-#   bazel run //:run_adder
+#   bazel run //:run_cl3_soc
 #
 # Equivalent to:
 #   python3 -m fecompiler.cli.main \
-#       --design adder --top adder --filelist docs/examples/filelist.f
+#       --design cl3_soc_phase2_full \
+#       --top ysyxSoCTop \
+#       --cpu-filelist docs/examples/cl3/filelist.cpu.f \
+#       --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
+#       --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
+#       --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
+#       --sim-cflag=-Ifecompiler/thirdparty/SoC \
+#       --sim-image fecompiler/thirdparty/SoC/tests/out/min2.soc.bin \
+#       --sim-arg=--max-cycles \
+#       --sim-arg=2000000 \
+#       --rerun
 
 py_binary(
-    name = "run_adder",
+    name = "run_cl3_soc",
     srcs = ["fecompiler/cli/main.py"],
     main = "fecompiler/cli/main.py",
     args = [
-        "--design", "adder",
-        "--top",    "adder",
-        "--filelist", "docs/examples/filelist.f",
+        "--design", "cl3_soc_phase2_full",
+        "--top", "ysyxSoCTop",
+        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
+        "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
+        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
+        "--sim-cflag=-Ifecompiler/thirdparty/SoC",
+        "--sim-image", "fecompiler/thirdparty/SoC/tests/out/min2.soc.bin",
+        "--sim-arg=--max-cycles",
+        "--sim-arg=2000000",
+        "--rerun",
     ],
     deps = [":fecompiler"],
-    data = glob(["docs/examples/**"]),
+    data = glob([
+        "docs/examples/cl3/**",
+        "fecompiler/thirdparty/SoC/**",
+    ]),
+)
+
+# ── Example run: CL3 CPU + SoC full flow with all prebuilt *.soc.bin tests ───
+#
+#   bazel run //:run_cl3_soc_all_tests
+
+py_binary(
+    name = "run_cl3_soc_all_tests",
+    srcs = ["fecompiler/cli/main.py"],
+    main = "fecompiler/cli/main.py",
+    args = [
+        "--design", "cl3_soc_phase2_full",
+        "--top", "ysyxSoCTop",
+        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
+        "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
+        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
+        "--sim-cflag=-Ifecompiler/thirdparty/SoC",
+        "--sim-all-tests",
+        "--sim-arg=--max-cycles",
+        "--sim-arg=2000000",
+        "--rerun",
+    ],
+    deps = [":fecompiler"],
+    data = glob([
+        "docs/examples/cl3/**",
+        "fecompiler/thirdparty/SoC/**",
+    ]),
+)
+
+# ── Example run: re-run only sim on existing workspace (reuse compiled binary) ─
+#
+#   bazel run //:run_cl3_soc_sim_only_all_tests
+#
+# Requires workspace_projects/cl3_soc_phase2_full to already exist.
+
+py_binary(
+    name = "run_cl3_soc_sim_only_all_tests",
+    srcs = ["fecompiler/cli/main.py"],
+    main = "fecompiler/cli/main.py",
+    args = [
+        "--design", "cl3_soc_phase2_full",
+        "--top", "ysyxSoCTop",
+        "--workspace", "workspace_projects/cl3_soc_phase2_full",
+        "--sim-only",
+        "--sim-reuse-binary",
+        "--sim-all-tests",
+        "--sim-arg=--max-cycles",
+        "--sim-arg=2000000",
+    ],
+    deps = [":fecompiler"],
+    data = glob([
+        "fecompiler/thirdparty/SoC/**",
+    ]),
 )
 
 # ── Individual test targets ───────────────────────────────────────────────────

@@ -68,6 +68,7 @@ class CreateWorkspaceData:
     sim_cflags: list[str] = field(default_factory=list)
     sim_ldflags: list[str] = field(default_factory=list)
     sim_run_args: list[str] = field(default_factory=list)
+    sim_images: list[str] = field(default_factory=list)
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -137,6 +138,7 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     sim_cflags = _to_str_list(parameters.get("sim_cflags", []))
     sim_ldflags = _to_str_list(parameters.get("sim_ldflags", []))
     sim_run_args = _to_str_list(parameters.get("sim_run_args", []))
+    sim_images = _to_str_list(parameters.get("sim_images", []))
 
     return {
         "directory":       str(project_dir),
@@ -156,6 +158,7 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         "sim_cflags":      sim_cflags,
         "sim_ldflags":     sim_ldflags,
         "sim_run_args":    sim_run_args,
+        "sim_images":      sim_images,
     }
 
 
@@ -191,6 +194,10 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
         params["sim_ldflags"] = [str(x).strip() for x in spec.sim_ldflags if str(x).strip()]
     if spec.sim_run_args:
         params["sim_run_args"] = [str(x) for x in spec.sim_run_args if str(x)]
+    if spec.sim_images:
+        params["sim_images"] = [
+            str(Path(p).expanduser().resolve()) for p in spec.sim_images if str(p).strip()
+        ]
     return params
 
 

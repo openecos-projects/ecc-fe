@@ -42,3 +42,27 @@ Notes:
 
 - Use `--sim-arg=...` form for values starting with `--` to avoid argparse ambiguity.
 - `prepare` merges CPU+SoC filelists into one manifest, then `elab/lint/sim` consume that normalized input.
+- For one run per image, use `--sim-image <path>`.
+- For batch run of all prebuilt test images, add `--sim-all-tests` (scans `fecompiler/thirdparty/SoC/tests/out/*.soc.bin`).
+- Batch simulation writes per-case logs to `workspace_projects/<design>/sim_verilator/report/cases/<case>/log.txt`.
+- For re-testing existing workspace without rerunning prepare/elab/lint, use `--sim-only --sim-reuse-binary`.
+
+## Build and Run All Tests (SoC Makefile)
+
+From this directory:
+
+```bash
+# build simulator binary once
+make sim
+
+# build all C tests into tests/out/*.soc.bin
+make test-all
+
+# run all prebuilt *.soc.bin, one log per case in tests/out/logs/
+make run-all-prebuilt
+```
+
+Useful targets:
+
+- `make list-tests`: list all test program names.
+- `make run-all`: build all tests then run all tests.
