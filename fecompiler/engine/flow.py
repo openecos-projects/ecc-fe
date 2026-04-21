@@ -325,10 +325,10 @@ def _format_runtime(seconds: float) -> str:
 
 
 def _build_flow_logger(workspace_dir: str) -> logging.Logger:
-    """Return a logger that writes to <workspace>/log/flow.log."""
+    """Return a logger that writes to <workspace>/log/log.txt."""
     import logging.handlers
 
-    log_path = Path(workspace_dir) / "log" / "flow.log"
+    log_path = Path(workspace_dir) / "log" / "log.txt"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     log = logging.getLogger(f"fecompiler.flow.{Path(workspace_dir).name}")

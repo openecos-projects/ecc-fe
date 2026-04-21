@@ -22,7 +22,7 @@ ecc-fe/
 │   │   ├── step.py              # StepEnum, StateEnum, StepMetrics
 │   │   └── workspace.py         # WorkspaceStep, CreateWorkspaceData, create/load_workspace
 │   ├── engine/                  # Flow orchestration
-│   │   └── flow.py              # EngineFlow  (writes log/flow.log)
+│   │   └── flow.py              # EngineFlow  (writes log/log.txt)
 │   ├── thirdparty/              # Placeholder for external tool submodules
 │   ├── tools/
 │   │   ├── fe/                  # Step workspace builder & sub-flow
@@ -68,7 +68,7 @@ cli/main.py
               ├── [START]   sim   → VerilatorSimStep.run()   → log.txt (skipped if no testbench)
               ├── [SUCCESS] sim
               └── step1~7   → _run_stub_step()
-              → writes log/flow.log on every step
+              → writes log/log.txt on every step
 ```
 
 ## Project Directory Structure
@@ -84,7 +84,7 @@ workspace_projects/<design>/
 │   ├── filelist.f          # absolute-path filelist (copied)
 │   └── <design>.sdc        # auto-generated SDC
 ├── log/
-│   └── flow.log            # step start / success / failed with timestamps
+│   └── log.txt             # step start / success / failed with timestamps
 ├── lint_verilator/
 │   ├── report/log.txt      # verilator lint output
 │   └── subflow.json        # sub-steps: lint → report
