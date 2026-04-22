@@ -139,6 +139,8 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
   - `sim_ldflags`
   - `sim_run_args`
   - `sim_images`
+- 参数归一化函数：
+  - `build_parameter_overrides` 会统一处理路径绝对化和空值过滤。
 
 ### 怎么测
 
@@ -168,8 +170,12 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `create_step_workspaces` 的返回结构与目录落盘。
 - `run_step/run_all` 的成功路径、跳过已成功步骤、`rerun=True` 行为。
 - `load()` 从磁盘恢复 flow 状态。
+- `flow.json` 同步行为：
+  - 仅保留 `DEFAULT_FLOW_STEPS`，历史/非默认步骤会在同步时移除。
 - 失败路径：
   - 坏 RTL 导致 `sim` 编译失败，步骤状态应为 `Incomplete`。
+- 新建步骤目录行为：
+  - `lint_verilator/data` 目录存在且默认为空目录。
 - `prepare` 真实输入合并能力：
   - CPU + SoC 双 filelist 合并。
   - 嵌套 `-f` filelist、`+incdir+`、`+define+` 去重和传递。
@@ -179,6 +185,8 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
   - `-Ifecompiler/thirdparty/SoC` 在 `BUILD_WORKSPACE_DIRECTORY` 下应解析为绝对路径。
 - 多镜像仿真：
   - `sim_images` 会触发多次运行，并写 `report/cases/<case>/log.txt` 和 `cases.json`。
+- 单镜像仿真：
+  - 即便只有一个运行 case，也会写入统一的 `report/cases/<case>/log.txt` 结构。
 - 复用已编译仿真器：
   - `sim_reuse_binary=True` 时跳过 compile 子步骤。
 

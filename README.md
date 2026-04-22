@@ -27,9 +27,11 @@ ecc-fe/
 │   ├── tools/
 │   │   ├── fe/                  # Step workspace builder & sub-flow
 │   │   │   ├── builder.py       # build_step(), build_step_space(), build_step_config()
-│   │   │   ├── subflow.py       # EccSubFlowEnum, build_subflow(), init_subflow()
+│   │   │   ├── subflow.py       # generic subflow helpers (init/update)
 │   │   │   ├── service.py       # get_step_info() — query step resources by ID
 │   │   │   └── base.py          # BaseStep interface
+│   │   ├── common/
+│   │   │   └── rtl_inputs.py    # shared RTL/incdir/define parsing helpers
 │   │   └── verilator/           # Verilator tool integration
 │   │       ├── runner.py        # VerilatorLintStep, VerilatorSimStep
 │   │       └── subflow.py       # LintSubFlowEnum, SimSubFlowEnum
@@ -59,6 +61,7 @@ cli/main.py
         ├── write home/flow.json  (all steps Unstart)
         └── write origin/filelist.f  (absolute paths)
   └── engine/flow.py        EngineFlow
+        ├── sync flow.json         → keep only DEFAULT_FLOW_STEPS
         ├── create_step_workspaces()  →  mkdir prepare_fe/ elab_slang/ lint_verilator/ sim_verilator/
         └── run_all()
               ├── [START]   prepare  → merge rtl inputs
@@ -72,6 +75,28 @@ cli/main.py
 
 ```text
 workspace_projects/<design>/
+├── prepare_fe/
+│   └── report/log.txt      # prepare step logs / summary
+├── elab_slang/
+│   └── report/log.txt      # slang elaboration output
+├── lint_verilator/
+│   ├── data/               # empty by default
+│   ├── report/log.txt      # verilator lint output
+│   └── subflow.json        # sub-steps: lint → report
+├── sim_verilator/
+│   ├── output/cases/       # wave.vcd per case
+│   │   └── <case>/wave.vcd
+│   ├── report/log.txt      # latest simulation summary
+│   ├── report/cases/       # latest per-case logs (single or multi case)
+│   │   └── <case>/log.txt
+│   ├── report/cases.json   # machine-readable latest case results
+│   ├── report/runs/        # per-run history (not overwritten)
+│   │   └── <run_id>/
+│   │       ├── log.txt
+│   │       ├── cases.json
+│   │       └── cases/<case>/log.txt
+│   ├── report/build_programs.log.txt  # build_test.sh output when building programs/*.c
+│   └── subflow.json        # sub-steps: compile → simulate → report
 ├── home/
 │   ├── flow.json           # per-step state (Unstart / Ongoing / Success)
 │   ├── parameters.json     # design parameters
@@ -82,21 +107,6 @@ workspace_projects/<design>/
 │   └── <design>.sdc        # auto-generated SDC
 ├── log/
 │   └── log.txt             # step start / success / failed with timestamps
-├── lint_verilator/
-│   ├── report/log.txt      # verilator lint output
-│   └── subflow.json        # sub-steps: lint → report
-├── sim_verilator/
-│   ├── report/log.txt      # simulation summary / single-run output
-│   ├── report/cases/       # multi-image mode: one folder per case
-│   │   └── <case>/log.txt
-│   ├── report/cases.json   # machine-readable case results
-│   ├── report/runs/        # per-run history (not overwritten)
-│   │   └── <run_id>/
-│   │       ├── log.txt
-│   │       ├── cases.json
-│   │       └── cases/<case>/log.txt
-│   └── report/build_programs.log.txt  # build_test.sh output when building programs/*.c
-│   └── subflow.json        # sub-steps: compile → simulate → report
 ```
 
 ## Quick Start
