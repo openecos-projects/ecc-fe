@@ -130,8 +130,11 @@ class TestCpuSocFlow(unittest.TestCase):
         ws["sim_build_all_programs"] = True
         ws["sim_programs_dir"] = str(SOC_TEST_PROGRAMS_DIR)
         ws["sim_tests_out_dir"] = str(SOC_TEST_OUT_DIR)
-        ws["sim_all_tests"] = True
+        # Only run images built from tests/programs/*.c in this test.
+        ws["sim_all_tests"] = False
         ws["sim_tests_dir"] = str(SOC_TEST_OUT_DIR)
+        ws["sim_images"] = []
+        ws["sim_program_sources"] = []
         ws["sim_run_args"] = ["--max-cycles", "2000000"]
         ws["sim_reuse_binary"] = sim_bin.exists()
 
@@ -148,7 +151,7 @@ class TestCpuSocFlow(unittest.TestCase):
         cases = data.get("cases", [])
         self.assertTrue(cases, "cases.json should contain all executed cases")
 
-        expected_names = {p.stem for p in self._program_sources()}
+        expected_names = {f"{p.stem}.soc" for p in self._program_sources()}
         executed_names = {str(c.get("name", "")) for c in cases if isinstance(c, dict)}
         self.assertTrue(expected_names.issubset(executed_names))
 
@@ -162,10 +165,12 @@ class TestCpuSocFlow(unittest.TestCase):
     def test_cpu_soc_sim_batch_has_separate_logs_for_each_program(self):
         engine, ws = _new_engine()
         first_src = self._program_sources()[0]
-        case_name = first_src.stem
-        image_path = SOC_TEST_OUT_DIR / f"{case_name}.soc.bin"
+        case_name = f"{first_src.stem}.soc"
+        image_path = SOC_TEST_OUT_DIR / f"{first_src.stem}.soc.bin"
         ws["sim_program_sources"] = [str(first_src)]
         ws["sim_tests_out_dir"] = str(SOC_TEST_OUT_DIR)
+        ws["sim_all_tests"] = False
+        ws["sim_images"] = []
         ws["sim_run_args"] = ["--max-cycles", "2000000"]
 
         sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "cpu_soc_test_sim"

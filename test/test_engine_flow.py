@@ -372,7 +372,15 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
     assert f"-I{inc}" in compile_cmd[compile_cmd.index("-CFLAGS") + 1]
     assert "-LDFLAGS" in compile_cmd
     assert "-lm" in compile_cmd[compile_cmd.index("-LDFLAGS") + 1]
-    assert simulate_cmd[-4:] == ["--image", "tests/out/min2.soc.bin", "--max-cycles", "100"]
+    assert "--image" in simulate_cmd
+    assert simulate_cmd[simulate_cmd.index("--image") + 1] == "tests/out/min2.soc.bin"
+    assert "--max-cycles" in simulate_cmd
+    assert simulate_cmd[simulate_cmd.index("--max-cycles") + 1] == "100"
+    assert "--wave" in simulate_cmd
+    expected_wave = (
+        Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / "min2.soc" / "wave.vcd"
+    ).resolve()
+    assert Path(simulate_cmd[simulate_cmd.index("--wave") + 1]) == expected_wave
 
 
 def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkeypatch):
@@ -471,6 +479,11 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
     assert state == StateEnum.Success
     sim_calls = [c for c in run_calls if "--binary" not in c]
     assert len(sim_calls) == 2
+    out_cases_dir = Path(ws["directory"]) / "sim_verilator" / "output" / "cases"
+    for call in sim_calls:
+        assert "--wave" in call
+        wave_path = Path(call[call.index("--wave") + 1]).resolve()
+        assert str(wave_path).startswith(str(out_cases_dir.resolve()))
 
     report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
     cases_json = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
@@ -497,8 +510,10 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws_sim_single_case"))
+    run_calls: list[list[str]] = []
 
     def _fake_run(cmd, capture_output=True, text=True):
+        run_calls.append(list(cmd))
         if "--binary" in cmd:
             sim_bin = Path(cmd[cmd.index("-o") + 1])
             sim_bin.parent.mkdir(parents=True, exist_ok=True)
@@ -521,6 +536,12 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     assert run_dirs
     latest_run = run_dirs[-1]
     assert (latest_run / "cases" / "single.soc" / "log.txt").exists()
+    simulate_cmd = next(c for c in run_calls if "--binary" not in c)
+    assert "--wave" in simulate_cmd
+    expected_wave = (
+        Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / "single.soc" / "wave.vcd"
+    ).resolve()
+    assert Path(simulate_cmd[simulate_cmd.index("--wave") + 1]) == expected_wave
 
 
 def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):

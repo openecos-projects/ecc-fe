@@ -104,9 +104,10 @@ int main(int argc, char **argv, char **) {
 
   dpi_load_image(args.image);
 
-  Verilated::commandArgs(argc, argv);
-  Verilated::traceEverOn(true);
   const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
+  contextp->commandArgs(argc, argv);
+  contextp->traceEverOn(true);
+  Verilated::traceEverOn(true);
   const std::unique_ptr<VysyxSoCTop> top{new VysyxSoCTop{contextp.get(), ""}};
 
   VerilatedVcdC *tfp = nullptr;
