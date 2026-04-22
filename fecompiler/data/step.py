@@ -15,13 +15,6 @@ class StepEnum(Enum):
     ELAB  = "elab"
     LINT  = "lint"
     SIM   = "sim"
-    STEP1 = "step1"
-    STEP2 = "step2"
-    STEP3 = "step3"
-    STEP4 = "step4"
-    STEP5 = "step5"
-    STEP6 = "step6"
-    STEP7 = "step7"
 
 
 class StateEnum(str, Enum):

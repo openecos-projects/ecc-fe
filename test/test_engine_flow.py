@@ -217,6 +217,27 @@ def test_load_restores_state_from_disk(tmp_path):
     assert engine2.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Success"
 
 
+def test_sync_flow_drops_non_default_steps(tmp_path):
+    engine, ws = _build_engine(tmp_path)
+    flow_path = Path(ws["flow_path"])
+    flow = json.loads(flow_path.read_text(encoding="utf-8"))
+    flow["steps"].append(
+        {
+            "name": "legacy_step",
+            "tool": "ecc",
+            "state": "Success",
+            "runtime": "00:00:01",
+            "peak memory (mb)": 0,
+            "info": {},
+        }
+    )
+    flow_path.write_text(json.dumps(flow, indent=2), encoding="utf-8")
+
+    synced = EngineFlow(workspace=load_workspace(ws["directory"]))
+    names = [s["name"] for s in synced.flow["steps"]]
+    assert names == [name for name, _ in DEFAULT_FLOW_STEPS]
+
+
 def test_sim_compile_failure_is_incomplete(tmp_path):
     bad_rtl = tmp_path / "bad_top.v"
     bad_rtl.write_text("module chip_top( ; endmodule\n", encoding="utf-8")

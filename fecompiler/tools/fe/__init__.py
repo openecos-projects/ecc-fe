@@ -2,7 +2,7 @@
 
 from .builder import build_step, build_step_space, build_step_config
 from .base import BaseStep
-from .subflow import EccSubFlowEnum, build_subflow, init_subflow, update_substep
+from .subflow import EccSubFlowEnum, build_subflow, init_subflow, update_substep, update_substep_ok
 from .service import get_step_info
 
 from fecompiler.tools.prepare.runner import PrepareStep
@@ -27,6 +27,7 @@ __all__ = [
     "build_subflow",
     "init_subflow",
     "update_substep",
+    "update_substep_ok",
     "get_step_info",
     "PrepareStep",
     "SlangElabStep",

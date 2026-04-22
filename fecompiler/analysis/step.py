@@ -9,9 +9,8 @@ from fecompiler.data.workspace import WorkspaceStep
 class StepMetricsBuilder:
     """Load and save step metrics for a given WorkspaceStep.
 
-    In ecc-fe all steps are stubs, so metrics files contain placeholder data
-    written by EngineFlow._run_stub_step().  This class provides the same
-    interface as ecc so callers can be ported without changes.
+    Metrics are written by concrete step runners (prepare / slang / verilator).
+    This class keeps a stable load/save interface for callers.
     """
 
     def load(self, step: WorkspaceStep) -> StepMetrics:
