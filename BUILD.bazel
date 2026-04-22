@@ -173,6 +173,25 @@ py_test(
     ]),
 )
 
+py_test(
+    name = "test_cpu_soc_matrix_flow",
+    srcs = ["test/test_cpu_soc_matrix_flow.py"],
+    main = "test/test_cpu_soc_matrix_flow.py",
+    timeout = "long",
+    imports = ["."],
+    deps = [":fecompiler"],
+    data = glob([
+        "docs/examples/cl3/**",
+        "docs/examples/cl3_1/**",
+        "docs/examples/cl3_2/**",
+        "fecompiler/thirdparty/SoC/**",
+        "fecompiler/thirdparty/SoC2/**",
+        "fecompiler/thirdparty/SoC3/**",
+        "fecompiler/tools/slang/**",
+        "fecompiler/tools/verilator/**",
+    ]),
+)
+
 # ── Convenience target: run all tests ─────────────────────────────────────────
 
 test_suite(
@@ -184,5 +203,6 @@ test_suite(
         ":test_data_workspace",
         ":test_engine_flow",
         ":test_cpu_soc_flow",
+        ":test_cpu_soc_matrix_flow",
     ],
 )
