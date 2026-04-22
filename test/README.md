@@ -102,7 +102,7 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 `fecompiler.allflow.builder` 的静态流程定义和构造行为：
 
 - `DEFAULT_FLOW_STEPS` 非空、首步为 `("prepare", "fe")`、每项为 `(name, tool)` 二元组。
-- 工具分配规则正确：`prepare -> fe`，`elab/lint/sim -> slang/verilator`，其余为 `ecc`。
+- 工具分配规则正确：默认流程固定为 `prepare -> fe`、`elab -> slang`、`lint/sim -> verilator`。
 - `sanitize_step_token` 的规范化规则（空格、特殊字符、空串等）。
 - `build_allflow()` 返回形状与默认步骤一致，初始状态全部 `Unstart`。
 

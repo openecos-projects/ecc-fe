@@ -3,8 +3,8 @@
 `ecc-fe` is a pure Python framework for chip design flow orchestration,
 aligned with [ecos-studio/ecc](https://github.com/ecos-studio/ecc) (`chipcompiler/`).
 
-Verilator lint and simulation are integrated as real steps; remaining EDA
-steps run as stubs focused on directory structure and state tracking.
+Current default flow is fully focused on front-end execution:
+`prepare -> elab -> lint -> sim`.
 
 ## Repository Layout
 
@@ -48,10 +48,6 @@ prepare (fe)        ← merge CPU/SoC/filelist inputs
 elab   (slang)      ← slang --lint-only      →  report/log.txt
 lint   (verilator)  ← verilator --lint-only  →  report/log.txt
 sim    (verilator)  ← compile + simulate     →  report/log.txt / report/cases/*
-step1 (ecc)  ]
-step2 (ecc)  ]      ← EDA stubs (placeholder for real tools)
-...          ]
-step7 (ecc)  ]
 ```
 
 ## How It Works
@@ -63,13 +59,12 @@ cli/main.py
         ├── write home/flow.json  (all steps Unstart)
         └── write origin/filelist.f  (absolute paths)
   └── engine/flow.py        EngineFlow
-        ├── create_step_workspaces()  →  mkdir prepare_fe/ elab_slang/ lint_verilator/ sim_verilator/ step{1..7}_ecc/
+        ├── create_step_workspaces()  →  mkdir prepare_fe/ elab_slang/ lint_verilator/ sim_verilator/
         └── run_all()
               ├── [START]   prepare  → merge rtl inputs
               ├── [START]   elab     → slang checks
               ├── [START]   lint     → verilator lint
               ├── [START]   sim      → compile + run (single image or multi-image cases)
-              └── step1~7   → _run_stub_step()
               → writes log/log.txt on every step
 ```
 
@@ -102,9 +97,6 @@ workspace_projects/<design>/
 │   │       └── cases/<case>/log.txt
 │   └── report/build_programs.log.txt  # build_test.sh output when building programs/*.c
 │   └── subflow.json        # sub-steps: compile → simulate → report
-└── step{1..7}_ecc/         # EDA stub steps
-    ├── config/  data/  output/  feature/  report/  log/  script/  analysis/
-    └── subflow.json
 ```
 
 ## Quick Start

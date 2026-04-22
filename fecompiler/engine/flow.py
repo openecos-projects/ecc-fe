@@ -64,7 +64,9 @@ class EngineFlow:
             changed = True
             synced.extend(index.values())
 
-        if [s.get("name") for s in existing] != [s.get("name") for s in synced]:
+        if [(s.get("name"), s.get("tool")) for s in existing] != [
+            (s.get("name"), s.get("tool")) for s in synced
+        ]:
             changed = True
 
         if changed:

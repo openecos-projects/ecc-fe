@@ -4,19 +4,12 @@ from __future__ import annotations
 
 from typing import Final
 
-# (step_name, tool) — prepare + front-end checks first; step1-7 are EDA placeholders
+# (step_name, tool) — production front-end flow
 DEFAULT_FLOW_STEPS: Final[list[tuple[str, str]]] = [
-    ("prepare", "fe"),      # merge / normalize CPU+SoC inputs
-    ("elab",  "slang"),      # SV elaboration / semantic check
-    ("lint",  "verilator"),  # RTL 语法检查
-    ("sim",   "verilator"),  # 编译 + 功能仿真（需要 testbench）
-    ("step1", "ecc"),
-    ("step2", "ecc"),
-    ("step3", "ecc"),
-    ("step4", "ecc"),
-    ("step5", "ecc"),
-    ("step6", "ecc"),
-    ("step7", "ecc"),
+    ("prepare", "fe"),       # merge / normalize CPU+SoC inputs
+    ("elab", "slang"),       # SV elaboration / semantic check
+    ("lint", "verilator"),   # RTL lint
+    ("sim", "verilator"),    # compile + simulation (requires testbench)
 ]
 
 

@@ -29,14 +29,13 @@ def test_default_flow_steps_all_entries_are_2_tuples():
         assert isinstance(entry[1], str)
 
 
-def test_default_flow_steps_all_use_ecc_tool():
-    for name, tool in DEFAULT_FLOW_STEPS:
-        if name == "prepare":
-            assert tool == "fe"
-        elif name in ("elab", "lint", "sim"):
-            assert tool in ("slang", "verilator")
-        else:
-            assert tool == "ecc"
+def test_default_flow_steps_match_production_flow():
+    assert DEFAULT_FLOW_STEPS == [
+        ("prepare", "fe"),
+        ("elab", "slang"),
+        ("lint", "verilator"),
+        ("sim", "verilator"),
+    ]
 
 
 # ── sanitize_step_token ───────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 `ecc-fe` 是一个纯 Python 芯片设计流程编排框架，结构对齐 [ecos-studio/ecc](https://github.com/ecos-studio/ecc) 的 `chipcompiler/`。
 
-所有 EDA 步骤以 stub 方式运行——框架关注的是目录结构、状态跟踪和流程编排，而非真实 EDA 执行。
+当前默认流程为真实前端流程：`prepare -> elab -> lint -> sim`。
 
 ---
 
@@ -49,7 +49,7 @@ cli/main.py
         ├── tools/fe/       build_step()        →  定义步骤所有路径（WorkspaceStep）
         │                   build_step_space()  →  在磁盘上创建所有目录
         │                   init_subflow()      →  写入 subflow.json
-        └── _run_stub_step()                   →  写占位输出文件，标记步骤成功
+        └── run_all()                           →  顺序执行 prepare/elab/lint/sim
 ```
 
 ### 调用层次
@@ -99,17 +99,10 @@ demo1/
 │   ├── demo1.v             # 占位 Verilog 文件
 │   └── demo1.sdc           # 自动生成的时序约束
 ├── log/
-└── step{1..7}_fe/
-    ├── config/             # 各类 JSON 配置文件
-    ├── data/               # fp/ pl/ cts/ no/ to/ rt/ sta/ drc/
-    ├── output/             # .def.gz  .v  .gds  .json  .png
-    ├── feature/            # step.json  db.json  map.json
-    ├── report/             # step.rpt  db.rpt  sta/
-    ├── log/                # log.txt
-    ├── script/             # step_main.tcl
-    ├── analysis/           # metrics.json  statis.csv
-    ├── subflow.json        # 子步骤列表及各子步骤状态
-    └── checklist.json
+├── prepare_fe/
+├── elab_slang/
+├── lint_verilator/
+└── sim_verilator/
 ```
 
 ---
