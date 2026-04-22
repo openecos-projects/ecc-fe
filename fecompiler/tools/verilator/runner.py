@@ -16,6 +16,7 @@ from fecompiler.tools.common.rtl_inputs import (
     verilator_define_args,
     verilator_incdir_args,
 )
+from fecompiler.tools.fe.subflow import update_substep_ok
 
 from fecompiler.tools.verilator.subflow import (
     LintSubFlowEnum,
@@ -223,8 +224,15 @@ def _sim_cases_from_images(images: list[str], run_args: list[str]) -> list[dict[
     return cases
 
 
-def _sim_cases(workspace: dict[str, Any]) -> list[dict[str, Any]]:
-    return _sim_cases_from_images(_sim_images(workspace), _sim_run_args(workspace))
+def _effective_sim_cases(images: list[str], run_args: list[str]) -> list[dict[str, Any]]:
+    """Build simulation cases, including a default single-run case when no image list exists."""
+    cases = _sim_cases_from_images(images, run_args)
+    if cases:
+        return cases
+
+    image = _image_from_run_args(run_args)
+    case_name = _safe_case_name(Path(image).stem) if image else "default"
+    return [{"name": case_name, "image": image, "args": run_args}]
 
 
 def _image_from_run_args(args: list[str]) -> str:
@@ -416,20 +424,6 @@ def _normalize_sim_cflag(flag: str) -> str:
     return " ".join(out)
 
 
-def _update_substep(step: WorkspaceStep, name: str, ok: bool,
-                    info: dict | None = None) -> None:
-    from fecompiler.data.step import StateEnum
-    state = StateEnum.Success.value if ok else StateEnum.Incomplete.value
-    for entry in step.subflow.get("steps", []):
-        if entry["name"] == name:
-            entry["state"] = state
-            entry["info"]  = info or {}
-            break
-    path = step.subflow.get("path", "")
-    if path:
-        json_write(path, step.subflow)
-
-
 # ── VerilatorLintStep ─────────────────────────────────────────────────────────
 
 class VerilatorLintStep(BaseStep):
@@ -468,7 +462,7 @@ class VerilatorLintStep(BaseStep):
             (result.stdout + result.stderr).strip() or "lint OK",
             encoding="utf-8",
         )
-        _update_substep(step, LintSubFlowEnum.lint.value, ok=result.returncode == 0)
+        update_substep_ok(step, LintSubFlowEnum.lint.value, result.returncode == 0)
 
     def _write_report(self, step: WorkspaceStep) -> None:
         lint_path = Path(step.report["dir"]) / "log.txt"
@@ -476,7 +470,7 @@ class VerilatorLintStep(BaseStep):
         json_write(step.report["step"], {
             "lint": "pass" if lint_ok else "fail",
         })
-        _update_substep(step, LintSubFlowEnum.report.value, ok=True)
+        update_substep_ok(step, LintSubFlowEnum.report.value, True)
 
 
 # ── VerilatorSimStep ──────────────────────────────────────────────────────────
@@ -532,25 +526,29 @@ class VerilatorSimStep(BaseStep):
                 f"reuse existing sim binary: {sim_bin}\n",
                 encoding="utf-8",
             )
-            _update_substep(
+            update_substep_ok(
                 step,
                 SimSubFlowEnum.compile.value,
-                ok=True,
+                True,
                 info={"skipped": "reuse binary", "sim_bin": str(sim_bin)},
             )
             return True
 
         cpp_sources = _sim_cpp_sources(workspace)
         if not cpp_sources:
-            _update_substep(step, SimSubFlowEnum.compile.value, ok=True,
-                            info={"skipped": "no testbench"})
+            update_substep_ok(
+                step,
+                SimSubFlowEnum.compile.value,
+                True,
+                info={"skipped": "no testbench"},
+            )
             return False
         missing = [src for src in cpp_sources if not Path(src).exists()]
         if missing:
-            _update_substep(
+            update_substep_ok(
                 step,
                 SimSubFlowEnum.compile.value,
-                ok=False,
+                False,
                 info={"error": "missing sim C++ source", "missing_sources": missing},
             )
             return False
@@ -578,7 +576,7 @@ class VerilatorSimStep(BaseStep):
             result.stdout + result.stderr, encoding="utf-8"
         )
         ok = result.returncode == 0
-        _update_substep(step, SimSubFlowEnum.compile.value, ok=ok)
+        update_substep_ok(step, SimSubFlowEnum.compile.value, ok)
         return ok
 
     def _run_simulate(self, step: WorkspaceStep, workspace: dict[str, Any],
@@ -591,8 +589,12 @@ class VerilatorSimStep(BaseStep):
         runs_root = Path(step.report["dir"]) / "runs"
 
         if not compiled or not sim_bin.exists():
-            _update_substep(step, SimSubFlowEnum.simulate.value, ok=True,
-                            info={"skipped": "not compiled"})
+            update_substep_ok(
+                step,
+                SimSubFlowEnum.simulate.value,
+                True,
+                info={"skipped": "not compiled"},
+            )
             return
 
         images, build_ok = _prepare_sim_images(workspace, build_log_path=build_log)
@@ -601,161 +603,91 @@ class VerilatorSimStep(BaseStep):
                 "build test programs failed; see build_programs.log.txt\n",
                 encoding="utf-8",
             )
-            _update_substep(
+            update_substep_ok(
                 step,
                 SimSubFlowEnum.simulate.value,
-                ok=False,
+                False,
                 info={"error": "build programs failed", "log": str(build_log)},
             )
             return
 
-        cases = _sim_cases_from_images(images, _sim_run_args(workspace))
-        if cases:
-            case_root.mkdir(parents=True, exist_ok=True)
-            runs_root.mkdir(parents=True, exist_ok=True)
-            run_id = _run_tag()
-            run_root = runs_root / run_id
-            run_case_root = run_root / "cases"
-            run_case_root.mkdir(parents=True, exist_ok=True)
-            run_summary_log = run_root / "log.txt"
-
-            all_ok = True
-            failed_cases: list[str] = []
-            summary_lines: list[str] = []
-            cases_report: list[dict[str, Any]] = []
-
-            for case in cases:
-                case_name = str(case["name"])
-                image = str(case["image"])
-                latest_case_dir = case_root / case_name
-                latest_case_dir.mkdir(parents=True, exist_ok=True)
-                latest_case_log = latest_case_dir / "log.txt"
-                run_case_dir = run_case_root / case_name
-                run_case_dir.mkdir(parents=True, exist_ok=True)
-                run_case_log = run_case_dir / "log.txt"
-                output_case_dir = Path(step.output["dir"]) / "cases" / case_name
-                output_case_dir.mkdir(parents=True, exist_ok=True)
-                run_args, wave = _apply_wave_arg(
-                    list(case["args"]),
-                    output_case_dir / "wave.vcd",
-                )
-
-                if not Path(image).exists():
-                    output = f"image not found: {image}\n"
-                    rc = 1
-                else:
-                    result = subprocess.run(
-                        [str(sim_bin), *run_args],
-                        capture_output=True,
-                        text=True,
-                    )
-                    output = result.stdout + result.stderr
-                    rc = int(result.returncode)
-
-                latest_case_log.write_text(output, encoding="utf-8")
-                run_case_log.write_text(output, encoding="utf-8")
-                case_ok = rc == 0 and "FAILED" not in output and "%Error" not in output
-                if not case_ok:
-                    all_ok = False
-                    failed_cases.append(case_name)
-
-                cases_report.append(
-                    {
-                        "name": case_name,
-                        "image": image,
-                        "returncode": rc,
-                        "ok": case_ok,
-                        "log": str(run_case_log),
-                        "latest_log": str(latest_case_log),
-                        "wave": wave,
-                        "run_id": run_id,
-                    }
-                )
-                summary_lines.append(
-                    f"[{case_name}] rc={rc} image={image} wave={wave} latest_log={latest_case_log} run_log={run_case_log}"
-                )
-
-            summary_text = "\n".join(summary_lines) + "\n"
-            sim_log.write_text(summary_text, encoding="utf-8")
-            run_summary_log.write_text(summary_text, encoding="utf-8")
-            json_write(str(cases_json), {"run_id": run_id, "cases": cases_report})
-            json_write(str(run_root / "cases.json"), {"run_id": run_id, "cases": cases_report})
-            _update_substep(
-                step,
-                SimSubFlowEnum.simulate.value,
-                ok=all_ok,
-                info={
-                    "cases": len(cases_report),
-                    "failed_cases": failed_cases,
-                    "run_id": run_id,
-                    "run_dir": str(run_root),
-                },
-            )
-            return
-
-        # Keep a universal report layout: even single-run mode writes cases/<case>/log.txt.
         run_args = _sim_run_args(workspace)
-        run_id = _run_tag()
+        cases = _effective_sim_cases(images, run_args)
         runs_root.mkdir(parents=True, exist_ok=True)
         case_root.mkdir(parents=True, exist_ok=True)
-
-        image = _image_from_run_args(run_args)
-        case_name = _safe_case_name(Path(image).stem) if image else "default"
-
+        run_id = _run_tag()
         run_root = runs_root / run_id
-        run_case_dir = run_root / "cases" / case_name
-        run_case_dir.mkdir(parents=True, exist_ok=True)
-        latest_case_dir = case_root / case_name
-        latest_case_dir.mkdir(parents=True, exist_ok=True)
-        output_case_dir = Path(step.output["dir"]) / "cases" / case_name
-        output_case_dir.mkdir(parents=True, exist_ok=True)
+        run_case_root = run_root / "cases"
+        run_case_root.mkdir(parents=True, exist_ok=True)
 
-        run_case_log = run_case_dir / "log.txt"
-        latest_case_log = latest_case_dir / "log.txt"
-        run_args_with_wave, wave = _apply_wave_arg(run_args, output_case_dir / "wave.vcd")
+        all_ok = True
+        failed_cases: list[str] = []
+        summary_lines: list[str] = []
+        cases_report: list[dict[str, Any]] = []
 
-        result = subprocess.run(
-            [str(sim_bin), *run_args_with_wave],
-            capture_output=True,
-            text=True,
-        )
-        output = result.stdout + result.stderr
-        run_case_log.write_text(output, encoding="utf-8")
-        latest_case_log.write_text(output, encoding="utf-8")
+        for case in cases:
+            case_name = str(case["name"])
+            image = str(case["image"])
+            latest_case_dir = case_root / case_name
+            latest_case_dir.mkdir(parents=True, exist_ok=True)
+            latest_case_log = latest_case_dir / "log.txt"
+            run_case_dir = run_case_root / case_name
+            run_case_dir.mkdir(parents=True, exist_ok=True)
+            run_case_log = run_case_dir / "log.txt"
+            output_case_dir = Path(step.output["dir"]) / "cases" / case_name
+            output_case_dir.mkdir(parents=True, exist_ok=True)
+            run_args, wave = _apply_wave_arg(
+                list(case["args"]),
+                output_case_dir / "wave.vcd",
+            )
 
-        case_ok = result.returncode == 0 and "FAILED" not in output and "%Error" not in output
-        summary = (
-            f"[{case_name}] rc={result.returncode} image={image or '-'} wave={wave} "
-            f"latest_log={latest_case_log} run_log={run_case_log}\n"
-        )
-        sim_log.write_text(summary, encoding="utf-8")
-        (run_root / "log.txt").write_text(summary, encoding="utf-8")
+            if image and not Path(image).exists():
+                output = f"image not found: {image}\n"
+                rc = 1
+            else:
+                result = subprocess.run(
+                    [str(sim_bin), *run_args],
+                    capture_output=True,
+                    text=True,
+                )
+                output = result.stdout + result.stderr
+                rc = int(result.returncode)
 
-        cases_report = {
-            "run_id": run_id,
-            "cases": [
+            latest_case_log.write_text(output, encoding="utf-8")
+            run_case_log.write_text(output, encoding="utf-8")
+            case_ok = rc == 0 and "FAILED" not in output and "%Error" not in output
+            if not case_ok:
+                all_ok = False
+                failed_cases.append(case_name)
+
+            cases_report.append(
                 {
                     "name": case_name,
                     "image": image,
-                    "returncode": int(result.returncode),
+                    "returncode": rc,
                     "ok": case_ok,
                     "log": str(run_case_log),
                     "latest_log": str(latest_case_log),
                     "wave": wave,
                     "run_id": run_id,
                 }
-            ],
-        }
-        json_write(str(cases_json), cases_report)
-        json_write(str(run_root / "cases.json"), cases_report)
+            )
+            summary_lines.append(
+                f"[{case_name}] rc={rc} image={image or '-'} wave={wave} latest_log={latest_case_log} run_log={run_case_log}"
+            )
 
-        _update_substep(
+        summary_text = "\n".join(summary_lines) + "\n"
+        sim_log.write_text(summary_text, encoding="utf-8")
+        (run_root / "log.txt").write_text(summary_text, encoding="utf-8")
+        json_write(str(cases_json), {"run_id": run_id, "cases": cases_report})
+        json_write(str(run_root / "cases.json"), {"run_id": run_id, "cases": cases_report})
+        update_substep_ok(
             step,
             SimSubFlowEnum.simulate.value,
-            ok=case_ok,
+            all_ok,
             info={
-                "cases": 1,
-                "failed_cases": [] if case_ok else [case_name],
+                "cases": len(cases_report),
+                "failed_cases": failed_cases,
                 "run_id": run_id,
                 "run_dir": str(run_root),
             },
@@ -807,7 +739,7 @@ class VerilatorSimStep(BaseStep):
             payload["cases"] = total_cases
             payload["failed_cases"] = failed_cases
         json_write(step.report["step"], payload)
-        _update_substep(step, SimSubFlowEnum.report.value, ok=True)
+        update_substep_ok(step, SimSubFlowEnum.report.value, True)
 
     @staticmethod
     def _substep_status(step: WorkspaceStep, name: str) -> tuple[str, dict[str, Any]]:

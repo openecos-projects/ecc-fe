@@ -11,6 +11,7 @@ from typing import Any
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.common.rtl_inputs import rtl_files, slang_define_args, slang_incdir_args
+from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.slang.subflow import SlangSubFlowEnum, init_slang_subflow
 from fecompiler.utility.json import json_write
 
@@ -82,7 +83,7 @@ class SlangElabStep(BaseStep):
         log_path.write_text(output, encoding="utf-8")
 
         ok = result.returncode == 0
-        self._update_substep(step, SlangSubFlowEnum.elaborate.value, ok=ok)
+        update_substep_ok(step, SlangSubFlowEnum.elaborate.value, ok)
 
     def _write_report(self, step: WorkspaceStep) -> None:
         log_path = Path(step.report["dir"]) / "log.txt"
@@ -93,21 +94,7 @@ class SlangElabStep(BaseStep):
             "elaborate": "pass" if ok else "fail",
             "report":    str(log_path),
         })
-        self._update_substep(step, SlangSubFlowEnum.report.value, ok=True)
-
-    @staticmethod
-    def _update_substep(step: WorkspaceStep, name: str,
-                        ok: bool, info: dict | None = None) -> None:
-        from fecompiler.data.step import StateEnum
-        state = StateEnum.Success.value if ok else StateEnum.Incomplete.value
-        for entry in step.subflow.get("steps", []):
-            if entry["name"] == name:
-                entry["state"] = state
-                entry["info"]  = info or {}
-                break
-        path = step.subflow.get("path", "")
-        if path:
-            json_write(path, step.subflow)
+        update_substep_ok(step, SlangSubFlowEnum.report.value, True)
 
     @staticmethod
     def _is_elab_log_ok(content: str) -> bool:
