@@ -10,8 +10,9 @@ from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.tools.common.rtl_inputs import rtl_files, slang_define_args, slang_incdir_args
 from fecompiler.tools.slang.subflow import SlangSubFlowEnum, init_slang_subflow
-from fecompiler.utility.json import json_read, json_write
+from fecompiler.utility.json import json_write
 
 
 # ── slang binary location ─────────────────────────────────────────────────────
@@ -58,66 +59,9 @@ class SlangElabStep(BaseStep):
         content = log_path.read_text(encoding="utf-8")
         return self._is_elab_log_ok(content)
 
-    # ── internal ──────────────────────────────────────────────────────────────
-
-    def _prepared_inputs(self, workspace: dict[str, Any]) -> dict[str, Any]:
-        manifest = str(workspace.get("prepared_manifest", "")).strip()
-        if manifest and Path(manifest).exists():
-            data = json_read(manifest)
-            if isinstance(data, dict) and data.get("rtl_files"):
-                return data
-        return {}
-
-    def _rtl_files(self, workspace: dict[str, Any]) -> list[str]:
-        prepared = self._prepared_inputs(workspace)
-        if prepared:
-            return [str(p) for p in prepared.get("rtl_files", [])]
-
-        filelist = workspace.get("input_filelist", "")
-        if filelist and Path(filelist).exists():
-            return [
-                l.strip() for l in Path(filelist).read_text(encoding="utf-8").splitlines()
-                if l.strip()
-                and not l.strip().startswith(("#", "//"))
-                and (l.strip().endswith(".v") or l.strip().endswith(".sv"))
-            ]
-        verilog = workspace.get("origin_verilog", "")
-        if verilog and Path(verilog).exists():
-            return [verilog]
-        return []
-
-    def _incdir_args(self, workspace: dict[str, Any]) -> list[str]:
-        prepared = self._prepared_inputs(workspace)
-        seen: set[str] = set()
-        incdirs: list[str] = []
-        for inc in prepared.get("incdirs", []) if prepared else []:
-            text = str(inc).strip()
-            if text and text not in seen:
-                seen.add(text)
-                incdirs.append(text)
-        # Real-world RTL often uses `include "foo.vh"` relative to each RTL file's folder.
-        # Add all RTL parent dirs as implicit include dirs to match this expectation.
-        for rtl in self._rtl_files(workspace):
-            parent = str(Path(rtl).expanduser().resolve().parent)
-            if parent and parent not in seen:
-                seen.add(parent)
-                incdirs.append(parent)
-
-        args: list[str] = []
-        for inc in incdirs:
-            args.extend(["-I", inc])
-        return args
-
-    def _define_args(self, workspace: dict[str, Any]) -> list[str]:
-        prepared = self._prepared_inputs(workspace)
-        args: list[str] = []
-        for define in prepared.get("defines", []) if prepared else []:
-            args.extend(["-D", str(define)])
-        return args
-
     def _run_elaborate(self, step: WorkspaceStep,
                        workspace: dict[str, Any]) -> None:
-        files = self._rtl_files(workspace)
+        files = rtl_files(workspace)
         top       = workspace.get("top_module", "top")
         log_path = Path(step.report["dir"]) / "log.txt"
 
@@ -129,8 +73,8 @@ class SlangElabStep(BaseStep):
             "--diag-column",
             "--diag-location",
             "--diag-source",
-            *self._incdir_args(workspace),
-            *self._define_args(workspace),
+            *slang_incdir_args(workspace),
+            *slang_define_args(workspace),
         ] + files
 
         result = subprocess.run(cmd, capture_output=True, text=True)

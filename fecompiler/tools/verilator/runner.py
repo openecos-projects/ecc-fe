@@ -11,6 +11,11 @@ from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.tools.common.rtl_inputs import (
+    rtl_files,
+    verilator_define_args,
+    verilator_incdir_args,
+)
 
 from fecompiler.tools.verilator.subflow import (
     LintSubFlowEnum,
@@ -68,64 +73,6 @@ def _verilator_include_args() -> list[str]:
     if _SYSTEM_VERILATOR_INCLUDE.exists():
         return [f"-I{_SYSTEM_VERILATOR_INCLUDE}"]
     return []
-
-
-def _rtl_files(workspace: dict[str, Any]) -> list[str]:
-    """Collect RTL files (prefer prepare manifest, then filelist / origin)."""
-    prepared = _prepared_inputs(workspace)
-    if prepared:
-        return [str(p) for p in prepared.get("rtl_files", [])]
-
-    filelist = workspace.get("input_filelist", "")
-    if filelist and Path(filelist).exists():
-        return [
-            l.strip() for l in Path(filelist).read_text(encoding="utf-8").splitlines()
-            if l.strip()
-            and not l.strip().startswith(("#", "//"))
-            and (l.strip().endswith(".v") or l.strip().endswith(".sv"))
-        ]
-    verilog = workspace.get("origin_verilog", "")
-    if verilog and Path(verilog).exists():
-        return [verilog]
-    return []
-
-
-def _prepared_inputs(workspace: dict[str, Any]) -> dict[str, Any]:
-    """Load normalized prepare artifact if available."""
-    manifest = str(workspace.get("prepared_manifest", "")).strip()
-    if manifest and Path(manifest).exists():
-        data = json_read(manifest)
-        if isinstance(data, dict) and data.get("rtl_files"):
-            return data
-    return {}
-
-
-def _incdir_args(workspace: dict[str, Any]) -> list[str]:
-    """Return verilator include-dir args from prepare manifest + RTL parent dirs."""
-    prepared = _prepared_inputs(workspace)
-    seen: set[str] = set()
-    incdirs: list[str] = []
-
-    for inc in prepared.get("incdirs", []) if prepared else []:
-        text = str(inc).strip()
-        if text and text not in seen:
-            seen.add(text)
-            incdirs.append(text)
-
-    # Real-world RTL often uses relative includes from each source directory.
-    for rtl in _rtl_files(workspace):
-        parent = str(Path(rtl).expanduser().resolve().parent)
-        if parent and parent not in seen:
-            seen.add(parent)
-            incdirs.append(parent)
-
-    return [f"+incdir+{inc}" for inc in incdirs]
-
-
-def _define_args(workspace: dict[str, Any]) -> list[str]:
-    """Return verilator preprocessor define args from prepare manifest."""
-    prepared = _prepared_inputs(workspace)
-    return [f"+define+{define}" for define in prepared.get("defines", [])] if prepared else []
 
 
 def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
@@ -502,7 +449,7 @@ class VerilatorLintStep(BaseStep):
         return lint_path.exists() and "%Error" not in lint_path.read_text(encoding="utf-8")
 
     def _run_lint(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
-        files = _rtl_files(workspace)
+        files = rtl_files(workspace)
         top   = workspace.get("top_module", "top")
         lint_path = Path(step.report["dir"]) / "log.txt"
 
@@ -511,8 +458,8 @@ class VerilatorLintStep(BaseStep):
             "--lint-only",
             "-Wno-fatal",
             *_verilator_include_args(),
-            *_incdir_args(workspace),
-            *_define_args(workspace),
+            *verilator_incdir_args(workspace),
+            *verilator_define_args(workspace),
             "--top",
             top,
         ] + files
@@ -608,7 +555,7 @@ class VerilatorSimStep(BaseStep):
             )
             return False
 
-        files   = _rtl_files(workspace)
+        files   = rtl_files(workspace)
         top     = workspace.get("top_module", "top")
         obj_dir = Path(step.directory) / "obj_dir"
 
@@ -617,8 +564,8 @@ class VerilatorSimStep(BaseStep):
             "-Wno-fatal",
             "--trace",
             *_verilator_include_args(),
-            *_incdir_args(workspace),
-            *_define_args(workspace),
+            *verilator_incdir_args(workspace),
+            *verilator_define_args(workspace),
             *_sim_cflags_args(workspace),
             *_sim_ldflags_args(workspace),
             "--top", top,
