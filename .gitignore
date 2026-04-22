@@ -88,3 +88,6 @@ docs/backend-architecture-mermaid.md
 # Third-party build directories (sources are tracked)
 fecompiler/thirdparty/slang/build/
 fecompiler/thirdparty/verilator/build/
+
+# SoC generated artifacts: keep runnable images tracked, ignore volatile ELFs
+fecompiler/thirdparty/SoC/tests/out/*.elf
