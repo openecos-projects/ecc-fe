@@ -8,7 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fecompiler.config import DEFAULT_PROJECTS_ROOT
-from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
+from fecompiler.data.workspace import (
+    CreateWorkspaceData,
+    build_parameter_overrides,
+    create_workspace,
+    load_workspace,
+)
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.utility.json import json_read, json_write
 
@@ -197,46 +202,21 @@ def run(argv: Sequence[str] | None = None) -> int:
         print("Error: failed to create workspace", file=sys.stderr)
         return 1
 
-    updates: dict[str, object] = {}
-    if args.testbench.strip():
-        tb = str(Path(args.testbench).expanduser().resolve())
-        ws["testbench"] = tb
-        updates["testbench"] = tb
-    if args.sim_cpp:
-        sim_cpp = [str(Path(p).expanduser().resolve()) for p in args.sim_cpp if str(p).strip()]
-        ws["sim_cpp_sources"] = sim_cpp
-        updates["sim_cpp_sources"] = sim_cpp
-    if args.sim_cflag:
-        sim_cflags = [str(f).strip() for f in args.sim_cflag if str(f).strip()]
-        ws["sim_cflags"] = sim_cflags
-        updates["sim_cflags"] = sim_cflags
-    if args.sim_ldflag:
-        sim_ldflags = [str(f).strip() for f in args.sim_ldflag if str(f).strip()]
-        ws["sim_ldflags"] = sim_ldflags
-        updates["sim_ldflags"] = sim_ldflags
-    if args.sim_arg:
-        sim_args = [str(a) for a in args.sim_arg if str(a)]
-        ws["sim_run_args"] = sim_args
-        updates["sim_run_args"] = sim_args
-    if sim_images:
-        ws["sim_images"] = sim_images
-        updates["sim_images"] = sim_images
-    if args.sim_all_tests:
-        ws["sim_all_tests"] = True
-        ws["sim_tests_dir"] = str(Path(args.sim_tests_dir).expanduser().resolve())
-        updates["sim_all_tests"] = True
-        updates["sim_tests_dir"] = ws["sim_tests_dir"]
-    if args.sim_build_all_programs:
-        ws["sim_build_all_programs"] = True
-        updates["sim_build_all_programs"] = True
-    if args.sim_build_all_programs or args.sim_program:
-        ws["sim_programs_dir"] = str(Path(args.sim_programs_dir).expanduser().resolve())
-        ws["sim_tests_out_dir"] = str(Path(args.sim_tests_out_dir).expanduser().resolve())
-        updates["sim_programs_dir"] = ws["sim_programs_dir"]
-        updates["sim_tests_out_dir"] = ws["sim_tests_out_dir"]
-    if args.sim_program:
-        ws["sim_program_names"] = [str(x).strip() for x in args.sim_program if str(x).strip()]
-        updates["sim_program_names"] = ws["sim_program_names"]
+    updates = build_parameter_overrides(
+        testbench=args.testbench.strip(),
+        sim_cpp_sources=args.sim_cpp if args.sim_cpp else None,
+        sim_cflags=args.sim_cflag if args.sim_cflag else None,
+        sim_ldflags=args.sim_ldflag if args.sim_ldflag else None,
+        sim_run_args=args.sim_arg if args.sim_arg else None,
+        sim_images=sim_images if sim_images else None,
+        sim_all_tests=bool(args.sim_all_tests),
+        sim_tests_dir=args.sim_tests_dir if args.sim_all_tests else "",
+        sim_build_all_programs=bool(args.sim_build_all_programs),
+        sim_program_names=args.sim_program if args.sim_program else None,
+        sim_programs_dir=args.sim_programs_dir if (args.sim_build_all_programs or args.sim_program) else "",
+        sim_tests_out_dir=args.sim_tests_out_dir if (args.sim_build_all_programs or args.sim_program) else "",
+    )
+    ws.update(updates)
     ws["sim_reuse_binary"] = bool(args.sim_reuse_binary or args.sim_only)
     _persist_parameter_overrides(ws, updates)
 

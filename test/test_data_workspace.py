@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fecompiler.data.workspace import (
     CreateWorkspaceData,
+    build_parameter_overrides,
     create_workspace,
     load_workspace,
     load_flow,
@@ -150,3 +151,39 @@ def test_create_workspace_persists_sim_options(tmp_path):
     assert ws["sim_tests_out_dir"] == str((tmp_path / "tests" / "out").resolve())
     assert ws["sim_soc_root"] == str((tmp_path / "soc").resolve())
     assert ws["sim_build_test_script"] == str((tmp_path / "soc" / "scripts" / "build_test.sh").resolve())
+
+
+def test_build_parameter_overrides_normalizes_paths_and_filters_empty(tmp_path):
+    tb = tmp_path / "tb.cpp"
+    helper = tmp_path / "helper.cpp"
+    image = tmp_path / "tests" / "out" / "min2.soc.bin"
+    tb.write_text("int main(){return 0;}\n", encoding="utf-8")
+    helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(b"\x00")
+
+    updates = build_parameter_overrides(
+        testbench=str(tb),
+        sim_cpp_sources=[str(helper), ""],
+        sim_cflags=["-O2", ""],
+        sim_ldflags=["-lm", " "],
+        sim_run_args=["--max-cycles", "100", ""],
+        sim_images=[str(image), ""],
+        sim_all_tests=True,
+        sim_tests_dir=str(tmp_path / "tests" / "out"),
+        sim_program_names=["min2", " "],
+        sim_programs_dir=str(tmp_path / "tests" / "programs"),
+        sim_tests_out_dir=str(tmp_path / "tests" / "out"),
+    )
+
+    assert updates["testbench"] == str(tb.resolve())
+    assert updates["sim_cpp_sources"] == [str(helper.resolve())]
+    assert updates["sim_cflags"] == ["-O2"]
+    assert updates["sim_ldflags"] == ["-lm"]
+    assert updates["sim_run_args"] == ["--max-cycles", "100"]
+    assert updates["sim_images"] == [str(image.resolve())]
+    assert updates["sim_all_tests"] is True
+    assert updates["sim_tests_dir"] == str((tmp_path / "tests" / "out").resolve())
+    assert updates["sim_program_names"] == ["min2"]
+    assert updates["sim_programs_dir"] == str((tmp_path / "tests" / "programs").resolve())
+    assert updates["sim_tests_out_dir"] == str((tmp_path / "tests" / "out").resolve())

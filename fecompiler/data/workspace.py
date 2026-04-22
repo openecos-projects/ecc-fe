@@ -197,6 +197,84 @@ def save_flow(flow_path: Path, flow: dict[str, Any]) -> None:
     _write_json(flow_path, flow)
 
 
+def build_parameter_overrides(
+    *,
+    cpu_filelist: str = "",
+    soc_filelist: str = "",
+    testbench: str = "",
+    sim_cpp_sources: list[str] | None = None,
+    sim_cflags: list[str] | None = None,
+    sim_ldflags: list[str] | None = None,
+    sim_run_args: list[str] | None = None,
+    sim_images: list[str] | None = None,
+    sim_all_tests: bool = False,
+    sim_tests_dir: str = "",
+    sim_build_all_programs: bool = False,
+    sim_program_names: list[str] | None = None,
+    sim_program_sources: list[str] | None = None,
+    sim_programs_dir: str = "",
+    sim_tests_out_dir: str = "",
+    sim_soc_root: str = "",
+    sim_build_test_script: str = "",
+) -> dict[str, Any]:
+    """Normalize runtime option fields into parameters/home schema."""
+    updates: dict[str, Any] = {}
+
+    if cpu_filelist:
+        updates["cpu_filelist"] = str(Path(cpu_filelist).expanduser().resolve())
+    if soc_filelist:
+        updates["soc_filelist"] = str(Path(soc_filelist).expanduser().resolve())
+    if testbench:
+        updates["testbench"] = str(Path(testbench).expanduser().resolve())
+
+    sim_cpp = [str(Path(p).expanduser().resolve()) for p in (sim_cpp_sources or []) if str(p).strip()]
+    if sim_cpp:
+        updates["sim_cpp_sources"] = sim_cpp
+
+    cflags = [str(x).strip() for x in (sim_cflags or []) if str(x).strip()]
+    if cflags:
+        updates["sim_cflags"] = cflags
+
+    ldflags = [str(x).strip() for x in (sim_ldflags or []) if str(x).strip()]
+    if ldflags:
+        updates["sim_ldflags"] = ldflags
+
+    run_args = [str(x) for x in (sim_run_args or []) if str(x)]
+    if run_args:
+        updates["sim_run_args"] = run_args
+
+    images = [str(Path(p).expanduser().resolve()) for p in (sim_images or []) if str(p).strip()]
+    if images:
+        updates["sim_images"] = images
+
+    if sim_all_tests:
+        updates["sim_all_tests"] = True
+    if sim_tests_dir:
+        updates["sim_tests_dir"] = str(Path(sim_tests_dir).expanduser().resolve())
+
+    if sim_build_all_programs:
+        updates["sim_build_all_programs"] = True
+
+    program_names = [str(x).strip() for x in (sim_program_names or []) if str(x).strip()]
+    if program_names:
+        updates["sim_program_names"] = program_names
+
+    program_sources = [str(Path(p).expanduser().resolve()) for p in (sim_program_sources or []) if str(p).strip()]
+    if program_sources:
+        updates["sim_program_sources"] = program_sources
+
+    if sim_programs_dir:
+        updates["sim_programs_dir"] = str(Path(sim_programs_dir).expanduser().resolve())
+    if sim_tests_out_dir:
+        updates["sim_tests_out_dir"] = str(Path(sim_tests_out_dir).expanduser().resolve())
+    if sim_soc_root:
+        updates["sim_soc_root"] = str(Path(sim_soc_root).expanduser().resolve())
+    if sim_build_test_script:
+        updates["sim_build_test_script"] = str(Path(sim_build_test_script).expanduser().resolve())
+
+    return updates
+
+
 # ── private helpers ────────────────────────────────────────────────────────────
 
 def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
@@ -205,46 +283,27 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params.setdefault("Top module",          "top")
     params.setdefault("Clock",               "clk")
     params.setdefault("Frequency max [MHz]", 100)
-    if spec.cpu_filelist:
-        params["cpu_filelist"] = str(Path(spec.cpu_filelist).expanduser().resolve())
-    if spec.soc_filelist:
-        params["soc_filelist"] = str(Path(spec.soc_filelist).expanduser().resolve())
-    if spec.testbench:
-        params["testbench"] = str(Path(spec.testbench).expanduser().resolve())
-    if spec.sim_cpp_sources:
-        params["sim_cpp_sources"] = [
-            str(Path(p).expanduser().resolve()) for p in spec.sim_cpp_sources if str(p).strip()
-        ]
-    if spec.sim_cflags:
-        params["sim_cflags"] = [str(x).strip() for x in spec.sim_cflags if str(x).strip()]
-    if spec.sim_ldflags:
-        params["sim_ldflags"] = [str(x).strip() for x in spec.sim_ldflags if str(x).strip()]
-    if spec.sim_run_args:
-        params["sim_run_args"] = [str(x) for x in spec.sim_run_args if str(x)]
-    if spec.sim_images:
-        params["sim_images"] = [
-            str(Path(p).expanduser().resolve()) for p in spec.sim_images if str(p).strip()
-        ]
-    if spec.sim_all_tests:
-        params["sim_all_tests"] = True
-    if spec.sim_tests_dir:
-        params["sim_tests_dir"] = str(Path(spec.sim_tests_dir).expanduser().resolve())
-    if spec.sim_build_all_programs:
-        params["sim_build_all_programs"] = True
-    if spec.sim_program_names:
-        params["sim_program_names"] = [str(x).strip() for x in spec.sim_program_names if str(x).strip()]
-    if spec.sim_program_sources:
-        params["sim_program_sources"] = [
-            str(Path(p).expanduser().resolve()) for p in spec.sim_program_sources if str(p).strip()
-        ]
-    if spec.sim_programs_dir:
-        params["sim_programs_dir"] = str(Path(spec.sim_programs_dir).expanduser().resolve())
-    if spec.sim_tests_out_dir:
-        params["sim_tests_out_dir"] = str(Path(spec.sim_tests_out_dir).expanduser().resolve())
-    if spec.sim_soc_root:
-        params["sim_soc_root"] = str(Path(spec.sim_soc_root).expanduser().resolve())
-    if spec.sim_build_test_script:
-        params["sim_build_test_script"] = str(Path(spec.sim_build_test_script).expanduser().resolve())
+    params.update(
+        build_parameter_overrides(
+            cpu_filelist=spec.cpu_filelist,
+            soc_filelist=spec.soc_filelist,
+            testbench=spec.testbench,
+            sim_cpp_sources=spec.sim_cpp_sources,
+            sim_cflags=spec.sim_cflags,
+            sim_ldflags=spec.sim_ldflags,
+            sim_run_args=spec.sim_run_args,
+            sim_images=spec.sim_images,
+            sim_all_tests=spec.sim_all_tests,
+            sim_tests_dir=spec.sim_tests_dir,
+            sim_build_all_programs=spec.sim_build_all_programs,
+            sim_program_names=spec.sim_program_names,
+            sim_program_sources=spec.sim_program_sources,
+            sim_programs_dir=spec.sim_programs_dir,
+            sim_tests_out_dir=spec.sim_tests_out_dir,
+            sim_soc_root=spec.sim_soc_root,
+            sim_build_test_script=spec.sim_build_test_script,
+        )
+    )
     return params
 
 

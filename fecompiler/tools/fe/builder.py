@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fecompiler.allflow.builder import sanitize_step_token
 from fecompiler.data.workspace import WorkspaceStep
 
 
@@ -24,7 +23,6 @@ def build_step(
 ) -> WorkspaceStep:
     """Return a WorkspaceStep for *step_name* inside *workspace*."""
     design = workspace["design"]
-    top_module = workspace.get("top_module", "top")
     step_dir = Path(workspace["directory"]) / f"{step_name}_{tool}"
     sd = str(step_dir)
 
@@ -41,19 +39,8 @@ def build_step(
         version="0.1",
         directory=sd,
         config={
-            "dir":             f"{sd}/config",
-            "flow":            f"{sd}/config/flow_config.json",
-            "db":              f"{sd}/config/db_default_config.json",
-            "cts":             f"{sd}/config/cts_default_config.json",
-            "drc":             f"{sd}/config/drc_default_config.json",
-            "floorplan":       f"{sd}/config/fp_default_config.json",
-            "netlist_opt":     f"{sd}/config/no_default_config_fixfanout.json",
-            "placement":       f"{sd}/config/pl_default_config.json",
-            "routing":         f"{sd}/config/rt_default_config.json",
-            "timing_opt_drv":  f"{sd}/config/to_default_config_drv.json",
-            "timing_opt_hold": f"{sd}/config/to_default_config_hold.json",
-            "legalization":    f"{sd}/config/pl_default_config.json",
-            "filler":          f"{sd}/config/pl_default_config.json",
+            "dir": f"{sd}/config",
+            "flow": f"{sd}/config/flow_config.json",
         },
         input={
             "def":     input_def,
@@ -68,38 +55,15 @@ def build_step(
             "json":    f"{sd}/output/{design}_{step_name}.json",
         },
         data={
-            "dir":             f"{sd}/data",
-            "floorplan":       f"{sd}/data/fp",
-            "placement":       f"{sd}/data/pl",
-            "legalization":    f"{sd}/data/pl",
-            "filler":          f"{sd}/data/pl",
-            "cts":             f"{sd}/data/cts",
-            "netlist_opt":     f"{sd}/data/no",
-            "timing_opt_drv":  f"{sd}/data/to",
-            "timing_opt_hold": f"{sd}/data/to",
-            "routing":         f"{sd}/data/rt",
-            "sta":             f"{sd}/data/sta",
-            "drc":             f"{sd}/data/drc",
+            "dir": f"{sd}/data",
         },
         feature={
-            "dir":    f"{sd}/feature",
-            "db":     f"{sd}/feature/{step_name}.db.json",
-            "step":   f"{sd}/feature/{step_name}.step.json",
-            "map":    f"{sd}/feature/{step_name}.map.json",
-            "timing": f"{sd}/data/sta/{top_module}.rpt.json",
+            "dir": f"{sd}/feature",
+            "step": f"{sd}/feature/{step_name}.step.json",
         },
         report={
-            "dir":  f"{sd}/report",
-            "db":   f"{sd}/report/{step_name}.db.rpt",
+            "dir": f"{sd}/report",
             "step": f"{sd}/report/{step_name}.rpt",
-            "sta": {
-                "timing": f"{sd}/data/sta/{top_module}.rpt",
-                "hold":   f"{sd}/data/sta/{top_module}_hold.skew",
-                "setup":  f"{sd}/data/sta/{top_module}_setup.skew",
-                "cap":    f"{sd}/data/sta/{top_module}.cap",
-                "fanout": f"{sd}/data/sta/{top_module}.fanout",
-                "trans":  f"{sd}/data/sta/{top_module}.trans",
-            },
         },
         log={
             "dir":  f"{sd}/log",
@@ -131,17 +95,6 @@ def build_step_space(step: dict[str, Any]) -> None:
         d = step.get(section, {}).get("dir", "")
         if d:
             os.makedirs(d, exist_ok=True)
-
-    # all data sub-directories
-    for key, val in step.get("data", {}).items():
-        if isinstance(val, str) and val:
-            os.makedirs(val, exist_ok=True)
-
-    # pl sub-directories (mirrors ecc)
-    pl_dir = step.get("data", {}).get("placement", "")
-    if pl_dir:
-        for sub in ("density", "gui", "log", "plot", "report"):
-            os.makedirs(f"{pl_dir}/{sub}", exist_ok=True)
 
 
 def build_step_config(step: dict[str, Any]) -> None:

@@ -156,6 +156,13 @@ def test_create_step_workspaces_dirs_on_disk(tmp_path):
         assert (project / f"{name}_{tool}").is_dir()
 
 
+def test_create_step_workspaces_lint_data_dir_is_empty(tmp_path):
+    engine, ws = _build_engine(tmp_path)
+    lint_data_dir = Path(ws["directory"]) / "lint_verilator" / "data"
+    assert lint_data_dir.is_dir()
+    assert list(lint_data_dir.iterdir()) == []
+
+
 # ── run_step ───────────────────────────────────────────────────────────────────
 
 def test_run_step_returns_success_for_stub(tmp_path):
