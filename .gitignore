@@ -89,5 +89,13 @@ docs/backend-architecture-mermaid.md
 fecompiler/thirdparty/slang/build/
 fecompiler/thirdparty/verilator/build/
 
-# SoC generated artifacts: keep runnable images tracked, ignore volatile ELFs
-fecompiler/thirdparty/SoC/tests/out/*.elf
+# SoC generated test artifacts:
+# keep runnable test images (*.soc.bin) tracked, ignore other volatile outputs.
+fecompiler/thirdparty/SoC*/tests/out/*.elf
+fecompiler/thirdparty/SoC*/tests/out/*.bin
+fecompiler/thirdparty/SoC*/tests/out/*.hex
+fecompiler/thirdparty/SoC*/tests/out/*.mem
+fecompiler/thirdparty/SoC*/tests/out/*.txt
+fecompiler/thirdparty/SoC*/tests/out/*.disasm.txt
+fecompiler/thirdparty/SoC*/tests/out/*.run.log
+!fecompiler/thirdparty/SoC*/tests/out/*.soc.bin
