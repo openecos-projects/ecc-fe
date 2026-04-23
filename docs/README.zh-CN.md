@@ -151,3 +151,135 @@ bazel test //:test_engine_flow
 | 子步骤定义 | `fecompiler/tools/fe/subflow.py` |
 | 步骤状态枚举 | `fecompiler/data/step.py` |
 | 步骤注册表 | `fecompiler/tools/fe/__init__.py` |
+
+---
+
+## 7. 后端库 API 速查（完整）
+
+本项目当前没有 FastAPI/Flask 这类 HTTP 路由；“后端 API”主要指可直接在 Python 中调用的库方法。
+
+### 7.1 Workspace 创建与参数控制（`fecompiler.data.workspace`）
+
+#### 核心类型
+
+- `CreateWorkspaceData`
+  - 创建项目时的输入结构体。
+  - 支持同时配置：
+    - CPU 选择：`cpu_filelist`
+    - SoC 选择：`soc_filelist`
+    - 仿真 testbench：`testbench`、`sim_cpp_sources`、`sim_cflags`、`sim_ldflags`
+    - 被测文件选择：
+      - 显式镜像：`sim_images`
+      - 扫描目录：`sim_all_tests + sim_tests_dir`
+      - 构建程序：`sim_build_all_programs + sim_programs_dir + sim_tests_out_dir`
+      - 指定程序：`sim_program_names` 或 `sim_program_sources`
+
+#### 公开函数（5 个）
+
+- `create_workspace(spec)`
+  - 创建项目目录与 `home/parameters.json`, `home/flow.json` 等元数据。
+- `load_workspace(directory)`
+  - 读取已存在项目，返回 workspace dict（含 `cpu_filelist`/`soc_filelist`/仿真参数等）。
+- `load_flow(flow_path)`
+  - 读取 flow.json。
+- `save_flow(flow_path, flow)`
+  - 保存 flow.json。
+- `build_parameter_overrides(...)`
+  - 将运行时参数规范化为可持久化参数（路径绝对化、空值过滤）。
+
+### 7.2 流程执行（`fecompiler.engine.flow.EngineFlow`）
+
+#### 公开方法（12 个）
+
+- `has_init()`
+  - 判断 flow 是否已初始化。
+- `init_default_steps()`
+  - 用默认步骤初始化 flow（`prepare -> elab -> lint -> sim`）。
+- `load()`
+  - 从磁盘重载 flow 与 step 工作区结构。
+- `save()`
+  - 保存 flow 到磁盘。
+- `clear_states()`
+  - 清空步骤状态为 `Unstart`。
+- `get_step(name, tool)`
+  - 查找 flow.json 中某一步。
+- `set_state(name, tool, state, runtime=None, peak_memory=None)`
+  - 设置步骤状态。
+- `is_flow_success()`
+  - 判断全流程是否全部成功。
+- `create_step_workspaces()`
+  - 创建每个步骤目录与 config。
+- `get_workspace_step(name)`
+  - 获取某一步的 workspace step 信息。
+- `run_step(step_name, rerun=False)`
+  - 单步执行（你说的“单步执行方法”）。
+- `run_all(rerun=False)`
+  - 全流程执行（你说的“全流程执行方法”）。
+
+### 7.3 被测文件/CPU/SoC 的选择规则
+
+#### CPU 选择
+
+- 使用 `CreateWorkspaceData.cpu_filelist`
+
+#### SoC 选择
+
+- 使用 `CreateWorkspaceData.soc_filelist`
+- 常配套：
+  - `testbench`（如 SoC driver/main.cpp）
+  - `sim_cpp_sources`（如 dpi_mem.cpp）
+  - `sim_cflags`（如 `-I<soc_root>`）
+
+#### 被测文件选择（仿真镜像）
+
+- 方式 A：显式指定镜像
+  - `sim_images=[".../a.soc.bin", ".../b.soc.bin"]`
+- 方式 B：扫描某目录全部镜像
+  - `sim_all_tests=True`
+  - `sim_tests_dir=".../tests/out"`
+- 方式 C：从 `tests/programs/*.c` 先编译再仿真
+  - `sim_build_all_programs=True`
+  - `sim_programs_dir=".../tests/programs"`
+  - `sim_tests_out_dir=".../tests/out"`
+- 方式 D：只编译部分程序
+  - `sim_program_names=["max", "fib"]`
+  - 或 `sim_program_sources=[".../max.c", ".../fib.c"]`
+
+### 7.4 步骤资源查询 API（`fecompiler.tools.fe.service`）
+
+- `get_step_info(workspace, step, id)`
+  - 预留接口，用于按资源 ID 查询 step 资源。
+  - 当前实现为 stub（默认返回 `{}`）。
+
+### 7.5 最小调用示例（库方式，不走 CLI）
+
+```python
+from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
+from fecompiler.engine.flow import EngineFlow
+
+spec = CreateWorkspaceData(
+    directory="workspace_projects/AAA",
+    parameters={"Design": "AAA", "Top module": "ysyxSoCTop"},
+    cpu_filelist="/path/to/cl3_1/filelist.cpu.f",
+    soc_filelist="/path/to/SoC2/filelist.soc.f",
+    testbench="/path/to/SoC2/driver/main.cpp",
+    sim_cpp_sources=["/path/to/SoC2/driver/dpi_mem.cpp"],
+    sim_cflags=["-I/path/to/SoC2"],
+    sim_all_tests=True,
+    sim_tests_dir="/path/to/SoC2/tests/out",
+    sim_run_args=["--max-cycles", "2000000"],
+)
+create_workspace(spec)
+
+ws = load_workspace("workspace_projects/AAA")
+engine = EngineFlow(workspace=ws)
+engine.create_step_workspaces()
+
+# 单步执行
+engine.run_step("prepare", rerun=True)
+engine.run_step("sim", rerun=True)
+
+# 全流程执行
+ok, reports = engine.run_all(rerun=True)
+print(ok, reports)
+```
