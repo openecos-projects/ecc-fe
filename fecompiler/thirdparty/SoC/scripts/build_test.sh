@@ -41,7 +41,13 @@ if [[ -z "${SRC}" ]]; then
   SRC="${ROOT}/tests/programs/${NAME}.c"
 fi
 
-if [[ ! -f "${SRC}" ]]; then
+IS_RTTHREAD=0
+if [[ "${NAME}" == "rtthread" || "${SRC}" == "rtthread" ]]; then
+  IS_RTTHREAD=1
+  NAME="rtthread"
+fi
+
+if [[ "${IS_RTTHREAD}" != "1" && ! -f "${SRC}" ]]; then
   echo "test source not found: ${SRC}" >&2
   exit 1
 fi
@@ -80,8 +86,13 @@ fi
 COMMON_CFLAGS="-fno-pic -march=rv32im_zicsr -mcmodel=medany -mstrict-align -mabi=ilp32"
 CFLAGS="-DMAINARGS=\"\" -lm -g -O2 -Wall ${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common -fno-asynchronous-unwind-tables -fno-builtin -fno-stack-protector -Wno-main -U_FORTIFY_SOURCE -fvisibility=hidden -fdata-sections -ffunction-sections"
 ASFLAGS="${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common"
-SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-0}"
-SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-0}"
+if [[ "${IS_RTTHREAD}" == "1" ]]; then
+  SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-1}"
+  SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-1}"
+else
+  SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-0}"
+  SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-0}"
+fi
 if [[ "${SOC_USE_BOOTLOADER}" == "1" ]]; then
   PMEM_START=0x80000000
 else
@@ -103,35 +114,73 @@ rm -rf "${TMPDIR}"
 mkdir -p "${TMPDIR}"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
-mapfile -t COMMON_SRCS < <(
-  find -L "${ROOT}/tests/common" -type f \( -name '*.c' -o -name '*.S' \) ! -path "${ROOT}/tests/common/soc_bootloader.S" | sort
-)
-
-OBJS=()
-INDEX=0
-for FILE in "${SRC}" "${COMMON_SRCS[@]}"; do
-  OBJ="${TMPDIR}/obj_${INDEX}.o"
-  INDEX=$((INDEX + 1))
-  case "${FILE}" in
-    *.c)
-      "${CC}" -std=gnu11 ${CFLAGS} -c -o "${OBJ}" "${FILE}"
-      ;;
-    *.S)
-      "${AS}" ${ASFLAGS} -c -o "${OBJ}" "${FILE}"
-      ;;
-    *)
-      echo "Unsupported source: ${FILE}" >&2
+if [[ "${IS_RTTHREAD}" == "1" ]]; then
+  RTTHREAD_AM_ROOT="${RTTHREAD_AM_ROOT:-${ROOT}/../rt-thread-am}"
+  RTTHREAD_BSP="${RTTHREAD_AM_ROOT}/bsp/abstract-machine"
+  RTTHREAD_ARCH="${RTTHREAD_ARCH:-riscv32-nemu}"
+  if [[ ! -d "${RTTHREAD_BSP}" ]]; then
+    echo "rt-thread-am BSP not found: ${RTTHREAD_BSP}" >&2
+    exit 1
+  fi
+  if [[ -z "${AM_HOME:-}" || ! -f "${AM_HOME}/Makefile" ]]; then
+    if [[ -f "/home/luyoung/ysyx-workbench/abstract-machine/Makefile" ]]; then
+      export AM_HOME="/home/luyoung/ysyx-workbench/abstract-machine"
+    else
+      echo "AM_HOME must point to an AbstractMachine repo" >&2
       exit 1
-      ;;
-  esac
-  OBJS+=("${OBJ}")
-done
+    fi
+  fi
+  if ! command -v scons >/dev/null 2>&1; then
+    echo "scons is required to build rt-thread-am" >&2
+    exit 1
+  fi
 
-"${LD}" ${LDFLAGS} -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
-"${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
-"${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
-"${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
-"${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
+  RTTHREAD_WRAPPER_MK="$(cd "${TMPDIR}" && pwd)/rtthread-am.mk"
+  {
+    echo "include Makefile"
+    echo "CFLAGS += -Wno-error"
+  } > "${RTTHREAD_WRAPPER_MK}"
+  export RTT_CC_PREFIX="${CROSS_COMPILE}"
+  make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
+  make -C "${RTTHREAD_BSP}" -f "${RTTHREAD_WRAPPER_MK}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" image
+
+  RTTHREAD_IMAGE="${RTTHREAD_BSP}/build/rtthread-${RTTHREAD_ARCH}"
+  cp -f "${RTTHREAD_IMAGE}.elf" "${PREFIX}.elf"
+  cp -f "${RTTHREAD_IMAGE}.bin" "${PREFIX}.bin"
+  "${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
+  "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
+  "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
+else
+  mapfile -t COMMON_SRCS < <(
+    find -L "${ROOT}/tests/common" -type f \( -name '*.c' -o -name '*.S' \) ! -path "${ROOT}/tests/common/soc_bootloader.S" | sort
+  )
+
+  OBJS=()
+  INDEX=0
+  for FILE in "${SRC}" "${COMMON_SRCS[@]}"; do
+    OBJ="${TMPDIR}/obj_${INDEX}.o"
+    INDEX=$((INDEX + 1))
+    case "${FILE}" in
+      *.c)
+        "${CC}" -std=gnu11 ${CFLAGS} -c -o "${OBJ}" "${FILE}"
+        ;;
+      *.S)
+        "${AS}" ${ASFLAGS} -c -o "${OBJ}" "${FILE}"
+        ;;
+      *)
+        echo "Unsupported source: ${FILE}" >&2
+        exit 1
+        ;;
+    esac
+    OBJS+=("${OBJ}")
+  done
+
+  "${LD}" ${LDFLAGS} -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
+  "${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
+  "${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
+  "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
+  "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
+fi
 
 PAYLOAD_SIZE="$(wc -c < "${PREFIX}.bin")"
 if [[ "${SOC_USE_BOOTLOADER}" != "1" ]]; then

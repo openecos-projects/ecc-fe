@@ -10,6 +10,7 @@ DIFF="${DIFF:-0}"
 REF_SO="${REF_SO:-${ROOT}/tools/riscv32-spike-so}"
 DIFF_IMAGE_OFFSET="${DIFF_IMAGE_OFFSET:-0}"
 DIFF_RESET_VECTOR="${DIFF_RESET_VECTOR:-0x80000000}"
+TIMEOUT_OK="${TIMEOUT_OK:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,9 +46,13 @@ while [[ $# -gt 0 ]]; do
       DIFF_RESET_VECTOR="$2"
       shift 2
       ;;
+    --timeout-ok)
+      TIMEOUT_OK=1
+      shift
+      ;;
     *)
       echo "Unknown option: $1" >&2
-      echo "Usage: $0 [--sim-bin <bin>] [--image <soc.bin>] [--max-cycles <n>] [--wave <file>] [--diff] [--ref <so>] [--diff-image-offset <n>] [--diff-reset-vector <n>]" >&2
+      echo "Usage: $0 [--sim-bin <bin>] [--image <soc.bin>] [--max-cycles <n>] [--wave <file>] [--diff] [--ref <so>] [--diff-image-offset <n>] [--diff-reset-vector <n>] [--timeout-ok]" >&2
       exit 1
       ;;
   esac
@@ -72,6 +77,9 @@ if [[ "${DIFF}" == "1" ]]; then
     exit 1
   fi
   CMD+=(--diff --ref "${REF_SO}" --diff-image-offset "${DIFF_IMAGE_OFFSET}" --diff-reset-vector "${DIFF_RESET_VECTOR}")
+fi
+if [[ "${TIMEOUT_OK}" == "1" ]]; then
+  CMD+=(--timeout-ok)
 fi
 
 "${CMD[@]}"
