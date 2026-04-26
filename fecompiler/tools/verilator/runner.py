@@ -645,6 +645,7 @@ class VerilatorSimStep(BaseStep):
             run_case_log = run_case_dir / "log.txt"
             output_case_dir = Path(step.output["dir"]) / "cases" / case_name
             output_case_dir.mkdir(parents=True, exist_ok=True)
+            output_case_log = output_case_dir / "log.txt"
             run_args, wave = _apply_wave_arg(
                 list(case["args"]),
                 output_case_dir / "wave.vcd",
@@ -664,6 +665,7 @@ class VerilatorSimStep(BaseStep):
 
             latest_case_log.write_text(output, encoding="utf-8")
             run_case_log.write_text(output, encoding="utf-8")
+            output_case_log.write_text(output, encoding="utf-8")
             case_ok = rc == 0 and "FAILED" not in output and "%Error" not in output
             if not case_ok:
                 all_ok = False
@@ -675,14 +677,16 @@ class VerilatorSimStep(BaseStep):
                     "image": image,
                     "returncode": rc,
                     "ok": case_ok,
-                    "log": str(run_case_log),
-                    "latest_log": str(latest_case_log),
+                    "log": str(output_case_log),
+                    "latest_log": str(output_case_log),
+                    "report_log": str(latest_case_log),
+                    "run_log": str(run_case_log),
                     "wave": wave,
                     "run_id": run_id,
                 }
             )
             summary_lines.append(
-                f"[{case_name}] rc={rc} image={image or '-'} wave={wave} latest_log={latest_case_log} run_log={run_case_log}"
+                f"[{case_name}] rc={rc} image={image or '-'} log={output_case_log} wave={wave} run_log={run_case_log}"
             )
 
         summary_text = "\n".join(summary_lines) + "\n"

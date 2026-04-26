@@ -172,9 +172,9 @@ class TestCpuSocFlow(unittest.TestCase):
         self.assertTrue(expected_names.issubset(executed_names))
 
         for name in sorted(expected_names):
-            latest_log = report_dir / "cases" / name / "log.txt"
-            self.assertTrue(latest_log.exists(), f"missing latest case log: {latest_log}")
-            content = latest_log.read_text(encoding="utf-8")
+            output_log = Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / name / "log.txt"
+            self.assertTrue(output_log.exists(), f"missing output case log: {output_log}")
+            content = output_log.read_text(encoding="utf-8")
             self.assertNotIn("FAILED", content)
             self.assertNotIn("%Error", content)
 
@@ -222,6 +222,8 @@ class TestCpuSocFlow(unittest.TestCase):
         self.assertTrue(second_run_log.exists(), f"missing second run log: {second_run_log}")
         self.assertTrue(first_run_log.exists(), "old run log should be retained")
         self.assertEqual(first_content, first_run_log.read_text(encoding="utf-8"))
+        output_log = Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / case_name / "log.txt"
+        self.assertTrue(output_log.exists(), f"missing output case log: {output_log}")
 
 
 if __name__ == "__main__":
