@@ -76,6 +76,18 @@ def _soc_test_images(soc_root: Path) -> list[Path]:
     raise FileNotFoundError(f"no .soc.bin found in {tests_out_dir}")
 
 
+def _soc_sim_cpp_sources(soc_root: Path) -> list[str]:
+    sources = [soc_root / "driver/dpi_mem.cpp"]
+    difftest_cpp = soc_root / "driver/difftest.cpp"
+    if difftest_cpp.exists():
+        sources.append(difftest_cpp)
+    return [str(src) for src in sources]
+
+
+def _soc_sim_ldflags(soc_root: Path) -> list[str]:
+    return ["-ldl"] if (soc_root / "driver/difftest.cpp").exists() else []
+
+
 class TestCpuSocMatrixFlow(unittest.TestCase):
     cpu_variants: list[Path] = []
     soc_variants: list[Path] = []
@@ -112,8 +124,9 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
             cpu_filelist=str(cpu_root / "filelist.cpu.f"),
             soc_filelist=str(soc_root / "filelist.soc.f"),
             testbench=str(soc_root / "driver/main.cpp"),
-            sim_cpp_sources=[str(soc_root / "driver/dpi_mem.cpp")],
+            sim_cpp_sources=_soc_sim_cpp_sources(soc_root),
             sim_cflags=[f"-I{soc_root}"],
+            sim_ldflags=_soc_sim_ldflags(soc_root),
             sim_all_tests=True,
             sim_tests_dir=str(tests_out_dir),
             sim_run_args=["--max-cycles", SIM_MAX_CYCLES],

@@ -115,6 +115,10 @@ def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
     return [str(arg) for arg in workspace.get("sim_run_args", []) or []]
 
 
+def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
+    return "--diff" in _sim_run_args(workspace)
+
+
 def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:
     p = Path(path_text).expanduser()
     if p.is_absolute():
@@ -343,6 +347,11 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     seen: set[str] = set(images)
     lines: list[str] = []
     ok = True
+    env = os.environ.copy()
+    if _sim_difftest_enabled(workspace):
+        env["SOC_USE_BOOTLOADER"] = "1"
+        env["SOC_FAST_DIFF_BOOT"] = "1"
+        lines.append("[build_program] difftest fast boot env enabled")
     for src in sources:
         name = src.stem
         cmd = [
@@ -352,7 +361,7 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
             "--out_dir", str(out_dir),
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             output = (result.stdout + result.stderr).strip()
             rc = int(result.returncode)
         except OSError as exc:

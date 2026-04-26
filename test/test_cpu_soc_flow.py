@@ -18,9 +18,23 @@ CPU_FILELIST = REPO_ROOT / "docs/examples/cl3/filelist.cpu.f"
 SOC_FILELIST = REPO_ROOT / "fecompiler/thirdparty/SoC/filelist.soc.f"
 TESTBENCH = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/main.cpp"
 DPI_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp"
+DIFFTEST_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/difftest.cpp"
 SOC_INC = REPO_ROOT / "fecompiler/thirdparty/SoC"
+REF_SO = REPO_ROOT / "fecompiler/thirdparty/SoC/tools/riscv32-spike-so"
 SOC_TEST_PROGRAMS_DIR = REPO_ROOT / "fecompiler/thirdparty/SoC/tests/programs"
 SOC_TEST_OUT_DIR = REPO_ROOT / "fecompiler/thirdparty/SoC/tests/out"
+SIM_MAX_CYCLES = "50000000"
+DIFF_SIM_RUN_ARGS = [
+    "--max-cycles",
+    SIM_MAX_CYCLES,
+    "--diff",
+    "--ref",
+    str(REF_SO),
+    "--diff-image-offset",
+    "0x100",
+    "--diff-reset-vector",
+    "0x80000000",
+]
 
 WS_DIR = DEFAULT_PROJECTS_ROOT / "cpu_soc_test"
 
@@ -36,7 +50,7 @@ def _tool_ready() -> bool:
 
 
 def _required_paths() -> list[Path]:
-    return [CPU_FILELIST, SOC_FILELIST, TESTBENCH, DPI_CPP, SOC_TEST_PROGRAMS_DIR]
+    return [CPU_FILELIST, SOC_FILELIST, TESTBENCH, DPI_CPP, DIFFTEST_CPP, REF_SO, SOC_TEST_PROGRAMS_DIR]
 
 
 def _riscv_toolchain_ready() -> bool:
@@ -85,9 +99,10 @@ class TestCpuSocFlow(unittest.TestCase):
             cpu_filelist=str(CPU_FILELIST),
             soc_filelist=str(SOC_FILELIST),
             testbench=str(TESTBENCH),
-            sim_cpp_sources=[str(DPI_CPP)],
+            sim_cpp_sources=[str(DPI_CPP), str(DIFFTEST_CPP)],
             sim_cflags=[f"-I{SOC_INC}"],
-            sim_run_args=["--max-cycles", "2000000"],
+            sim_ldflags=["-ldl"],
+            sim_run_args=DIFF_SIM_RUN_ARGS,
         )
         ws = create_workspace(spec)
         if ws is None:
@@ -126,6 +141,7 @@ class TestCpuSocFlow(unittest.TestCase):
     def test_cpu_soc_sim_each_program_success(self):
         engine, ws = _new_engine()
         sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "cpu_soc_test_sim"
+        self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
 
         ws["sim_build_all_programs"] = True
         ws["sim_programs_dir"] = str(SOC_TEST_PROGRAMS_DIR)
@@ -135,7 +151,7 @@ class TestCpuSocFlow(unittest.TestCase):
         ws["sim_tests_dir"] = str(SOC_TEST_OUT_DIR)
         ws["sim_images"] = []
         ws["sim_program_sources"] = []
-        ws["sim_run_args"] = ["--max-cycles", "2000000"]
+        ws["sim_run_args"] = DIFF_SIM_RUN_ARGS
         ws["sim_reuse_binary"] = sim_bin.exists()
 
         state = engine.run_step("sim", rerun=True)
@@ -164,6 +180,7 @@ class TestCpuSocFlow(unittest.TestCase):
 
     def test_cpu_soc_sim_batch_has_separate_logs_for_each_program(self):
         engine, ws = _new_engine()
+        self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
         first_src = self._program_sources()[0]
         case_name = f"{first_src.stem}.soc"
         image_path = SOC_TEST_OUT_DIR / f"{first_src.stem}.soc.bin"
@@ -171,7 +188,7 @@ class TestCpuSocFlow(unittest.TestCase):
         ws["sim_tests_out_dir"] = str(SOC_TEST_OUT_DIR)
         ws["sim_all_tests"] = False
         ws["sim_images"] = []
-        ws["sim_run_args"] = ["--max-cycles", "2000000"]
+        ws["sim_run_args"] = DIFF_SIM_RUN_ARGS
 
         sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "cpu_soc_test_sim"
         ws["sim_reuse_binary"] = sim_bin.exists()
