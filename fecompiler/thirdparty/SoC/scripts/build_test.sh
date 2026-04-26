@@ -81,6 +81,7 @@ COMMON_CFLAGS="-fno-pic -march=rv32im_zicsr -mcmodel=medany -mstrict-align -mabi
 CFLAGS="-DMAINARGS=\"\" -lm -g -O2 -Wall ${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common -fno-asynchronous-unwind-tables -fno-builtin -fno-stack-protector -Wno-main -U_FORTIFY_SOURCE -fvisibility=hidden -fdata-sections -ffunction-sections"
 ASFLAGS="${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common"
 SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-0}"
+SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-0}"
 if [[ "${SOC_USE_BOOTLOADER}" == "1" ]]; then
   PMEM_START=0x80000000
 else
@@ -145,6 +146,10 @@ if (( BOOT_PAYLOAD_OFFSET + PAYLOAD_SIZE > BOOT_MROM_SIZE )); then
 fi
 
 PAYLOAD_SRC_ADDR=$((BOOT_SRC_BASE + BOOT_PAYLOAD_OFFSET))
+BOOT_COPY_SIZE="${PAYLOAD_SIZE}"
+if [[ "${SOC_FAST_DIFF_BOOT}" == "1" ]]; then
+  BOOT_COPY_SIZE=0
+fi
 BOOT_OBJ="${TMPDIR}/soc_bootloader.o"
 BOOT_BIN="${TMPDIR}/soc_bootloader.bin"
 
@@ -153,7 +158,7 @@ BOOT_BIN="${TMPDIR}/soc_bootloader.bin"
   --defsym=_payload_src=${PAYLOAD_SRC_ADDR} \
   --defsym=_payload_dst=${BOOT_DST_BASE} \
   --defsym=_payload_exec=${BOOT_EXEC_BASE} \
-  --defsym=_payload_size=${PAYLOAD_SIZE} \
+  --defsym=_payload_size=${BOOT_COPY_SIZE} \
   -o "${TMPDIR}/soc_bootloader.elf" "${BOOT_OBJ}"
 "${OBJCOPY}" -S -O binary "${TMPDIR}/soc_bootloader.elf" "${BOOT_BIN}"
 
