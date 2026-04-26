@@ -112,11 +112,59 @@ def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
-    return [str(arg) for arg in workspace.get("sim_run_args", []) or []]
+    args = [str(arg) for arg in workspace.get("sim_run_args", []) or []]
+    if _rtthread_requested(workspace) and not _arg_present(args, "--diff"):
+        args = _append_rtthread_difftest_args(workspace, args)
+    return args
 
 
 def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
     return "--diff" in _sim_run_args(workspace)
+
+
+def _rtthread_requested(workspace: dict[str, Any]) -> bool:
+    for name in workspace.get("sim_program_names", []) or []:
+        text = str(name).strip()
+        if text == "rtthread" or Path(text).stem == "rtthread":
+            return True
+    for source in workspace.get("sim_program_sources", []) or []:
+        if Path(str(source).strip()).stem == "rtthread":
+            return True
+    return False
+
+
+def _arg_present(args: list[str], option: str) -> bool:
+    return option in args or any(arg.startswith(f"{option}=") for arg in args)
+
+
+def _append_rtthread_difftest_args(workspace: dict[str, Any], args: list[str]) -> list[str]:
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is None:
+        ref_so = (
+            _invocation_root()
+            / "fecompiler"
+            / "thirdparty"
+            / "SoC"
+            / "tools"
+            / "riscv32-spike-so"
+        )
+    else:
+        ref_so = soc_root / "tools" / "riscv32-spike-so"
+
+    out = list(args)
+    if not _arg_present(out, "--max-cycles"):
+        out.extend(["--max-cycles", "200000000"])
+    out.extend([
+        "--diff",
+        "--ref",
+        str(ref_so),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+        "--timeout-ok",
+    ])
+    return out
 
 
 def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:

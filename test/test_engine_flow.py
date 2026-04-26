@@ -12,6 +12,7 @@ from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, loa
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.tools.slang.runner import SlangElabStep
+from fecompiler.tools.verilator.runner import _sim_run_args
 
 FIRST_STEP, FIRST_TOOL = DEFAULT_FLOW_STEPS[0]
 
@@ -356,7 +357,10 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
     tb = tmp_path / "tb_main.cpp"
     helper = tmp_path / "tb_helper.cpp"
     inc = tmp_path / "include"
+    img = tmp_path / "tests" / "out" / "min2.soc.bin"
     inc.mkdir()
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"\x00")
     tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
     helper.write_text("int helper(){return 0;}\n", encoding="utf-8")
 
@@ -368,7 +372,7 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
         sim_cpp_sources=[str(helper)],
         sim_cflags=[f"-I{inc}", "-O2"],
         sim_ldflags=["-lm"],
-        sim_run_args=["--image", "tests/out/min2.soc.bin", "--max-cycles", "100"],
+        sim_run_args=["--image", str(img), "--max-cycles", "100"],
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws_sim_opts"))
@@ -401,7 +405,7 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
     assert "-LDFLAGS" in compile_cmd
     assert "-lm" in compile_cmd[compile_cmd.index("-LDFLAGS") + 1]
     assert "--image" in simulate_cmd
-    assert simulate_cmd[simulate_cmd.index("--image") + 1] == "tests/out/min2.soc.bin"
+    assert simulate_cmd[simulate_cmd.index("--image") + 1] == str(img)
     assert "--max-cycles" in simulate_cmd
     assert simulate_cmd[simulate_cmd.index("--max-cycles") + 1] == "100"
     assert "--wave" in simulate_cmd
@@ -608,6 +612,49 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
 
     assert state == StateEnum.Success
     assert all("--binary" not in call for call in run_calls)
+
+
+def test_rtthread_program_enables_default_difftest_args(tmp_path):
+    soc_root = tmp_path / "SoC"
+    soc_root.mkdir()
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    ref_so = soc_root / "tools" / "riscv32-spike-so"
+    ref_so.parent.mkdir()
+    ref_so.write_bytes(b"")
+
+    args = _sim_run_args({
+        "soc_filelist": str(soc_root / "filelist.soc.f"),
+        "sim_program_names": ["rtthread"],
+    })
+
+    assert "--max-cycles" in args
+    assert args[args.index("--max-cycles") + 1] == "200000000"
+    assert "--diff" in args
+    assert args[args.index("--ref") + 1] == str(ref_so)
+    assert args[args.index("--diff-image-offset") + 1] == "0x100"
+    assert args[args.index("--diff-reset-vector") + 1] == "0x80000000"
+    assert "--timeout-ok" in args
+
+
+def test_rtthread_program_keeps_explicit_difftest_args(tmp_path):
+    soc_root = tmp_path / "SoC"
+    soc_root.mkdir()
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+
+    explicit = [
+        "--max-cycles",
+        "1234",
+        "--diff",
+        "--ref",
+        "/tmp/custom-ref.so",
+    ]
+    args = _sim_run_args({
+        "soc_filelist": str(soc_root / "filelist.soc.f"),
+        "sim_program_names": ["rtthread"],
+        "sim_run_args": explicit,
+    })
+
+    assert args == explicit
 
 
 def test_elab_check_result_rejects_20_errors_log(tmp_path):
