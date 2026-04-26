@@ -1,4 +1,5 @@
 #include "VysyxSoCTop.h"
+#include "driver/difftest.h"
 #include "driver/dpi_mem.h"
 #include "verilated.h"
 #include "verilated_vcd_c.h"
@@ -11,12 +12,20 @@
 #include <iostream>
 #include <memory>
 
+#ifndef SOC_DEFAULT_REF_SO
+#define SOC_DEFAULT_REF_SO nullptr
+#endif
+
 namespace {
 
 struct Args {
   const char *image = nullptr;
   const char *wave = nullptr;
+  const char *ref = SOC_DEFAULT_REF_SO;
   uint64_t max_cycles = 2000000;
+  uint32_t diff_image_offset = 0;
+  uint32_t diff_reset_vector = 0x80000000u;
+  bool diff = false;
 };
 
 enum class ParseResult {
@@ -31,21 +40,46 @@ void print_usage(const char *prog_name) {
             << "  --image <file>        Boot image for flash/mrom\n"
             << "  --wave <file>         Dump VCD waveform\n"
             << "  --max-cycles <n>      Stop after n cycles (default 2000000)\n"
+            << "  --diff                Enable difftest\n"
+            << "  --ref <file>          Reference shared object (default built into sim)\n"
+            << "  --diff-image-offset <n>  Offset copied to ref memory (hex accepted)\n"
+            << "  --diff-reset-vector <n>  Ref reset/base PC (default 0x80000000)\n"
             << "  --help                Show this help message\n";
 }
 
+bool parse_u64(const char *text, uint64_t *value) {
+  if (text == nullptr || value == nullptr) {
+    return false;
+  }
+  char *end = nullptr;
+  const unsigned long long parsed = std::strtoull(text, &end, 0);
+  if (end == text || *end != '\0') {
+    return false;
+  }
+  *value = static_cast<uint64_t>(parsed);
+  return true;
+}
+
 ParseResult parse_args(int argc, char **argv, Args *args) {
+  enum {
+    kOptDiffImageOffset = 1000,
+    kOptDiffResetVector,
+  };
   static struct option long_options[] = {
       {"image", required_argument, nullptr, 'i'},
       {"wave", required_argument, nullptr, 'w'},
       {"max-cycles", required_argument, nullptr, 'm'},
+      {"diff", no_argument, nullptr, 'd'},
+      {"ref", required_argument, nullptr, 'r'},
+      {"diff-image-offset", required_argument, nullptr, kOptDiffImageOffset},
+      {"diff-reset-vector", required_argument, nullptr, kOptDiffResetVector},
       {"help", no_argument, nullptr, 'h'},
       {nullptr, 0, nullptr, 0},
   };
 
   int opt = 0;
   int option_idx = 0;
-  while ((opt = getopt_long(argc, argv, "i:w:m:h", long_options, &option_idx)) != -1) {
+  while ((opt = getopt_long(argc, argv, "i:w:m:dr:h", long_options, &option_idx)) != -1) {
     switch (opt) {
       case 'i':
         args->image = optarg;
@@ -54,13 +88,36 @@ ParseResult parse_args(int argc, char **argv, Args *args) {
         args->wave = optarg;
         break;
       case 'm': {
-        char *end = nullptr;
-        const unsigned long long parsed = std::strtoull(optarg, &end, 10);
-        if (end == optarg || *end != '\0') {
+        uint64_t parsed = 0;
+        if (!parse_u64(optarg, &parsed)) {
           std::cerr << "Invalid --max-cycles value: " << optarg << "\n";
           return ParseResult::kError;
         }
-        args->max_cycles = static_cast<uint64_t>(parsed);
+        args->max_cycles = parsed;
+        break;
+      }
+      case 'd':
+        args->diff = true;
+        break;
+      case 'r':
+        args->ref = optarg;
+        break;
+      case kOptDiffImageOffset: {
+        uint64_t parsed = 0;
+        if (!parse_u64(optarg, &parsed) || parsed > UINT32_MAX) {
+          std::cerr << "Invalid --diff-image-offset value: " << optarg << "\n";
+          return ParseResult::kError;
+        }
+        args->diff_image_offset = static_cast<uint32_t>(parsed);
+        break;
+      }
+      case kOptDiffResetVector: {
+        uint64_t parsed = 0;
+        if (!parse_u64(optarg, &parsed) || parsed > UINT32_MAX) {
+          std::cerr << "Invalid --diff-reset-vector value: " << optarg << "\n";
+          return ParseResult::kError;
+        }
+        args->diff_reset_vector = static_cast<uint32_t>(parsed);
         break;
       }
       case 'h':
@@ -103,12 +160,18 @@ int main(int argc, char **argv, char **) {
   }
 
   dpi_load_image(args.image);
+  if (args.diff && args.diff_image_offset != 0) {
+    dpi_preload_pmem_from_image(args.image, args.diff_image_offset);
+  }
 
   const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
   contextp->commandArgs(argc, argv);
   contextp->traceEverOn(true);
   Verilated::traceEverOn(true);
   const std::unique_ptr<VysyxSoCTop> top{new VysyxSoCTop{contextp.get(), ""}};
+  if (args.diff) {
+    difftest_configure(top.get(), args.ref, args.image, args.diff_image_offset, args.diff_reset_vector);
+  }
 
   VerilatedVcdC *tfp = nullptr;
   if (args.wave != nullptr) {

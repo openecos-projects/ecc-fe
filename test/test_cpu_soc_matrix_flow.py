@@ -28,7 +28,7 @@ SOC_VARIANTS = [
 
 CPU_VARIANT_COUNT = 3
 SOC_VARIANT_COUNT = 3
-SIM_MAX_CYCLES = "2000000"
+SIM_MAX_CYCLES = "50000000"
 
 
 def _tool_ready() -> bool:
@@ -63,17 +63,20 @@ def _required_paths() -> list[Path]:
             soc_root / "filelist.soc.f",
             soc_root / "driver/main.cpp",
             soc_root / "driver/dpi_mem.cpp",
+            soc_root / "driver/difftest.cpp",
+            soc_root / "tools/riscv32-spike-so",
+            soc_root / "tests/programs",
             soc_root / "tests/out",
         ])
     return paths
 
 
-def _soc_test_images(soc_root: Path) -> list[Path]:
-    tests_out_dir = soc_root / "tests" / "out"
-    images = sorted(tests_out_dir.glob("*.soc.bin"))
-    if images:
-        return images
-    raise FileNotFoundError(f"no .soc.bin found in {tests_out_dir}")
+def _soc_program_sources(soc_root: Path) -> list[Path]:
+    programs_dir = soc_root / "tests" / "programs"
+    sources = sorted(programs_dir.glob("*.c"))
+    if sources:
+        return sources
+    raise FileNotFoundError(f"no C test programs found in {programs_dir}")
 
 
 def _soc_sim_cpp_sources(soc_root: Path) -> list[str]:
@@ -86,6 +89,20 @@ def _soc_sim_cpp_sources(soc_root: Path) -> list[str]:
 
 def _soc_sim_ldflags(soc_root: Path) -> list[str]:
     return ["-ldl"] if (soc_root / "driver/difftest.cpp").exists() else []
+
+
+def _soc_diff_run_args(soc_root: Path) -> list[str]:
+    return [
+        "--max-cycles",
+        SIM_MAX_CYCLES,
+        "--diff",
+        "--ref",
+        str(soc_root / "tools/riscv32-spike-so"),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+    ]
 
 
 class TestCpuSocMatrixFlow(unittest.TestCase):
@@ -109,7 +126,7 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
     def _run_full_flow_for_combo(self, cpu_idx: int, soc_idx: int) -> None:
         cpu_root = self.cpu_variants[cpu_idx - 1]
         soc_root = self.soc_variants[soc_idx - 1]
-        test_images = _soc_test_images(soc_root)
+        test_sources = _soc_program_sources(soc_root)
         tests_out_dir = soc_root / "tests" / "out"
 
         project_name = f"cpu_soc_matrix_cpu{cpu_idx}_soc{soc_idx}"
@@ -127,9 +144,10 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
             sim_cpp_sources=_soc_sim_cpp_sources(soc_root),
             sim_cflags=[f"-I{soc_root}"],
             sim_ldflags=_soc_sim_ldflags(soc_root),
-            sim_all_tests=True,
-            sim_tests_dir=str(tests_out_dir),
-            sim_run_args=["--max-cycles", SIM_MAX_CYCLES],
+            sim_build_all_programs=True,
+            sim_programs_dir=str(soc_root / "tests" / "programs"),
+            sim_tests_out_dir=str(tests_out_dir),
+            sim_run_args=_soc_diff_run_args(soc_root),
         )
         ws = create_workspace(spec)
         self.assertIsNotNone(ws, f"failed to create workspace for {project_name}")
@@ -169,7 +187,7 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
         cases = payload.get("cases", []) if isinstance(payload, dict) else []
         self.assertTrue(cases, "simulation should run at least one case")
 
-        expected_case_names = {img.stem for img in test_images}
+        expected_case_names = {f"{src.stem}.soc" for src in test_sources}
         executed_case_names = {
             str(entry.get("name", ""))
             for entry in cases
@@ -186,7 +204,7 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
         )
 
         for case_name in sorted(expected_case_names):
-            case_log = report_dir / "cases" / case_name / "log.txt"
+            case_log = ws_dir / "sim_verilator" / "output" / "cases" / case_name / "log.txt"
             self.assertTrue(case_log.exists(), f"missing case log: {case_log}")
             case_content = case_log.read_text(encoding="utf-8")
             self.assertTrue(case_content, f"empty case log: {case_log}")

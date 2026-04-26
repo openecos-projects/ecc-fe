@@ -45,7 +45,10 @@ if [[ "${#SV_INPUTS[@]}" -eq 0 ]]; then
 fi
 
 CXXFLAGS_EXTRA="${NIX_CFLAGS_COMPILE:-} -std=c++17 -I${ROOT} -I${CPU_ROOT}"
+DEFAULT_REF_SO="${ROOT}/tools/riscv32-spike-so"
+CXXFLAGS_EXTRA="${CXXFLAGS_EXTRA} -DSOC_DEFAULT_REF_SO=\\\"${DEFAULT_REF_SO}\\\""
 LDFLAGS_EXTRA="$( (printf '%s\n' "${NIX_LDFLAGS:-}" | grep -oE -- '-L[^ ]+' | tr '\n' ' ') || true )"
+LDFLAGS_EXTRA="${LDFLAGS_EXTRA} -ldl"
 VERILATOR_EXTRA_ARGS=(-CFLAGS "${CXXFLAGS_EXTRA}")
 if [[ -n "${LDFLAGS_EXTRA// }" ]]; then
   VERILATOR_EXTRA_ARGS+=(-LDFLAGS "${LDFLAGS_EXTRA}")
@@ -54,6 +57,7 @@ fi
   "${VERILATOR_BIN}" \
   "${SV_INPUTS[@]}" \
   "${ROOT}/driver/dpi_mem.cpp" \
+  "${ROOT}/driver/difftest.cpp" \
   "${ROOT}/driver/main.cpp" \
   -I"${ROOT}/perip/spi/rtl" \
   -I"${ROOT}/perip/uart16550/rtl" \

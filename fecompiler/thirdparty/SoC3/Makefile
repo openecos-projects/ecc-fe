@@ -6,6 +6,16 @@ TEST_OUT := $(ROOT)/tests/out
 TEST_LOG_DIR := $(TEST_OUT)/logs
 IMAGE := $(TEST_OUT)/$(TEST).soc.bin
 MAX_CYCLES ?= 2000000
+DIFF ?= 0
+REF_SO ?= $(ROOT)/tools/riscv32-spike-so
+DIFF_IMAGE_OFFSET ?= $(if $(filter 1,$(DIFF)),0x100,0)
+DIFF_RESET_VECTOR ?= 0x80000000
+DIFF_RUN_ARGS :=
+TEST_ENV :=
+ifeq ($(DIFF),1)
+DIFF_RUN_ARGS := --diff --ref $(REF_SO) --diff-image-offset $(DIFF_IMAGE_OFFSET) --diff-reset-vector $(DIFF_RESET_VECTOR)
+TEST_ENV := SOC_USE_BOOTLOADER=1 SOC_FAST_DIFF_BOOT=1
+endif
 TEST_SRCS := $(wildcard $(ROOT)/tests/programs/*.c)
 TEST_NAMES := $(basename $(notdir $(TEST_SRCS)))
 
@@ -15,20 +25,20 @@ sim:
 	$(ROOT)/scripts/build_soc_sim.sh $(SIM_BIN)
 
 test:
-	$(ROOT)/scripts/build_test.sh --src $(TEST_SRC) --name $(TEST) --out_dir $(TEST_OUT)
+	$(TEST_ENV) $(ROOT)/scripts/build_test.sh --src $(TEST_SRC) --name $(TEST) --out_dir $(TEST_OUT)
 
 test-all:
 	@set -e; \
 	for t in $(TEST_NAMES); do \
 		echo "[test-all] building $$t"; \
-		$(ROOT)/scripts/build_test.sh --name "$$t" --out_dir "$(TEST_OUT)"; \
+		$(TEST_ENV) $(ROOT)/scripts/build_test.sh --name "$$t" --out_dir "$(TEST_OUT)"; \
 	done
 
 run: sim test
-	$(ROOT)/scripts/run_soc_sim.sh --sim-bin $(SIM_BIN) --image $(IMAGE) --max-cycles $(MAX_CYCLES)
+	$(ROOT)/scripts/run_soc_sim.sh --sim-bin $(SIM_BIN) --image $(IMAGE) --max-cycles $(MAX_CYCLES) $(DIFF_RUN_ARGS)
 
 run-prebuilt: sim
-	$(ROOT)/scripts/run_soc_sim.sh --sim-bin $(SIM_BIN) --image $(ROOT)/tests/out/min2.soc.bin --max-cycles $(MAX_CYCLES)
+	$(ROOT)/scripts/run_soc_sim.sh --sim-bin $(SIM_BIN) --image $(ROOT)/tests/out/min2.soc.bin --max-cycles $(MAX_CYCLES) $(DIFF_RUN_ARGS)
 
 run-all: sim test-all
 	@set -e; \
@@ -37,7 +47,7 @@ run-all: sim test-all
 		name="$$(basename "$$img" .soc.bin)"; \
 		log="$(TEST_LOG_DIR)/$$name.log"; \
 		echo "[run-all] $$name -> $$log"; \
-		$(ROOT)/scripts/run_soc_sim.sh --sim-bin "$(SIM_BIN)" --image "$$img" --max-cycles "$(MAX_CYCLES)" > "$$log" 2>&1; \
+		$(ROOT)/scripts/run_soc_sim.sh --sim-bin "$(SIM_BIN)" --image "$$img" --max-cycles "$(MAX_CYCLES)" $(DIFF_RUN_ARGS) > "$$log" 2>&1; \
 	done
 
 run-all-prebuilt: sim
@@ -47,7 +57,7 @@ run-all-prebuilt: sim
 		name="$$(basename "$$img" .soc.bin)"; \
 		log="$(TEST_LOG_DIR)/$$name.log"; \
 		echo "[run-all-prebuilt] $$name -> $$log"; \
-		$(ROOT)/scripts/run_soc_sim.sh --sim-bin "$(SIM_BIN)" --image "$$img" --max-cycles "$(MAX_CYCLES)" > "$$log" 2>&1; \
+		$(ROOT)/scripts/run_soc_sim.sh --sim-bin "$(SIM_BIN)" --image "$$img" --max-cycles "$(MAX_CYCLES)" $(DIFF_RUN_ARGS) > "$$log" 2>&1; \
 	done
 
 list-tests:
