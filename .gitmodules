@@ -4,3 +4,6 @@
 [submodule "fecompiler/thirdparty/verilator"]
 	path = fecompiler/thirdparty/verilator
 	url = git@github.com:verilator/verilator.git
+[submodule "fecompiler/thirdparty/rt-thread-am"]
+	path = fecompiler/thirdparty/rt-thread-am
+	url = git@github.com:NJU-ProjectN/rt-thread-am.git
