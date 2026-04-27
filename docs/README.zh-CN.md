@@ -171,7 +171,7 @@ bazel test //:test_engine_flow
     - 被测文件选择：
       - 显式镜像：`sim_images`
       - 扫描目录：`sim_all_tests + sim_tests_dir`
-      - 构建程序：`sim_build_all_programs + sim_programs_dir + sim_tests_out_dir`
+      - 构建程序：`sim_build_all_programs + sim_programs_dir`，可选 `sim_tests_out_dir`
       - 指定程序：`sim_program_names` 或 `sim_program_sources`
 
 #### 公开函数（5 个）
@@ -240,7 +240,8 @@ bazel test //:test_engine_flow
 - 方式 C：从 `tests/programs/*.c` 先编译再仿真
   - `sim_build_all_programs=True`
   - `sim_programs_dir=".../tests/programs"`
-  - `sim_tests_out_dir=".../tests/out"`
+  - 默认输出到 `sim_verilator/output/cases/<case>/`
+  - 如需固定目录，可设置 `sim_tests_out_dir=".../tests/out"`
 - 方式 D：只编译部分程序
   - `sim_program_names=["max", "fib"]`
   - 或 `sim_program_sources=[".../max.c", ".../fib.c"]`

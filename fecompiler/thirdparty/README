@@ -107,9 +107,11 @@ bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH
 ```
 
 The expected log contains the RT-Thread banner, `Hello RISC-V!`, `msh />help`,
-and the RT-Thread shell command list.  The latest case log is written under the
-workspace simulation output, for example:
+and the RT-Thread shell command list.  RT-Thread is treated as a simulation
+case, so the generated image and latest log are written under the workspace
+simulation output, for example:
 
 ```text
+workspace_projects/cpu_soc_rtthread_test/sim_verilator/output/cases/rtthread.soc/rtthread.soc.bin
 workspace_projects/cpu_soc_rtthread_test/sim_verilator/output/cases/rtthread.soc/log.txt
 ```

@@ -32,6 +32,8 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
 - `test_data_workspace.py`
 - `test_engine_flow.py`
 - `test_cpu_soc_flow.py`
+- `test_cpu_soc_matrix_flow.py`
+- `test_cpu_soc_rtthread_flow.py`
 
 `test_examples.py` 是集成测试，当前不在 `//:all_tests` 里，需通过 `pytest` 运行。
 
@@ -40,6 +42,9 @@ CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 ```bash
 # 单独跑 CPU+SoC 全流程
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
+
+# 跑 3x3 CPU+SoC matrix
+bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"
 
 # 启动 RT-Thread smoke test
 bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH="$PATH"
@@ -56,8 +61,23 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `workspace_projects/cpu_soc_test/log/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/log/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/log.txt`
+- `workspace_projects/cpu_soc_test/sim_verilator/output/cases/<case>/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（历史保留，不覆盖）
+
+`test_cpu_soc_matrix_flow` 会创建 9 个 workspace：
+
+- `workspace_projects/cpu_soc_matrix_cpu1_soc1`
+- ...
+- `workspace_projects/cpu_soc_matrix_cpu3_soc3`
+
+每个组合的 case 日志在：
+
+- `workspace_projects/cpu_soc_matrix_cpuX_socY/sim_verilator/output/cases/<case>/log.txt`
+
+其中 `cpu_soc_matrix_cpu1_soc1` 还会把 `rtthread` 作为一个额外 case 一起跑，镜像和日志都在：
+
+- `workspace_projects/cpu_soc_matrix_cpu1_soc1/sim_verilator/output/cases/rtthread.soc/`
 
 `test_cpu_soc_rtthread_flow` 需要 `scons`、RISC-V GCC toolchain、`AM_HOME`（或默认
 `/home/luyoung/ysyx-workbench/abstract-machine`），主要日志在：
@@ -268,22 +288,24 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 单 workspace (`cpu_soc_test`) 的 CPU+SoC 全流程回归：
 
-- `prepare -> elab -> lint -> sim` 逐步成功。
-- `sim` 支持在同一个项目里先编译 `SoC/tests/programs/*.c`，再批量执行所有生成的 `.soc.bin`。
-- 每个 case 的最新日志落到 `report/cases/<case>/log.txt`。
-- 每次运行都保留历史日志到 `report/runs/<run_id>/cases/<case>/log.txt`（不覆盖旧日志）。
+- `prepare/elab/lint/sim` 逐步成功。
+- 使用 CL3 CPU + `fecompiler/thirdparty/SoC`。
+- `sim` 支持在同一个项目里先编译 `SoC/tests/programs/*.c`，再批量执行生成的 `.soc.bin`。
+- 默认打开 difftest，使用 `SoC/tools/riscv32-spike-so` 作为参考模型。
+- 每个 case 的最新日志落到 `sim_verilator/output/cases/<case>/log.txt`。
+- 每次运行都保留历史日志到 `sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（不覆盖旧日志）。
 
 ### 怎么测
 
 - `setUpClass` 里创建 `workspace_projects/cpu_soc_test`。
-- 先跑 prepare/elab/lint。
+- 分别验证 workspace 创建、`prepare`、`elab`、`lint`。
 - sim 阶段用后端 API 参数：
-  - `sim_build_all_programs=True`
-  - `sim_programs_dir=.../SoC/tests/programs`
-  - `sim_tests_out_dir=.../SoC/tests/out`
-  - `sim_all_tests=True`
-  - `sim_tests_dir=.../SoC/tests/out`
-- 再执行一次 sim，校验 `runs/` 历史目录新增且旧日志仍存在。
+  - `sim_cpp_sources=[dpi_mem.cpp, difftest.cpp]`
+  - `sim_cflags=["-I.../SoC"]`
+  - `sim_ldflags=["-ldl"]`
+  - `sim_run_args=[--max-cycles, 50000000, --diff, --ref, ...]`
+- `test_cpu_soc_sim_each_program_success` 构建并运行 `SoC/tests/programs/*.c` 对应的所有 case。
+- `test_cpu_soc_sim_batch_has_separate_logs_for_each_program` 单独跑一个 case 两次，校验历史 run log 保留。
 
 ### 用到的 API
 
@@ -295,11 +317,133 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 ---
 
+## 8) test/test_cpu_soc_matrix_flow.py
+
+### 测什么
+
+3x3 CPU+SoC 组合矩阵回归：
+
+- CPU 变体：
+  - `docs/examples/cl3`
+  - `docs/examples/cl3_1`
+  - `docs/examples/cl3_2`
+- SoC 变体：
+  - `fecompiler/thirdparty/SoC`
+  - `fecompiler/thirdparty/SoC2`
+  - `fecompiler/thirdparty/SoC3`
+- 动态生成 9 条测试：`test_full_flow_cpu1_soc1` 到 `test_full_flow_cpu3_soc3`。
+- 每个组合都跑完整 `prepare -> elab -> lint -> sim`。
+- 每个 SoC 的 `tests/programs/*.c` 都应被编译成 `.soc.bin` 并执行。
+- `cpu1_soc1` 组合额外把 `rtthread` 作为 `rtthread.soc` case 执行，用于覆盖 tests + RT-Thread 混合 case。
+- 每个组合默认打开 difftest，参考模型来自对应 SoC 的 `tools/riscv32-spike-so`。
+
+### 怎么测
+
+- `setUpClass` 先检查 `slang/verilator`、RISC-V GCC toolchain、3 组 CPU 和 3 组 SoC 必要文件。
+- 每个组合创建独立 workspace：
+  - `workspace_projects/cpu_soc_matrix_cpu<cpu_idx>_soc<soc_idx>`
+- 每个 workspace 使用对应 CPU filelist、SoC filelist、testbench、`dpi_mem.cpp`、`difftest.cpp`。
+- `engine.run_all(rerun=True)` 跑完整流程。
+- 校验：
+  - 非 `sim` 步骤必须成功。
+  - `sim` 步骤必须成功。
+  - `prepare_fe/output/merged_rtl.f` 存在。
+  - `elab_slang/report/log.txt` 存在。
+  - `lint_verilator/report/log.txt` 不含 `%Error`。
+  - `sim_verilator/report/cases.json` 记录了所有 expected cases。
+  - `sim_verilator/output/cases/<case>/log.txt` 存在且不含 `FAILED` / `%Error`。
+  - 每个构建出来的 `.soc.bin` 位于对应的 `sim_verilator/output/cases/<case>/` 目录下。
+  - `cpu1_soc1` 的 `rtthread.soc` 日志包含 RT-Thread banner、`Hello RISC-V!` 和 `msh />help`。
+
+### 用到的 API
+
+- `fecompiler.config.DEFAULT_PROJECTS_ROOT`
+- `fecompiler.data.workspace.CreateWorkspaceData`
+- `fecompiler.data.workspace.create_workspace`
+- `fecompiler.data.workspace.load_workspace`
+- `fecompiler.engine.flow.EngineFlow`
+- `unittest`
+
+### 依赖说明
+
+该测试运行时间较长，Bazel target 使用 `timeout = "long"`。其中 `cpu1_soc1` 还需要 `scons` 和
+`AM_HOME`（或默认 `/home/luyoung/ysyx-workbench/abstract-machine`），因为它会额外跑 RT-Thread。
+如果只想调一个组合，可以用 unittest 生成后的方法名：
+
+```bash
+python3 -m pytest test/test_cpu_soc_matrix_flow.py::TestCpuSocMatrixFlow::test_full_flow_cpu1_soc1 -q
+```
+
+---
+
+## 9) test/test_cpu_soc_rtthread_flow.py
+
+### 测什么
+
+CPU+SoC 启动 RT-Thread 的 smoke test：
+
+- 使用 CL3 CPU + `fecompiler/thirdparty/SoC`。
+- 用户选择仿真程序名为 `rtthread` 时，后端会调用 SoC 的 `build_test.sh` 编译 `fecompiler/thirdparty/rt-thread-am/bsp/abstract-machine`。
+- 默认打开 difftest，并使用 `SoC/tools/riscv32-spike-so`。
+- 检查 RT-Thread 镜像 `rtthread.soc.bin` 被生成。
+- 检查仿真日志里能看到：
+  - `[soc-sim][difftest] enabled`
+  - `[soc-sim][difftest] compare starts at pc=0x80000000`
+  - `Thread Operating System`
+  - `Hello RISC-V!`
+  - `msh />help`
+  - `RT-Thread shell commands:`
+  - `[soc-sim] timeout after`
+- 日志中不能出现 `FAILED` 或 `%Error`。
+
+### 怎么测
+
+- `setUpClass` 检查：
+  - `slang/verilator`
+  - RISC-V GCC toolchain
+  - `scons`
+  - `AM_HOME` 或默认 `/home/luyoung/ysyx-workbench/abstract-machine`
+  - RT-Thread BSP `Makefile`
+- 创建 `workspace_projects/cpu_soc_rtthread_test`。
+- workspace 参数中设置：
+  - `sim_program_names=["rtthread"]`
+  - `sim_run_args=["--max-cycles", "10000000", "--wave", "/dev/null"]`
+- RT-Thread 镜像位于：
+  - `workspace_projects/cpu_soc_rtthread_test/sim_verilator/output/cases/rtthread.soc/rtthread.soc.bin`
+- 只跑 `prepare` 和 `sim`，因为 smoke test 关注 RT-Thread 镜像构建、仿真、shell 输出和 difftest。
+
+### 用到的 API
+
+- `fecompiler.config.DEFAULT_PROJECTS_ROOT`
+- `fecompiler.data.step.StateEnum`
+- `fecompiler.data.workspace.CreateWorkspaceData`
+- `fecompiler.data.workspace.create_workspace`
+- `fecompiler.data.workspace.load_workspace`
+- `fecompiler.engine.flow.EngineFlow`
+- `unittest`
+
+### 依赖说明
+
+该测试也使用 `timeout = "long"`。仿真会让 RT-Thread 运行到 `--max-cycles`，并依赖 `--timeout-ok` 将正常超时视为成功。推荐用 streamed 输出观察 shell：
+
+```bash
+bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH="$PATH"
+```
+
+---
+
 ## 建议的日常使用方式
 
 - 开发阶段先跑：
   - `python3 -m pytest test/test_utility.py test/test_data_step.py test/test_allflow_builder.py -q`
 - 改动 workspace/flow 逻辑后跑：
   - `python3 -m pytest test/test_data_workspace.py test/test_engine_flow.py -q`
+- 改动 CPU+SoC 普通仿真后跑：
+  - `bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"`
+- 改动 SoC/CPU 兼容性或 difftest 后跑：
+  - `bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"`
+- 改动 RT-Thread、SoC UART 或 difftest MMIO 逻辑后跑：
+  - `bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH="$PATH"`
 - 发布前跑一次：
-  - `python3 -m pytest test -q`
+  - `bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"`
+  - `python3 -m pytest test/test_examples.py -q`
