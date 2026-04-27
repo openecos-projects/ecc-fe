@@ -207,6 +207,7 @@ int main(int argc, char **argv, char **) {
   top->final();
 
   if (cycles >= args.max_cycles) {
+    difftest_dump_progress();
     std::cerr << "[soc-sim] timeout after " << cycles << " cycles\n";
     return args.timeout_ok ? 0 : 1;
   }

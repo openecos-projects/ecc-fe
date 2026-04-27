@@ -134,14 +134,14 @@ if [[ "${IS_RTTHREAD}" == "1" ]]; then
     echo "scons is required to build rt-thread-am" >&2
     exit 1
   fi
+  export RTT_CC_PREFIX="${CROSS_COMPILE}"
+  make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
 
   RTTHREAD_WRAPPER_MK="$(cd "${TMPDIR}" && pwd)/rtthread-am.mk"
   {
     echo "include Makefile"
-    echo "CFLAGS += -Wno-error"
+    echo "CFLAGS += -Wno-error -DECC_FE_SOC"
   } > "${RTTHREAD_WRAPPER_MK}"
-  export RTT_CC_PREFIX="${CROSS_COMPILE}"
-  make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
   make -C "${RTTHREAD_BSP}" -f "${RTTHREAD_WRAPPER_MK}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" image
 
   RTTHREAD_IMAGE="${RTTHREAD_BSP}/build/rtthread-${RTTHREAD_ARCH}"

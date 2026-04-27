@@ -56,6 +56,14 @@ module uart_top_apb (
    always @ (posedge clock) begin
      reg_dat8_w_reg <= reg_dat8_w;
    end
+`ifndef SYNTHESIS
+   always @ (posedge clock) begin
+     if (reg_we && reg_adr == 3'h0) begin
+       $write("%c", reg_dat8_w);
+       $fflush();
+     end
+   end
+`endif
    //--------------------------------------------------------
    // Registers
    // As shown below reg_dat_i should be stable

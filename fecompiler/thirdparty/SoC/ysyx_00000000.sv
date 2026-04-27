@@ -83,6 +83,7 @@ module ysyx_00000000 (
 );
 
   localparam [31:0] HALT_ADDR = 32'h1000_000c;
+  localparam [31:0] UART_ADDR = 32'h1000_0000;
 
   reg        aw_pending_q;
   reg [31:0] aw_addr_q;
@@ -90,8 +91,23 @@ module ysyx_00000000 (
   wire aw_fire = io_master_awvalid & io_master_awready;
   wire w_fire  = io_master_wvalid & io_master_wready;
 
-  wire [31:0] halt_addr = aw_fire ? io_master_awaddr : aw_addr_q;
-  wire halt_write_fire = w_fire & (aw_pending_q | aw_fire) & (halt_addr == HALT_ADDR);
+  wire [31:0] write_addr = aw_fire ? io_master_awaddr : aw_addr_q;
+  wire halt_write_fire = w_fire & (aw_pending_q | aw_fire) & (write_addr == HALT_ADDR);
+  wire uart_write_fire = w_fire & (aw_pending_q | aw_fire) & (write_addr == UART_ADDR);
+
+  function automatic [7:0] axi_wstrb_byte;
+    input [31:0] data;
+    input [3:0] strb;
+    begin
+      casez (strb)
+        4'b???1: axi_wstrb_byte = data[7:0];
+        4'b??10: axi_wstrb_byte = data[15:8];
+        4'b?100: axi_wstrb_byte = data[23:16];
+        4'b1000: axi_wstrb_byte = data[31:24];
+        default: axi_wstrb_byte = data[7:0];
+      endcase
+    end
+  endfunction
 
   CL3Top cl3_top (
     .clock                  (clock),
@@ -164,6 +180,12 @@ module ysyx_00000000 (
       if (w_fire) begin
         aw_pending_q <= 1'b0;
       end
+`ifndef SYNTHESIS
+      if (uart_write_fire) begin
+        $write("%c", axi_wstrb_byte(io_master_wdata, io_master_wstrb));
+        $fflush();
+      end
+`endif
       if (halt_write_fire) begin
         if (io_master_wdata == 32'b0) begin
           $display("HIT GOOD TRAP");

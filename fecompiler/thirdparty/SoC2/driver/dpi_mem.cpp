@@ -17,6 +17,8 @@ constexpr uint32_t kMromBase = 0x20000000u;
 constexpr uint32_t kExecBase = 0x80000000u;
 constexpr uint32_t kUncachedAliasBase = 0x90000000u;
 constexpr uint32_t kBootAliasBase = 0x20000000u;
+constexpr uint32_t kSocUartData = 0x10000000u;
+constexpr uint32_t kNemuSerialData = 0xa00003f8u;
 constexpr size_t kBootAliasSize = 0x00100000u;
 constexpr size_t kPmemSize = 0x08000000u;
 int g_mrom_log_cnt = 0;
@@ -64,6 +66,27 @@ bool translate_pmem_addr(uint32_t addr, uint32_t *offset) {
     return true;
   }
   return false;
+}
+
+bool write_serial_byte(uint32_t addr, uint32_t mask, uint32_t data) {
+  if (addr != kSocUartData && addr != kNemuSerialData) {
+    return false;
+  }
+
+  uint32_t byte = 0;
+  for (; byte < 4; ++byte) {
+    if ((mask >> byte) & 0x1u) {
+      break;
+    }
+  }
+  if (byte == 4) {
+    byte = 0;
+  }
+
+  const int ch = static_cast<int>((data >> (8u * byte)) & 0xffu);
+  std::fputc(ch, stdout);
+  std::fflush(stdout);
+  return true;
 }
 
 }  // namespace
@@ -221,6 +244,10 @@ extern "C" long long mem_read(unsigned int raddr, unsigned int size) {
 }
 
 extern "C" void mem_write(unsigned int waddr, unsigned int mask, unsigned int wdata) {
+  if (write_serial_byte(waddr, mask, wdata)) {
+    return;
+  }
+
   if (g_pmem_preloaded_from_payload && waddr >= kBootAliasBase &&
       static_cast<uint64_t>(waddr) < static_cast<uint64_t>(kBootAliasBase) + kBootAliasSize) {
     return;

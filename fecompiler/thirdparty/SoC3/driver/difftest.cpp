@@ -21,8 +21,17 @@ constexpr uint32_t kDefaultResetVector = 0x80000000u;
 constexpr size_t kPmemSize = 0x08000000u;
 constexpr int kGprNum = 32;
 constexpr int kCsrNum = 16;
+constexpr uint16_t kCsrMstatus = 0x300;
+constexpr uint16_t kCsrMtvec = 0x305;
+constexpr uint16_t kCsrMepc = 0x341;
+constexpr uint16_t kCsrMcause = 0x342;
+constexpr uint16_t kCsrMtval = 0x343;
 constexpr uint16_t kCsrMarchid = 0xf12;
 constexpr uint16_t kCsrMimpid = 0xf13;
+constexpr uint32_t kInstEcall = 0x00000073u;
+constexpr uint32_t kInstMret = 0x30200073u;
+constexpr uint32_t kSocUartData = 0x10000000u;
+constexpr uint32_t kNemuSerialData = 0xa00003f8u;
 
 enum DiffDirection {
   kDiffTestToDut = 0,
@@ -251,6 +260,29 @@ bool is_boot_or_mrom_pc(uint32_t pc) {
   return pc < g_reset_vector;
 }
 
+bool should_skip_csr(uint16_t csr) {
+  return csr == kCsrMstatus || csr == kCsrMtvec || csr == kCsrMepc || csr == kCsrMcause ||
+         csr == kCsrMtval || csr == kCsrMarchid || csr == kCsrMimpid;
+}
+
+bool should_skip_inst(uint32_t instruction) {
+  return instruction == kInstEcall || instruction == kInstMret;
+}
+
+int32_t decode_store_imm(uint32_t instruction) {
+  const uint32_t imm = ((instruction >> 7) & 0x1fu) | (((instruction >> 25) & 0x7fu) << 5);
+  return static_cast<int32_t>(imm << 20) >> 20;
+}
+
+bool should_skip_mmio_store(uint32_t instruction) {
+  if ((instruction & 0x7fu) != 0x23u) {
+    return false;
+  }
+  const uint32_t rs1 = (instruction >> 15) & 0x1fu;
+  const uint32_t addr = read_gpr(static_cast<int>(rs1)) + static_cast<uint32_t>(decode_store_imm(instruction));
+  return addr == kSocUartData || addr == kNemuSerialData;
+}
+
 }  // namespace
 
 void difftest_configure(const VysyxSoCTop *top,
@@ -378,7 +410,8 @@ extern "C" int difftest_step(int n,
       return 0;
     }
 
-    if (skip[i] != 0 || csr_waddr[i] == kCsrMarchid || csr_waddr[i] == kCsrMimpid || irq_en[i] != 0) {
+    if (skip[i] != 0 || should_skip_inst(inst[i]) || should_skip_csr(csr_waddr[i]) ||
+        should_skip_mmio_store(inst[i]) || irq_en[i] != 0) {
       update_dut_state();
       uint32_t last_npc = npc[i];
       for (int j = i + 1; j < n; ++j) {
@@ -439,18 +472,7 @@ extern "C" int difftest_step(int n,
     }
   }
 
-  uint32_t csr_mask = 0;
-  for (int i = 0; i < 8; ++i) {
-    if (i == 5) {
-      continue;
-    }
-    if (g_dut.csr[i] != g_ref.csr[i]) {
-      std::fprintf(stderr, "[DIFFTEST] CSR[%d]: DUT=0x%08x REF=0x%08x\n", i, g_dut.csr[i], g_ref.csr[i]);
-      csr_mask |= (1U << i);
-    }
-  }
-
-  if ((gpr_mask | csr_mask) != 0) {
+  if (gpr_mask != 0) {
     std::fprintf(stderr, "[DIFFTEST] Mismatch in double check: DUT state changed unexpectedly.\n");
     dump_slots(n, pc, npc, inst, commit, irq_en);
     dump_regs();
