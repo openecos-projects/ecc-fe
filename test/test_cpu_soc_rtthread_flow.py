@@ -26,7 +26,7 @@ REF_SO = SOC_ROOT / "tools/riscv32-spike-so"
 RTTHREAD_AM = REPO_ROOT / "fecompiler/thirdparty/rt-thread-am"
 RTTHREAD_BSP = RTTHREAD_AM / "bsp/abstract-machine"
 DEFAULT_AM_HOME = Path("/home/luyoung/ysyx-workbench/abstract-machine")
-SIM_MAX_CYCLES = "1000000"
+SIM_MAX_CYCLES = "10000000"
 WS_DIR = DEFAULT_PROJECTS_ROOT / "cpu_soc_rtthread_test"
 RTTHREAD_OUT_DIR = WS_DIR / "rtthread_tests_out"
 
@@ -140,6 +140,10 @@ class TestCpuSocRtThreadFlow(unittest.TestCase):
         content = log_path.read_text(encoding="utf-8")
         self.assertIn("[soc-sim][difftest] enabled", content)
         self.assertIn("[soc-sim][difftest] compare starts at pc=0x80000000", content)
+        self.assertIn("Thread Operating System", content)
+        self.assertIn("Hello RISC-V!", content)
+        self.assertIn("msh />help", content)
+        self.assertIn("RT-Thread shell commands:", content)
         self.assertIn("[soc-sim] timeout after", content)
         self.assertNotIn("FAILED", content)
         self.assertNotIn("%Error", content)

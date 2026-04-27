@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -120,6 +121,39 @@ def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
 
 def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
     return "--diff" in _sim_run_args(workspace)
+
+
+def _run_sim_process(cmd: list[str], *, stream_output: bool) -> tuple[int, str]:
+    if not stream_output:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return int(result.returncode), result.stdout + result.stderr
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    output_chunks: list[str] = []
+    assert process.stdout is not None
+    try:
+        try:
+            while True:
+                chunk = os.read(process.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                output_chunks.append(text)
+                sys.stdout.write(text)
+                sys.stdout.flush()
+        finally:
+            process.stdout.close()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+
+    return int(process.wait()), "".join(output_chunks)
 
 
 def _rtthread_requested(workspace: dict[str, Any]) -> bool:
@@ -682,6 +716,7 @@ class VerilatorSimStep(BaseStep):
         summary_lines: list[str] = []
         cases_report: list[dict[str, Any]] = []
 
+        stream_case_output = _rtthread_requested(workspace)
         for case in cases:
             case_name = str(case["name"])
             image = str(case["image"])
@@ -703,13 +738,10 @@ class VerilatorSimStep(BaseStep):
                 output = f"image not found: {image}\n"
                 rc = 1
             else:
-                result = subprocess.run(
+                rc, output = _run_sim_process(
                     [str(sim_bin), *run_args],
-                    capture_output=True,
-                    text=True,
+                    stream_output=stream_case_output,
                 )
-                output = result.stdout + result.stderr
-                rc = int(result.returncode)
 
             latest_case_log.write_text(output, encoding="utf-8")
             run_case_log.write_text(output, encoding="utf-8")
