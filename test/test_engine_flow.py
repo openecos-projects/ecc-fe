@@ -12,7 +12,7 @@ from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, loa
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.tools.slang.runner import SlangElabStep
-from fecompiler.tools.verilator.runner import _sim_run_args
+from fecompiler.tools.verilator.runner import _prepare_sim_images, _sim_cases_from_images, _sim_run_args
 
 FIRST_STEP, FIRST_TOOL = DEFAULT_FLOW_STEPS[0]
 
@@ -655,6 +655,58 @@ def test_rtthread_program_keeps_explicit_difftest_args(tmp_path):
     })
 
     assert args == explicit
+
+
+def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch):
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    (programs_dir / "add.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    (programs_dir / "bit.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    build_script.chmod(0o755)
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        run_calls.append(list(cmd))
+        name = cmd[cmd.index("--name") + 1]
+        out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    case_root = tmp_path / "ws" / "sim_verilator" / "output" / "cases"
+    images, ok = _prepare_sim_images(
+        {
+            "soc_filelist": str(soc_root / "filelist.soc.f"),
+            "sim_build_all_programs": True,
+            "sim_program_names": ["rtthread"],
+            "sim_programs_dir": str(programs_dir),
+            "sim_run_args": ["--diff"],
+        },
+        case_output_root=case_root,
+    )
+
+    assert ok is True
+    assert [Path(call[call.index("--name") + 1]).name for call in run_calls] == ["add", "bit", "rtthread"]
+    expected = {
+        case_root / "add.soc" / "add.soc.bin",
+        case_root / "bit.soc" / "bit.soc.bin",
+        case_root / "rtthread.soc" / "rtthread.soc.bin",
+    }
+    assert {Path(image) for image in images} == expected
+
+    cases = _sim_cases_from_images(images, ["--diff"])
+    rtthread_case = next(case for case in cases if case["name"] == "rtthread.soc")
+    add_case = next(case for case in cases if case["name"] == "add.soc")
+    assert "--timeout-ok" in rtthread_case["args"]
+    assert "--timeout-ok" not in add_case["args"]
 
 
 def test_elab_check_result_rejects_20_errors_log(tmp_path):

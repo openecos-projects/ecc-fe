@@ -28,7 +28,6 @@ RTTHREAD_BSP = RTTHREAD_AM / "bsp/abstract-machine"
 DEFAULT_AM_HOME = Path("/home/luyoung/ysyx-workbench/abstract-machine")
 SIM_MAX_CYCLES = "10000000"
 WS_DIR = DEFAULT_PROJECTS_ROOT / "cpu_soc_rtthread_test"
-RTTHREAD_OUT_DIR = WS_DIR / "rtthread_tests_out"
 
 
 def _tool_ready() -> bool:
@@ -100,7 +99,6 @@ class TestCpuSocRtThreadFlow(unittest.TestCase):
             sim_ldflags=["-ldl"],
             sim_program_names=["rtthread"],
             sim_programs_dir=str(SOC_ROOT / "tests/programs"),
-            sim_tests_out_dir=str(RTTHREAD_OUT_DIR),
             sim_run_args=["--max-cycles", SIM_MAX_CYCLES, "--wave", "/dev/null"],
         )
         ws = create_workspace(spec)
@@ -119,7 +117,7 @@ class TestCpuSocRtThreadFlow(unittest.TestCase):
         state = engine.run_step("sim", rerun=True)
         self.assertEqual(state, StateEnum.Success)
 
-        image_path = RTTHREAD_OUT_DIR / "rtthread.soc.bin"
+        image_path = WS_DIR / "sim_verilator" / "output" / "cases" / "rtthread.soc" / "rtthread.soc.bin"
         self.assertTrue(image_path.exists(), f"expected RT-Thread image: {image_path}")
 
         report_dir = WS_DIR / "sim_verilator" / "report"
@@ -134,6 +132,7 @@ class TestCpuSocRtThreadFlow(unittest.TestCase):
         self.assertIsNotNone(rtthread_case, f"rtthread.soc case missing: {cases}")
         assert rtthread_case is not None
         self.assertTrue(rtthread_case.get("ok"), f"rtthread case failed: {rtthread_case}")
+        self.assertEqual(str(image_path.resolve()), str(Path(str(rtthread_case["image"])).resolve()))
 
         log_path = Path(str(rtthread_case["log"]))
         self.assertTrue(log_path.exists(), f"missing RT-Thread log: {log_path}")
