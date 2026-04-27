@@ -94,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--sim-tests-out-dir",
-        default="fecompiler/thirdparty/SoC/tests/out",
-        help="Output directory for built *.soc.bin (default: fecompiler/thirdparty/SoC/tests/out)",
+        default="",
+        help="Output directory for built *.soc.bin (default: sim output cases)",
     )
     parser.add_argument(
         "--sim-only",
@@ -216,6 +216,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         sim_programs_dir=args.sim_programs_dir if (args.sim_build_all_programs or args.sim_program) else "",
         sim_tests_out_dir=args.sim_tests_out_dir if (args.sim_build_all_programs or args.sim_program) else "",
     )
+    if (args.sim_build_all_programs or args.sim_program) and not args.sim_tests_out_dir:
+        updates["sim_tests_out_dir"] = ""
     ws.update(updates)
     ws["sim_reuse_binary"] = bool(args.sim_reuse_binary or args.sim_only)
     _persist_parameter_overrides(ws, updates)

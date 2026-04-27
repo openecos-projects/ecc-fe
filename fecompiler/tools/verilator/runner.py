@@ -242,6 +242,11 @@ def _soc_tests_out_dir(workspace: dict[str, Any]) -> Path:
     return _invocation_root() / "tests" / "out"
 
 
+def _explicit_soc_tests_out_dir(workspace: dict[str, Any]) -> Path | None:
+    explicit = str(workspace.get("sim_tests_out_dir", "")).strip()
+    return _resolve_path(explicit) if explicit else None
+
+
 def _sim_images(workspace: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     images: list[str] = []
@@ -300,11 +305,14 @@ def _sim_cases_from_images(images: list[str], run_args: list[str]) -> list[dict[
         idx = seen.get(base_name, 0)
         seen[base_name] = idx + 1
         case_name = base_name if idx == 0 else f"{base_name}_{idx + 1}"
+        args = ["--image", image, *base_args]
+        if case_name == "rtthread.soc" and not _arg_present(args, "--timeout-ok"):
+            args.append("--timeout-ok")
         cases.append(
             {
                 "name": case_name,
                 "image": image,
-                "args": ["--image", image, *base_args],
+                "args": args,
             }
         )
     return cases
@@ -368,21 +376,16 @@ def _build_test_script(workspace: dict[str, Any]) -> Path:
 
 
 def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
-    explicit_sources = workspace.get("sim_program_sources", []) or []
-    if explicit_sources:
-        out: list[Path] = []
-        seen: set[str] = set()
-        for item in explicit_sources:
-            text = str(item).strip()
-            if not text:
-                continue
-            p = _resolve_path(text)
-            key = str(p)
-            if key not in seen:
-                seen.add(key)
-                out.append(p)
-        return out
+    out: list[Path] = []
+    seen: set[str] = set()
 
+    def add_source(source: Path) -> None:
+        key = str(source)
+        if key not in seen:
+            seen.add(key)
+            out.append(source)
+
+    explicit_sources = workspace.get("sim_program_sources", []) or []
     explicit_dir = str(workspace.get("sim_programs_dir", "")).strip()
     if explicit_dir:
         programs_dir = _resolve_path(explicit_dir)
@@ -390,36 +393,42 @@ def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
         soc_root = _workspace_soc_root(workspace)
         programs_dir = soc_root / "tests" / "programs" if soc_root is not None else (_invocation_root() / "tests" / "programs")
 
-    names = [str(x).strip() for x in workspace.get("sim_program_names", []) or [] if str(x).strip()]
-    if names:
-        out = []
-        seen = set()
-        for name in names:
-            p = Path(name)
-            if p.suffix != ".c":
-                p = p.with_suffix(".c")
-            source = _resolve_path(str(p), base=programs_dir)
-            key = str(source)
-            if key not in seen:
-                seen.add(key)
-                out.append(source)
-        return out
+    for item in explicit_sources:
+        text = str(item).strip()
+        if text:
+            add_source(_resolve_path(text))
 
     if workspace.get("sim_build_all_programs"):
-        return sorted(programs_dir.glob("*.c"))
-    return []
+        for source in sorted(programs_dir.glob("*.c")):
+            add_source(source)
+
+    names = [str(x).strip() for x in workspace.get("sim_program_names", []) or [] if str(x).strip()]
+    for name in names:
+        p = Path(name)
+        if p.suffix != ".c":
+            p = p.with_suffix(".c")
+        add_source(_resolve_path(str(p), base=programs_dir))
+
+    return out
 
 
 def _prepare_sim_images(workspace: dict[str, Any], *,
-                        build_log_path: Path | None = None) -> tuple[list[str], bool]:
+                        build_log_path: Path | None = None,
+                        case_output_root: Path | None = None) -> tuple[list[str], bool]:
     images = _sim_images(workspace)
     sources = _program_sources_to_build(workspace)
     if not sources:
         return images, True
 
     build_script = _build_test_script(workspace)
-    out_dir = _soc_tests_out_dir(workspace)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    explicit_out_dir = _explicit_soc_tests_out_dir(workspace)
+    flat_out_dir = explicit_out_dir
+    if flat_out_dir is None and case_output_root is None:
+        flat_out_dir = _soc_tests_out_dir(workspace)
+    if flat_out_dir is not None:
+        flat_out_dir.mkdir(parents=True, exist_ok=True)
+    if case_output_root is not None:
+        case_output_root.mkdir(parents=True, exist_ok=True)
 
     if not build_script.exists():
         if build_log_path is not None:
@@ -436,6 +445,9 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         lines.append("[build_program] difftest fast boot env enabled")
     for src in sources:
         name = src.stem
+        case_name = _safe_case_name(f"{name}.soc")
+        out_dir = flat_out_dir if flat_out_dir is not None else case_output_root / case_name
+        out_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             str(build_script),
             "--src", str(src),
@@ -688,7 +700,11 @@ class VerilatorSimStep(BaseStep):
             )
             return
 
-        images, build_ok = _prepare_sim_images(workspace, build_log_path=build_log)
+        images, build_ok = _prepare_sim_images(
+            workspace,
+            build_log_path=build_log,
+            case_output_root=Path(step.output["dir"]) / "cases",
+        )
         if not build_ok:
             sim_log.write_text(
                 "build test programs failed; see build_programs.log.txt\n",
@@ -716,7 +732,6 @@ class VerilatorSimStep(BaseStep):
         summary_lines: list[str] = []
         cases_report: list[dict[str, Any]] = []
 
-        stream_case_output = _rtthread_requested(workspace)
         for case in cases:
             case_name = str(case["name"])
             image = str(case["image"])
@@ -740,7 +755,7 @@ class VerilatorSimStep(BaseStep):
             else:
                 rc, output = _run_sim_process(
                     [str(sim_bin), *run_args],
-                    stream_output=stream_case_output,
+                    stream_output=case_name == "rtthread.soc",
                 )
 
             latest_case_log.write_text(output, encoding="utf-8")
