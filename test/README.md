@@ -9,6 +9,9 @@
 ```bash
 cd /home/luyoung/ecc-fe
 
+# 如果 scons 不在系统 PATH，但已有临时 venv，可先打开：
+export PATH=/tmp/ecc-fe-scons-venv/bin:$PATH
+
 # 全量 pytest（包含 test_examples.py）
 python3 -m pytest test -q
 
@@ -38,6 +41,12 @@ CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 # 单独跑 CPU+SoC 全流程
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
 
+# 启动 RT-Thread smoke test
+bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH="$PATH"
+
+# 直接启动 RT-Thread flow
+bazel run //:run_cl3_soc_rtthread
+
 # 跑全部 Bazel 测试
 bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 ```
@@ -49,6 +58,11 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `workspace_projects/cpu_soc_test/sim_verilator/report/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（历史保留，不覆盖）
+
+`test_cpu_soc_rtthread_flow` 需要 `scons`、RISC-V GCC toolchain、`AM_HOME`（或默认
+`/home/luyoung/ysyx-workbench/abstract-machine`），主要日志在：
+
+- `workspace_projects/cpu_soc_rtthread_test/sim_verilator/output/cases/rtthread.soc/log.txt`
 
 ---
 
