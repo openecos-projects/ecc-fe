@@ -117,6 +117,47 @@ py_binary(
     ]),
 )
 
+# ── Example run: CL3 CPU + SoC boots RT-Thread with default difftest ─────────
+#
+#   bazel run //:run_cl3_soc_rtthread
+#
+# Requires scons, a RISC-V GCC toolchain, and AM_HOME (or the default
+# /home/luyoung/ysyx-workbench/abstract-machine) to be available.
+
+py_binary(
+    name = "run_cl3_soc_rtthread",
+    srcs = ["fecompiler/cli/main.py"],
+    main = "fecompiler/cli/main.py",
+    args = [
+        "--design", "cl3_soc_rtthread",
+        "--top", "ysyxSoCTop",
+        "--workspace", "/home/luyoung/ecc-fe/workspace_projects/cl3_soc_rtthread",
+        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
+        "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
+        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
+        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/difftest.cpp",
+        "--sim-cflag=-Ifecompiler/thirdparty/SoC",
+        "--sim-ldflag=-ldl",
+        "--sim-program", "rtthread",
+        "--sim-programs-dir", "fecompiler/thirdparty/SoC/tests/programs",
+        "--sim-tests-out-dir", "/home/luyoung/ecc-fe/workspace_projects/cl3_soc_rtthread/rtthread_tests_out",
+        "--sim-arg=--max-cycles",
+        "--sim-arg=10000000",
+        "--sim-arg=--wave",
+        "--sim-arg=/dev/null",
+        "--rerun",
+    ],
+    deps = [":fecompiler"],
+    data = glob([
+        "docs/examples/cl3/**",
+        "fecompiler/thirdparty/SoC/**",
+        "fecompiler/thirdparty/rt-thread-am/**",
+        "fecompiler/tools/slang/**",
+        "fecompiler/tools/verilator/**",
+    ]),
+)
+
 # ── Individual test targets ───────────────────────────────────────────────────
 
 py_test(
@@ -192,6 +233,22 @@ py_test(
     ]),
 )
 
+py_test(
+    name = "test_cpu_soc_rtthread_flow",
+    srcs = ["test/test_cpu_soc_rtthread_flow.py"],
+    main = "test/test_cpu_soc_rtthread_flow.py",
+    timeout = "long",
+    imports = ["."],
+    deps = [":fecompiler"],
+    data = glob([
+        "docs/examples/cl3/**",
+        "fecompiler/thirdparty/SoC/**",
+        "fecompiler/thirdparty/rt-thread-am/**",
+        "fecompiler/tools/slang/**",
+        "fecompiler/tools/verilator/**",
+    ]),
+)
+
 # ── Convenience target: run all tests ─────────────────────────────────────────
 
 test_suite(
@@ -204,5 +261,6 @@ test_suite(
         ":test_engine_flow",
         ":test_cpu_soc_flow",
         ":test_cpu_soc_matrix_flow",
+        ":test_cpu_soc_rtthread_flow",
     ],
 )
