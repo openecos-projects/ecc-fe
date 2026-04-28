@@ -70,73 +70,40 @@ class PrepareStep(BaseStep):
         incdirs: list[Path] = []
         defines: list[str] = []
 
-        def _add_unique(paths: list[Path]) -> None:
-            for p in paths:
-                sp = str(p)
-                if sp not in seen_rtl:
-                    seen_rtl.add(sp)
-                    merged.append(p)
+        def _add_unique(items: list[Any], target: list[Any], seen: set[str]) -> None:
+            for item in items:
+                key = str(item)
+                if key not in seen:
+                    seen.add(key)
+                    target.append(item)
 
-        def _add_unique_incdirs(paths: list[Path]) -> None:
-            for p in paths:
-                sp = str(p)
-                if sp not in seen_incdir:
-                    seen_incdir.add(sp)
-                    incdirs.append(p)
-
-        def _add_unique_defines(items: list[str]) -> None:
-            for d in items:
-                if d not in seen_define:
-                    seen_define.add(d)
-                    defines.append(d)
+        def _add_filelist(label: str, path: str) -> None:
+            data = self._parse_sv_filelist(path)
+            _add_unique(data["rtl_files"], merged, seen_rtl)
+            _add_unique(data["incdirs"], incdirs, seen_incdir)
+            _add_unique(data["defines"], defines, seen_define)
+            inputs[label] = self._filelist_info(path, data)
 
         # Frontend integration path: explicit CPU + SoC filelists.
         if cpu_filelist or soc_filelist:
             if cpu_filelist:
-                cpu_data = self._parse_sv_filelist(cpu_filelist)
-                _add_unique(cpu_data["rtl_files"])
-                _add_unique_incdirs(cpu_data["incdirs"])
-                _add_unique_defines(cpu_data["defines"])
-                inputs["cpu_filelist"] = {
-                    "path": cpu_filelist,
-                    "rtl_files": len(cpu_data["rtl_files"]),
-                    "incdirs": len(cpu_data["incdirs"]),
-                    "defines": len(cpu_data["defines"]),
-                }
+                _add_filelist("cpu_filelist", cpu_filelist)
             else:
                 inputs["cpu_filelist"] = {"path": "", "rtl_files": 0, "skipped": "not provided"}
 
             if soc_filelist:
-                soc_data = self._parse_sv_filelist(soc_filelist)
-                _add_unique(soc_data["rtl_files"])
-                _add_unique_incdirs(soc_data["incdirs"])
-                _add_unique_defines(soc_data["defines"])
-                inputs["soc_filelist"] = {
-                    "path": soc_filelist,
-                    "rtl_files": len(soc_data["rtl_files"]),
-                    "incdirs": len(soc_data["incdirs"]),
-                    "defines": len(soc_data["defines"]),
-                }
+                _add_filelist("soc_filelist", soc_filelist)
             else:
                 inputs["soc_filelist"] = {"path": "", "rtl_files": 0, "skipped": "not provided"}
 
         # Legacy single-filelist path.
         elif filelist and Path(filelist).exists():
-            data = self._parse_sv_filelist(filelist)
-            _add_unique(data["rtl_files"])
-            _add_unique_incdirs(data["incdirs"])
-            _add_unique_defines(data["defines"])
-            inputs["input_filelist"] = {
-                "path": filelist,
-                "rtl_files": len(data["rtl_files"]),
-                "incdirs": len(data["incdirs"]),
-                "defines": len(data["defines"]),
-            }
+            _add_filelist("input_filelist", filelist)
 
         # Last fallback: one source RTL.
         elif origin_verilog and Path(origin_verilog).exists():
             p = Path(origin_verilog).resolve()
-            _add_unique([p])
+            _add_unique([p], merged, seen_rtl)
             inputs["origin_verilog"] = {"path": str(p), "rtl_files": 1}
 
         if not merged:
@@ -164,6 +131,15 @@ class PrepareStep(BaseStep):
             "defines": defines,
         }
         return prepared, inputs
+
+    @staticmethod
+    def _filelist_info(path: str, data: dict[str, list[Any]]) -> dict[str, Any]:
+        return {
+            "path": path,
+            "rtl_files": len(data["rtl_files"]),
+            "incdirs": len(data["incdirs"]),
+            "defines": len(data["defines"]),
+        }
 
     def _write_merged_filelist(self, step: WorkspaceStep, files: list[str]) -> Path:
         merged_path = self._merged_filelist_path(step)
