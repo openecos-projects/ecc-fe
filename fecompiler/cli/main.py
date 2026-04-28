@@ -150,58 +150,43 @@ def _persist_parameter_overrides(ws: dict[str, object], updates: dict[str, objec
     json_write(params_path, params)
 
 
-def run(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
-    sim_images = _resolve_sim_images(args)
-    if args.sim_all_tests and not sim_images and not args.sim_build_all_programs:
-        print(
-            f"Error: no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}",
-            file=sys.stderr,
-        )
-        return 1
-
+def _workspace_dir(args: argparse.Namespace) -> str:
     workspace = args.workspace.strip() or str(DEFAULT_PROJECTS_ROOT / args.design)
-    workspace_dir = str(Path(workspace).expanduser().resolve())
+    return str(Path(workspace).expanduser().resolve())
 
-    # load existing or create new
-    ws = load_workspace(workspace_dir)
-    if ws is None and args.sim_only:
-        print("Error: --sim-only requires an existing workspace", file=sys.stderr)
-        return 1
 
-    if ws is None:
-        spec = CreateWorkspaceData(
-            directory=workspace_dir,
-            parameters={
-                "Design":               args.design,
-                "Top module":           args.top,
-                "Clock":                args.clock,
-                "Frequency max [MHz]":  args.freq,
-            },
-            origin_verilog=args.rtl,
-            filelist=args.filelist,
-            cpu_filelist=args.cpu_filelist,
-            soc_filelist=args.soc_filelist,
-            testbench=args.testbench,
-            sim_cpp_sources=args.sim_cpp,
-            sim_cflags=args.sim_cflag,
-            sim_ldflags=args.sim_ldflag,
-            sim_run_args=args.sim_arg,
-            sim_images=sim_images,
-            sim_all_tests=args.sim_all_tests,
-            sim_tests_dir=args.sim_tests_dir,
-            sim_build_all_programs=args.sim_build_all_programs,
-            sim_program_names=args.sim_program,
-            sim_programs_dir=args.sim_programs_dir,
-            sim_tests_out_dir=args.sim_tests_out_dir,
-        )
-        ws = create_workspace(spec)
+def _create_workspace(args: argparse.Namespace, workspace_dir: str,
+                      sim_images: list[str]) -> dict[str, object] | None:
+    spec = CreateWorkspaceData(
+        directory=workspace_dir,
+        parameters={
+            "Design":               args.design,
+            "Top module":           args.top,
+            "Clock":                args.clock,
+            "Frequency max [MHz]":  args.freq,
+        },
+        origin_verilog=args.rtl,
+        filelist=args.filelist,
+        cpu_filelist=args.cpu_filelist,
+        soc_filelist=args.soc_filelist,
+        testbench=args.testbench,
+        sim_cpp_sources=args.sim_cpp,
+        sim_cflags=args.sim_cflag,
+        sim_ldflags=args.sim_ldflag,
+        sim_run_args=args.sim_arg,
+        sim_images=sim_images,
+        sim_all_tests=args.sim_all_tests,
+        sim_tests_dir=args.sim_tests_dir,
+        sim_build_all_programs=args.sim_build_all_programs,
+        sim_program_names=args.sim_program,
+        sim_programs_dir=args.sim_programs_dir,
+        sim_tests_out_dir=args.sim_tests_out_dir,
+    )
+    return create_workspace(spec)
 
-    if ws is None:
-        print("Error: failed to create workspace", file=sys.stderr)
-        return 1
 
+def _runtime_overrides(args: argparse.Namespace,
+                       sim_images: list[str]) -> dict[str, object]:
     updates = build_parameter_overrides(
         testbench=args.testbench.strip(),
         sim_cpp_sources=args.sim_cpp if args.sim_cpp else None,
@@ -218,6 +203,57 @@ def run(argv: Sequence[str] | None = None) -> int:
     )
     if (args.sim_build_all_programs or args.sim_program) and not args.sim_tests_out_dir:
         updates["sim_tests_out_dir"] = ""
+    return updates
+
+
+def _print_error(message: str) -> int:
+    print(f"Error: {message}", file=sys.stderr)
+    return 1
+
+
+def _print_step_status(step: str, state: str) -> None:
+    status = "✓" if state == "Success" else "✗"
+    print(f"  {status}  {step:<20} {state}")
+
+
+def _run_sim_only(engine: EngineFlow) -> int:
+    state = engine.run_step("sim", rerun=True)
+    _print_step_status("sim", state.value)
+    if state.value != "Success":
+        return _print_error("sim step failed")
+    return 0
+
+
+def _run_full_flow(engine: EngineFlow, rerun: bool) -> int:
+    ok, reports = engine.run_all(rerun=rerun)
+    for report in reports:
+        _print_step_status(str(report["step"]), str(report["state"]))
+    if not ok:
+        return _print_error("flow execution failed")
+    return 0
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    sim_images = _resolve_sim_images(args)
+    if args.sim_all_tests and not sim_images and not args.sim_build_all_programs:
+        return _print_error(f"no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}")
+
+    workspace_dir = _workspace_dir(args)
+
+    # load existing or create new
+    ws = load_workspace(workspace_dir)
+    if ws is None and args.sim_only:
+        return _print_error("--sim-only requires an existing workspace")
+
+    if ws is None:
+        ws = _create_workspace(args, workspace_dir, sim_images)
+
+    if ws is None:
+        return _print_error("failed to create workspace")
+
+    updates = _runtime_overrides(args, sim_images)
     ws.update(updates)
     ws["sim_reuse_binary"] = bool(args.sim_reuse_binary or args.sim_only)
     _persist_parameter_overrides(ws, updates)
@@ -229,23 +265,8 @@ def run(argv: Sequence[str] | None = None) -> int:
     engine.create_step_workspaces()
 
     if args.sim_only:
-        state = engine.run_step("sim", rerun=True)
-        status = "✓" if state.value == "Success" else "✗"
-        print(f"  {status}  {'sim':<20} {state.value}")
-        if state.value != "Success":
-            print("Error: sim step failed", file=sys.stderr)
-            return 1
-        return 0
-
-    ok, reports = engine.run_all(rerun=args.rerun)
-    for r in reports:
-        status = "✓" if r["state"] == "Success" else "✗"
-        print(f"  {status}  {r['step']:<20} {r['state']}")
-
-    if not ok:
-        print("Error: flow execution failed", file=sys.stderr)
-        return 1
-    return 0
+        return _run_sim_only(engine)
+    return _run_full_flow(engine, rerun=args.rerun)
 
 
 def main() -> None:
