@@ -45,16 +45,7 @@ class EngineFlow:
             matched = index.pop((name, tool), None)
             if matched is None:
                 changed = True
-                synced.append(
-                    {
-                        "name": name,
-                        "tool": tool,
-                        "state": StateEnum.Unstart.value,
-                        "runtime": "",
-                        "peak memory (mb)": 0,
-                        "info": {},
-                    }
-                )
+                synced.append(_new_flow_step(name, tool))
                 continue
             synced.append(matched)
 
@@ -72,17 +63,7 @@ class EngineFlow:
             self.save()
 
     def init_default_steps(self) -> None:
-        self.flow["steps"] = [
-            {
-                "name": name,
-                "tool": tool,
-                "state": StateEnum.Unstart.value,
-                "runtime": "",
-                "peak memory (mb)": 0,
-                "info": {},
-            }
-            for name, tool in DEFAULT_FLOW_STEPS
-        ]
+        self.flow["steps"] = [_new_flow_step(name, tool) for name, tool in DEFAULT_FLOW_STEPS]
         self.save()
 
     def load(self) -> None:
@@ -211,36 +192,27 @@ class EngineFlow:
             success = self._check_step_result(ws_step)
             runtime = _format_runtime(time.time() - start)
             if success:
-                self.set_state(
-                    name=ws_step.name,
-                    tool=ws_step.tool,
-                    state=StateEnum.Success,
-                    runtime=runtime,
-                    peak_memory=0.0,
-                )
+                self._finish_step(ws_step, StateEnum.Success, runtime)
                 self._flow_logger.info("[SUCCESS] %-20s  elapsed=%s", step_name, runtime)
                 return StateEnum.Success
-            self.set_state(
-                name=ws_step.name,
-                tool=ws_step.tool,
-                state=StateEnum.Incomplete,
-                runtime=runtime,
-                peak_memory=0.0,
-            )
+            self._finish_step(ws_step, StateEnum.Incomplete, runtime)
             self._flow_logger.warning("[FAILED]  %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
         except Exception:
             runtime = _format_runtime(time.time() - start)
             logger.exception("step %r failed unexpectedly", step_name)
-            self.set_state(
-                name=ws_step.name,
-                tool=ws_step.tool,
-                state=StateEnum.Incomplete,
-                runtime=runtime,
-                peak_memory=0.0,
-            )
+            self._finish_step(ws_step, StateEnum.Incomplete, runtime)
             self._flow_logger.error("[ERROR]   %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
+
+    def _finish_step(self, step: WorkspaceStep, state: StateEnum, runtime: str) -> None:
+        self.set_state(
+            name=step.name,
+            tool=step.tool,
+            state=state,
+            runtime=runtime,
+            peak_memory=0.0,
+        )
 
     def _run_single_step(self, step: WorkspaceStep) -> None:
         from fecompiler.tools.fe import STEP_REGISTRY
@@ -256,6 +228,17 @@ class EngineFlow:
         if handler is None:
             return False
         return handler.check_result(step)
+
+
+def _new_flow_step(name: str, tool: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "tool": tool,
+        "state": StateEnum.Unstart.value,
+        "runtime": "",
+        "peak memory (mb)": 0,
+        "info": {},
+    }
 
 
 def _format_runtime(seconds: float) -> str:
