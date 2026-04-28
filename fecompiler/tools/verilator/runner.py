@@ -39,42 +39,35 @@ _WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
 
 
+def _repo_tool_path(local: Path, workspace_rel: Path, system: Path) -> Path | None:
+    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
+    candidates = [
+        local,
+        Path(workspace_dir) / workspace_rel if workspace_dir else None,
+        Path.cwd() / workspace_rel,
+        system,
+    ]
+    return next((path for path in candidates if path is not None and path.exists()), None)
+
+
 def _verilator_cmd() -> str:
     """Return verilator executable path (repo-local first, then system)."""
-    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
-    workspace_bin = (
-        Path(workspace_dir) / _WORKSPACE_REL_VERILATOR_BIN if workspace_dir else None
+    cmd = _repo_tool_path(
+        _LOCAL_VERILATOR_BIN,
+        _WORKSPACE_REL_VERILATOR_BIN,
+        _SYSTEM_VERILATOR_BIN,
     )
-    cwd_bin = Path.cwd() / _WORKSPACE_REL_VERILATOR_BIN
-
-    if _LOCAL_VERILATOR_BIN.exists():
-        return str(_LOCAL_VERILATOR_BIN)
-    if workspace_bin is not None and workspace_bin.exists():
-        return str(workspace_bin)
-    if cwd_bin.exists():
-        return str(cwd_bin)
-    if _SYSTEM_VERILATOR_BIN.exists():
-        return str(_SYSTEM_VERILATOR_BIN)
-    return "verilator"
+    return str(cmd) if cmd is not None else "verilator"
 
 
 def _verilator_include_args() -> list[str]:
     """Return include arg for verilator runtime headers if present."""
-    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
-    workspace_include = (
-        Path(workspace_dir) / _WORKSPACE_REL_VERILATOR_INCLUDE if workspace_dir else None
+    include = _repo_tool_path(
+        _LOCAL_VERILATOR_INCLUDE,
+        _WORKSPACE_REL_VERILATOR_INCLUDE,
+        _SYSTEM_VERILATOR_INCLUDE,
     )
-    cwd_include = Path.cwd() / _WORKSPACE_REL_VERILATOR_INCLUDE
-
-    if _LOCAL_VERILATOR_INCLUDE.exists():
-        return [f"-I{_LOCAL_VERILATOR_INCLUDE}"]
-    if workspace_include is not None and workspace_include.exists():
-        return [f"-I{workspace_include}"]
-    if cwd_include.exists():
-        return [f"-I{cwd_include}"]
-    if _SYSTEM_VERILATOR_INCLUDE.exists():
-        return [f"-I{_SYSTEM_VERILATOR_INCLUDE}"]
-    return []
+    return [f"-I{include}"] if include is not None else []
 
 
 def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
@@ -172,26 +165,13 @@ def _arg_present(args: list[str], option: str) -> bool:
 
 
 def _append_rtthread_difftest_args(workspace: dict[str, Any], args: list[str]) -> list[str]:
-    soc_root = _workspace_soc_root(workspace)
-    if soc_root is None:
-        ref_so = (
-            _invocation_root()
-            / "fecompiler"
-            / "thirdparty"
-            / "SoC"
-            / "tools"
-            / "riscv32-spike-so"
-        )
-    else:
-        ref_so = soc_root / "tools" / "riscv32-spike-so"
-
     out = list(args)
     if not _arg_present(out, "--max-cycles"):
         out.extend(["--max-cycles", "200000000"])
     out.extend([
         "--diff",
         "--ref",
-        str(ref_so),
+        str(_rtthread_ref_so(workspace)),
         "--diff-image-offset",
         "0x100",
         "--diff-reset-vector",
@@ -199,6 +179,13 @@ def _append_rtthread_difftest_args(workspace: dict[str, Any], args: list[str]) -
         "--timeout-ok",
     ])
     return out
+
+
+def _rtthread_ref_so(workspace: dict[str, Any]) -> Path:
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is None:
+        soc_root = _invocation_root() / _WORKSPACE_REL_SOC_ROOT
+    return soc_root / "tools" / "riscv32-spike-so"
 
 
 def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:
@@ -272,14 +259,18 @@ def _sim_images(workspace: dict[str, Any]) -> list[str]:
 
 
 def _strip_image_args(args: list[str]) -> list[str]:
+    return _strip_option_with_value(args, "--image")
+
+
+def _strip_option_with_value(args: list[str], option: str) -> list[str]:
     out: list[str] = []
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--image":
+        if arg == option:
             i += 2
             continue
-        if arg.startswith("--image="):
+        if arg.startswith(f"{option}="):
             i += 1
             continue
         out.append(arg)
@@ -330,26 +321,21 @@ def _effective_sim_cases(images: list[str], run_args: list[str]) -> list[dict[st
 
 
 def _image_from_run_args(args: list[str]) -> str:
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg == "--image" and i + 1 < len(args):
-            return str(_resolve_path(args[i + 1]))
-        if arg.startswith("--image="):
-            return str(_resolve_path(arg.split("=", 1)[1]))
-        i += 1
-    return ""
+    image = _option_value(args, "--image")
+    return str(_resolve_path(image)) if image else ""
 
 
 def _wave_from_run_args(args: list[str]) -> str:
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg == "--wave" and i + 1 < len(args):
-            return str(_resolve_path(args[i + 1]))
-        if arg.startswith("--wave="):
-            return str(_resolve_path(arg.split("=", 1)[1]))
-        i += 1
+    wave = _option_value(args, "--wave")
+    return str(_resolve_path(wave)) if wave else ""
+
+
+def _option_value(args: list[str], option: str) -> str:
+    for i, arg in enumerate(args):
+        if arg == option and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith(f"{option}="):
+            return arg.split("=", 1)[1]
     return ""
 
 
@@ -386,12 +372,7 @@ def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
             out.append(source)
 
     explicit_sources = workspace.get("sim_program_sources", []) or []
-    explicit_dir = str(workspace.get("sim_programs_dir", "")).strip()
-    if explicit_dir:
-        programs_dir = _resolve_path(explicit_dir)
-    else:
-        soc_root = _workspace_soc_root(workspace)
-        programs_dir = soc_root / "tests" / "programs" if soc_root is not None else (_invocation_root() / "tests" / "programs")
+    programs_dir = _programs_dir(workspace)
 
     for item in explicit_sources:
         text = str(item).strip()
@@ -410,6 +391,17 @@ def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
         add_source(_resolve_path(str(p), base=programs_dir))
 
     return out
+
+
+def _programs_dir(workspace: dict[str, Any]) -> Path:
+    explicit = str(workspace.get("sim_programs_dir", "")).strip()
+    if explicit:
+        return _resolve_path(explicit)
+
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is not None:
+        return soc_root / "tests" / "programs"
+    return _invocation_root() / "tests" / "programs"
 
 
 def _prepare_sim_images(workspace: dict[str, Any], *,
@@ -601,25 +593,16 @@ class VerilatorSimStep(BaseStep):
 
         cases_json = Path(step.report["dir"]) / "cases.json"
         if cases_json.exists():
-            data = json_read(str(cases_json))
-            cases = data.get("cases", []) if isinstance(data, dict) else []
-            if not isinstance(cases, list) or not cases:
+            cases = self._load_case_reports(step)
+            if not cases:
                 return False
-            for case in cases:
-                if not isinstance(case, dict):
-                    return False
-                if not case.get("ok", False):
-                    return False
-                log_path = str(case.get("log", "")).strip()
-                if not log_path or not Path(log_path).exists():
-                    return False
-            return True
+            return all(self._case_report_ok(case) for case in cases)
 
         sim_log = Path(step.report["dir"]) / "log.txt"
         if not sim_log.exists():
             return False
         content = sim_log.read_text(encoding="utf-8")
-        return "FAILED" not in content and "%Error" not in content
+        return _sim_output_ok(0, content)
 
     def _run_compile(self, step: WorkspaceStep,
                      workspace: dict[str, Any]) -> bool:
@@ -682,6 +665,22 @@ class VerilatorSimStep(BaseStep):
         update_substep_ok(step, SimSubFlowEnum.compile.value, ok)
         return ok
 
+    @staticmethod
+    def _case_report_ok(case: Any) -> bool:
+        if not isinstance(case, dict) or not case.get("ok", False):
+            return False
+        log_path = str(case.get("log", "")).strip()
+        return bool(log_path) and Path(log_path).exists()
+
+    @staticmethod
+    def _load_case_reports(step: WorkspaceStep) -> list[Any]:
+        cases_json = Path(step.report["dir"]) / "cases.json"
+        if not cases_json.exists():
+            return []
+        data = json_read(str(cases_json))
+        cases = data.get("cases", []) if isinstance(data, dict) else []
+        return cases if isinstance(cases, list) else []
+
     def _run_simulate(self, step: WorkspaceStep, workspace: dict[str, Any],
                       compiled: bool) -> None:
         sim_bin = Path(step.output["dir"]) / f"{workspace['design']}_sim"
@@ -690,6 +689,7 @@ class VerilatorSimStep(BaseStep):
         cases_json = Path(step.report["dir"]) / "cases.json"
         case_root = Path(step.report["dir"]) / "cases"
         runs_root = Path(step.report["dir"]) / "runs"
+        output_cases_root = Path(step.output["dir"]) / "cases"
 
         if not compiled or not sim_bin.exists():
             update_substep_ok(
@@ -703,7 +703,7 @@ class VerilatorSimStep(BaseStep):
         images, build_ok = _prepare_sim_images(
             workspace,
             build_log_path=build_log,
-            case_output_root=Path(step.output["dir"]) / "cases",
+            case_output_root=output_cases_root,
         )
         if not build_ok:
             sim_log.write_text(
@@ -735,18 +735,10 @@ class VerilatorSimStep(BaseStep):
         for case in cases:
             case_name = str(case["name"])
             image = str(case["image"])
-            latest_case_dir = case_root / case_name
-            latest_case_dir.mkdir(parents=True, exist_ok=True)
-            latest_case_log = latest_case_dir / "log.txt"
-            run_case_dir = run_case_root / case_name
-            run_case_dir.mkdir(parents=True, exist_ok=True)
-            run_case_log = run_case_dir / "log.txt"
-            output_case_dir = Path(step.output["dir"]) / "cases" / case_name
-            output_case_dir.mkdir(parents=True, exist_ok=True)
-            output_case_log = output_case_dir / "log.txt"
+            logs = _case_logs(case_root, run_case_root, output_cases_root, case_name)
             run_args, wave = _apply_wave_arg(
                 list(case["args"]),
-                output_case_dir / "wave.vcd",
+                logs["output_dir"] / "wave.vcd",
             )
 
             if image and not Path(image).exists():
@@ -758,10 +750,9 @@ class VerilatorSimStep(BaseStep):
                     stream_output=case_name == "rtthread.soc",
                 )
 
-            latest_case_log.write_text(output, encoding="utf-8")
-            run_case_log.write_text(output, encoding="utf-8")
-            output_case_log.write_text(output, encoding="utf-8")
-            case_ok = rc == 0 and "FAILED" not in output and "%Error" not in output
+            for log_path in (logs["latest_log"], logs["run_log"], logs["output_log"]):
+                log_path.write_text(output, encoding="utf-8")
+            case_ok = _sim_output_ok(rc, output)
             if not case_ok:
                 all_ok = False
                 failed_cases.append(case_name)
@@ -772,16 +763,16 @@ class VerilatorSimStep(BaseStep):
                     "image": image,
                     "returncode": rc,
                     "ok": case_ok,
-                    "log": str(output_case_log),
-                    "latest_log": str(output_case_log),
-                    "report_log": str(latest_case_log),
-                    "run_log": str(run_case_log),
+                    "log": str(logs["output_log"]),
+                    "latest_log": str(logs["output_log"]),
+                    "report_log": str(logs["latest_log"]),
+                    "run_log": str(logs["run_log"]),
                     "wave": wave,
                     "run_id": run_id,
                 }
             )
             summary_lines.append(
-                f"[{case_name}] rc={rc} image={image or '-'} log={output_case_log} wave={wave} run_log={run_case_log}"
+                f"[{case_name}] rc={rc} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
             )
 
         summary_text = "\n".join(summary_lines) + "\n"
@@ -810,8 +801,7 @@ class VerilatorSimStep(BaseStep):
             failed_cases: list[str] = []
             total_cases = 0
         elif cases_json.exists():
-            data = json_read(str(cases_json))
-            cases = data.get("cases", []) if isinstance(data, dict) else []
+            cases = self._load_case_reports(step)
             failed_cases = [
                 str(c.get("name", ""))
                 for c in cases
@@ -825,10 +815,7 @@ class VerilatorSimStep(BaseStep):
             total_cases = 0
         else:
             content = sim_log.read_text()
-            sim_ok = (
-                "FAILED" not in content and
-                "%Error" not in content
-            )
+            sim_ok = _sim_output_ok(0, content)
             failed_cases = []
             total_cases = 0
 
@@ -856,3 +843,25 @@ class VerilatorSimStep(BaseStep):
             if entry.get("name") == name:
                 return str(entry.get("state", "")), dict(entry.get("info", {}) or {})
         return "", {}
+
+
+def _sim_output_ok(returncode: int, output: str) -> bool:
+    return returncode == 0 and "FAILED" not in output and "%Error" not in output
+
+
+def _case_logs(case_root: Path, run_case_root: Path, output_cases_root: Path,
+               case_name: str) -> dict[str, Path]:
+    latest_dir = _mkdir(case_root / case_name)
+    run_dir = _mkdir(run_case_root / case_name)
+    output_dir = _mkdir(output_cases_root / case_name)
+    return {
+        "latest_log": latest_dir / "log.txt",
+        "run_log": run_dir / "log.txt",
+        "output_log": output_dir / "log.txt",
+        "output_dir": output_dir,
+    }
+
+
+def _mkdir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
