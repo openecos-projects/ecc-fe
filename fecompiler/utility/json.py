@@ -19,16 +19,13 @@ def json_read(file_path: str | Path) -> dict[str, Any]:
     if not os.path.isfile(p):
         return {}
     try:
-        if p.endswith(".gz"):
-            with gzip.open(p, "rt", encoding="utf-8") as f:
-                return json.load(f)
-        with open(p, "r", encoding="utf-8") as f:
+        with _open_json(p, "rt") as f:
             return json.load(f)
     except Exception:
         return {}
 
 
-def json_write(file_path: str | Path, data: dict[str, Any] = {}, indent: int = 2) -> bool:
+def json_write(file_path: str | Path, data: dict[str, Any] | None = None, indent: int = 2) -> bool:
     """Write *data* as JSON to *file_path*; create parent dirs as needed.
 
     Supports plain JSON and gzip-compressed JSON (.gz suffix).
@@ -37,15 +34,17 @@ def json_write(file_path: str | Path, data: dict[str, Any] = {}, indent: int = 2
     p = str(file_path)
     try:
         os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-        if p.endswith(".gz"):
-            with gzip.open(p, "wt", encoding="utf-8") as f:
-                json.dump(data, f, indent=indent, ensure_ascii=False)
-        else:
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=indent, ensure_ascii=False)
+        with _open_json(p, "wt") as f:
+            json.dump({} if data is None else data, f, indent=indent, ensure_ascii=False)
         return True
     except Exception:
         return False
+
+
+def _open_json(path: str, mode: str):
+    if path.endswith(".gz"):
+        return gzip.open(path, mode, encoding="utf-8")
+    return open(path, mode, encoding="utf-8")
 
 
 def dict_to_str(d: Any, indent: int = 0) -> str:
