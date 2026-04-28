@@ -13,6 +13,41 @@ from fecompiler.data.step import StateEnum
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 
 
+_LIST_PARAMETER_FIELDS = (
+    "sim_cpp_sources",
+    "sim_cflags",
+    "sim_ldflags",
+    "sim_run_args",
+    "sim_images",
+    "sim_program_names",
+    "sim_program_sources",
+)
+_BOOL_PARAMETER_FIELDS = ("sim_all_tests", "sim_build_all_programs")
+_STR_PARAMETER_FIELDS = (
+    "cpu_filelist",
+    "soc_filelist",
+    "prepared_manifest",
+    "testbench",
+    "sim_tests_dir",
+    "sim_programs_dir",
+    "sim_tests_out_dir",
+    "sim_soc_root",
+    "sim_build_test_script",
+)
+_PARAMETER_OVERRIDE_FIELDS = (
+    "cpu_filelist",
+    "soc_filelist",
+    "testbench",
+    *_LIST_PARAMETER_FIELDS,
+    *_BOOL_PARAMETER_FIELDS,
+    "sim_tests_dir",
+    "sim_programs_dir",
+    "sim_tests_out_dir",
+    "sim_soc_root",
+    "sim_build_test_script",
+)
+
+
 # ── single-step workspace paths ────────────────────────────────────────────────
 
 @dataclass(slots=True)
@@ -139,26 +174,8 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     filelist = str(parameters.get("input_filelist", "")).strip()
     if not filelist or not Path(filelist).exists():
         filelist = _pick_first(origin_dir, [".f", ".fl", ".filelist"]) or ""
-    cpu_filelist = str(parameters.get("cpu_filelist", "")).strip()
-    soc_filelist = str(parameters.get("soc_filelist", "")).strip()
-    prepared_manifest = str(parameters.get("prepared_manifest", "")).strip()
-    testbench = str(parameters.get("testbench", "")).strip()
-    sim_cpp_sources = _to_str_list(parameters.get("sim_cpp_sources", []))
-    sim_cflags = _to_str_list(parameters.get("sim_cflags", []))
-    sim_ldflags = _to_str_list(parameters.get("sim_ldflags", []))
-    sim_run_args = _to_str_list(parameters.get("sim_run_args", []))
-    sim_images = _to_str_list(parameters.get("sim_images", []))
-    sim_all_tests = _to_bool(parameters.get("sim_all_tests", False))
-    sim_tests_dir = str(parameters.get("sim_tests_dir", "")).strip()
-    sim_build_all_programs = _to_bool(parameters.get("sim_build_all_programs", False))
-    sim_program_names = _to_str_list(parameters.get("sim_program_names", []))
-    sim_program_sources = _to_str_list(parameters.get("sim_program_sources", []))
-    sim_programs_dir = str(parameters.get("sim_programs_dir", "")).strip()
-    sim_tests_out_dir = str(parameters.get("sim_tests_out_dir", "")).strip()
-    sim_soc_root = str(parameters.get("sim_soc_root", "")).strip()
-    sim_build_test_script = str(parameters.get("sim_build_test_script", "")).strip()
 
-    return {
+    workspace = {
         "directory":       str(project_dir),
         "design":          design,
         "top_module":      top_module,
@@ -168,25 +185,20 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         "origin_def":      origin_def,
         "origin_verilog":  origin_verilog,
         "input_filelist":  filelist,
-        "cpu_filelist":    cpu_filelist,
-        "soc_filelist":    soc_filelist,
-        "prepared_manifest": prepared_manifest,
-        "testbench":       testbench,
-        "sim_cpp_sources": sim_cpp_sources,
-        "sim_cflags":      sim_cflags,
-        "sim_ldflags":     sim_ldflags,
-        "sim_run_args":    sim_run_args,
-        "sim_images":      sim_images,
-        "sim_all_tests":   sim_all_tests,
-        "sim_tests_dir":   sim_tests_dir,
-        "sim_build_all_programs": sim_build_all_programs,
-        "sim_program_names": sim_program_names,
-        "sim_program_sources": sim_program_sources,
-        "sim_programs_dir": sim_programs_dir,
-        "sim_tests_out_dir": sim_tests_out_dir,
-        "sim_soc_root": sim_soc_root,
-        "sim_build_test_script": sim_build_test_script,
     }
+    workspace.update({
+        field: _to_str_list(parameters.get(field, []))
+        for field in _LIST_PARAMETER_FIELDS
+    })
+    workspace.update({
+        field: _to_bool(parameters.get(field, False))
+        for field in _BOOL_PARAMETER_FIELDS
+    })
+    workspace.update({
+        field: str(parameters.get(field, "")).strip()
+        for field in _STR_PARAMETER_FIELDS
+    })
+    return workspace
 
 
 def load_flow(flow_path: Path) -> dict[str, Any]:
@@ -219,58 +231,38 @@ def build_parameter_overrides(
 ) -> dict[str, Any]:
     """Normalize runtime option fields into parameters/home schema."""
     updates: dict[str, Any] = {}
+    values = locals()
 
-    if cpu_filelist:
-        updates["cpu_filelist"] = str(Path(cpu_filelist).expanduser().resolve())
-    if soc_filelist:
-        updates["soc_filelist"] = str(Path(soc_filelist).expanduser().resolve())
-    if testbench:
-        updates["testbench"] = str(Path(testbench).expanduser().resolve())
+    for field in (
+        "cpu_filelist",
+        "soc_filelist",
+        "testbench",
+        "sim_tests_dir",
+        "sim_programs_dir",
+        "sim_tests_out_dir",
+        "sim_soc_root",
+        "sim_build_test_script",
+    ):
+        if values[field]:
+            updates[field] = _resolve_param_path(values[field])
 
-    sim_cpp = [str(Path(p).expanduser().resolve()) for p in (sim_cpp_sources or []) if str(p).strip()]
-    if sim_cpp:
-        updates["sim_cpp_sources"] = sim_cpp
+    for field in ("sim_cpp_sources", "sim_images", "sim_program_sources"):
+        resolved = _resolve_param_paths(values[field])
+        if resolved:
+            updates[field] = resolved
 
-    cflags = [str(x).strip() for x in (sim_cflags or []) if str(x).strip()]
-    if cflags:
-        updates["sim_cflags"] = cflags
-
-    ldflags = [str(x).strip() for x in (sim_ldflags or []) if str(x).strip()]
-    if ldflags:
-        updates["sim_ldflags"] = ldflags
+    for field in ("sim_cflags", "sim_ldflags", "sim_program_names"):
+        cleaned = _clean_str_list(values[field])
+        if cleaned:
+            updates[field] = cleaned
 
     run_args = [str(x) for x in (sim_run_args or []) if str(x)]
     if run_args:
         updates["sim_run_args"] = run_args
 
-    images = [str(Path(p).expanduser().resolve()) for p in (sim_images or []) if str(p).strip()]
-    if images:
-        updates["sim_images"] = images
-
-    if sim_all_tests:
-        updates["sim_all_tests"] = True
-    if sim_tests_dir:
-        updates["sim_tests_dir"] = str(Path(sim_tests_dir).expanduser().resolve())
-
-    if sim_build_all_programs:
-        updates["sim_build_all_programs"] = True
-
-    program_names = [str(x).strip() for x in (sim_program_names or []) if str(x).strip()]
-    if program_names:
-        updates["sim_program_names"] = program_names
-
-    program_sources = [str(Path(p).expanduser().resolve()) for p in (sim_program_sources or []) if str(p).strip()]
-    if program_sources:
-        updates["sim_program_sources"] = program_sources
-
-    if sim_programs_dir:
-        updates["sim_programs_dir"] = str(Path(sim_programs_dir).expanduser().resolve())
-    if sim_tests_out_dir:
-        updates["sim_tests_out_dir"] = str(Path(sim_tests_out_dir).expanduser().resolve())
-    if sim_soc_root:
-        updates["sim_soc_root"] = str(Path(sim_soc_root).expanduser().resolve())
-    if sim_build_test_script:
-        updates["sim_build_test_script"] = str(Path(sim_build_test_script).expanduser().resolve())
+    for field in _BOOL_PARAMETER_FIELDS:
+        if values[field]:
+            updates[field] = True
 
     return updates
 
@@ -283,27 +275,10 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params.setdefault("Top module",          "top")
     params.setdefault("Clock",               "clk")
     params.setdefault("Frequency max [MHz]", 100)
-    params.update(
-        build_parameter_overrides(
-            cpu_filelist=spec.cpu_filelist,
-            soc_filelist=spec.soc_filelist,
-            testbench=spec.testbench,
-            sim_cpp_sources=spec.sim_cpp_sources,
-            sim_cflags=spec.sim_cflags,
-            sim_ldflags=spec.sim_ldflags,
-            sim_run_args=spec.sim_run_args,
-            sim_images=spec.sim_images,
-            sim_all_tests=spec.sim_all_tests,
-            sim_tests_dir=spec.sim_tests_dir,
-            sim_build_all_programs=spec.sim_build_all_programs,
-            sim_program_names=spec.sim_program_names,
-            sim_program_sources=spec.sim_program_sources,
-            sim_programs_dir=spec.sim_programs_dir,
-            sim_tests_out_dir=spec.sim_tests_out_dir,
-            sim_soc_root=spec.sim_soc_root,
-            sim_build_test_script=spec.sim_build_test_script,
-        )
-    )
+    params.update(build_parameter_overrides(**{
+        field: getattr(spec, field)
+        for field in _PARAMETER_OVERRIDE_FIELDS
+    }))
     return params
 
 
@@ -471,6 +446,18 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def _resolve_param_path(value: Any) -> str:
+    return str(Path(str(value)).expanduser().resolve())
+
+
+def _resolve_param_paths(values: list[str] | None) -> list[str]:
+    return [_resolve_param_path(p) for p in (values or []) if str(p).strip()]
+
+
+def _clean_str_list(values: list[str] | None) -> list[str]:
+    return [str(x).strip() for x in (values or []) if str(x).strip()]
 
 
 def _to_str_list(raw: Any) -> list[str]:
