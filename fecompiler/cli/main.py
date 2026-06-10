@@ -234,8 +234,14 @@ def _run_full_flow(engine: EngineFlow, rerun: bool) -> int:
 
 
 def run(argv: Sequence[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["workspace"]:
+        from fecompiler.cli.workspace import run as run_workspace
+
+        return run_workspace(raw_argv[1:])
+
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(raw_argv)
     sim_images = _resolve_sim_images(args)
     if args.sim_all_tests and not sim_images and not args.sim_build_all_programs:
         return _print_error(f"no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}")
