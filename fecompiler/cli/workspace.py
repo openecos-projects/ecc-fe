@@ -28,6 +28,7 @@ from fecompiler.utility.json import json_read, json_write
 
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
+CLI_LOG_TAIL_BYTES = 24 * 1024
 
 _PATH_FIELDS = {
     "directory",
@@ -177,6 +178,7 @@ def _create(args: argparse.Namespace) -> CliResult:
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
         raise WorkspaceCliError("create_workspace", "failed", "missing required field: directory")
+    _validate_create_request_paths(normalized)
 
     parameters = _normalize_parameters(normalized.get("parameters", {}))
     parameters.setdefault("Design Tool", "frontend")
@@ -240,6 +242,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
     json_output = bool(getattr(args, "json", False))
     reports: list[dict[str, Any]] = []
     failed_step = ""
+    failed_state = StateEnum.Incomplete
     for workspace_step in engine.workspace_steps:
         if workspace_step.name == "sim":
             _apply_default_sim_smoke_suite(workspace)
@@ -263,16 +266,23 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         )
         if state != StateEnum.Success:
             failed_step = workspace_step.name
+            failed_state = state
             break
 
     data: dict[str, Any] = {"rerun": bool(args.rerun), "reports": reports}
     if failed_step:
         data["failed_step"] = failed_step
+        failed_workspace_step = engine.get_workspace_step(failed_step)
+        if failed_workspace_step is not None:
+            data["failure"] = _failure_payload(workspace, failed_workspace_step, failed_step, failed_state)
         return CliResult(
             cmd="rtl2gds",
             response="failed",
             data=data,
-            message=[f"run frontend flow failed in step: {failed_step}"],
+            message=_failure_messages(
+                f"run frontend flow failed in step: {failed_step}",
+                data.get("failure"),
+            ),
         )
     return CliResult(
         cmd="rtl2gds",
@@ -287,6 +297,19 @@ def _run_step(args: argparse.Namespace) -> CliResult:
     step = str(args.step).strip()
     if not step:
         raise WorkspaceCliError("run_step", "failed", "missing required field: step")
+    workspace_step = engine.get_workspace_step(step)
+    if workspace_step is None:
+        valid_steps = [str(candidate.name) for candidate in engine.workspace_steps]
+        raise WorkspaceCliError(
+            "run_step",
+            "failed",
+            f"unknown frontend flow step: {step}",
+            data={
+                "directory": workspace["directory"],
+                "step": step,
+                "valid_steps": valid_steps,
+            },
+        )
 
     force_rerun = False
     if step == "sim":
@@ -311,15 +334,21 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         json_output=json_output,
     )
     state = engine.run_step(step, rerun=bool(args.rerun or force_rerun))
-    workspace_step = engine.get_workspace_step(step)
     data: dict[str, Any] = {"step": step, "state": state.value, "directory": workspace["directory"]}
     if workspace_step is not None:
         data.update(_step_report_payload(workspace, workspace_step, state))
+    if state != StateEnum.Success:
+        data["failure"] = _failure_payload(workspace, workspace_step, step, state)
     phase = "completed" if state == StateEnum.Success else "failed"
     response = "success" if state == StateEnum.Success else "failed"
     message = f"run frontend step {step} {response}: {workspace['directory']}"
     _emit_event("run_step", phase, data, [message], json_output=json_output)
-    return CliResult(cmd="run_step", response=response, data=data, message=[message])
+    return CliResult(
+        cmd="run_step",
+        response=response,
+        data=data,
+        message=[message] if state == StateEnum.Success else _failure_messages(message, data.get("failure")),
+    )
 
 
 def _get_info(args: argparse.Namespace) -> CliResult:
@@ -508,6 +537,49 @@ def _normalize_parameters(raw: Any) -> dict[str, Any]:
     return parameters
 
 
+def _validate_create_request_paths(normalized: dict[str, Any]) -> None:
+    missing: list[str] = []
+    file_fields = (
+        "cpu_filelist",
+        "soc_filelist",
+        "filelist",
+        "origin_verilog",
+        "testbench",
+        "sim_build_test_script",
+    )
+    directory_fields = (
+        "sim_soc_root",
+        "sim_programs_dir",
+        "sim_tests_dir",
+    )
+
+    for field in file_fields:
+        value = str(normalized.get(field, "")).strip()
+        if value and not Path(value).is_file():
+            missing.append(f"{field}: {value}")
+    for field in directory_fields:
+        value = str(normalized.get(field, "")).strip()
+        if value and not Path(value).is_dir():
+            missing.append(f"{field}: {value}")
+
+    list_missing: list[str] = []
+    for field in _PATH_LIST_FIELDS:
+        for value in _normalize_str_list(normalized.get(field, [])):
+            if not Path(value).exists():
+                list_missing.append(f"{field}: {value}")
+
+    if missing or list_missing:
+        details = missing + list_missing
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "frontend workspace input path not found: " + "; ".join(details[:8]),
+            data={
+                "missing_paths": details,
+            },
+        )
+
+
 def _apply_sim_test_suite(
     workspace: dict[str, Any],
     suite: Any,
@@ -675,14 +747,72 @@ def _build_step_info(
 
 
 def _step_report_payload(workspace: dict[str, Any], workspace_step: Any, state: StateEnum) -> dict[str, Any]:
+    step_log = str(workspace_step.log.get("file", ""))
+    report_path = str(workspace_step.report.get("step", ""))
+    report_dir = _optional_path(workspace_step.report.get("dir", ""))
+    report_log = str(report_dir / "log.txt") if report_dir else ""
     return {
         "step": workspace_step.name,
         "tool": workspace_step.tool,
         "state": state.value,
-        "log_file": workspace_step.log.get("file", ""),
+        "log_file": step_log,
+        "report_file": report_path,
         "subflow_path": workspace_step.subflow.get("path", ""),
         "home_page": workspace.get("home_path", ""),
+        "artifacts": _build_frontend_step_artifacts(workspace, workspace_step),
+        "logs": _build_frontend_step_logs(step_log, report_log),
     }
+
+
+def _failure_payload(
+    workspace: dict[str, Any],
+    workspace_step: Any,
+    step_name: str,
+    state: StateEnum,
+) -> dict[str, Any]:
+    report_dir = _optional_path(_step_section(workspace_step, "report").get("dir", ""))
+    candidate_logs = [
+        _step_section(workspace_step, "log").get("file", ""),
+        report_dir / "log.txt" if report_dir else "",
+        report_dir / "build_programs.log.txt" if report_dir else "",
+        report_dir / "cases.json" if report_dir else "",
+    ]
+    logs = [
+        item for item in (
+            _existing_path_item(path, label)
+            for label, path in (
+                ("Step log", candidate_logs[0]),
+                ("Tool log", candidate_logs[1]),
+                ("Build programs log", candidate_logs[2]),
+                ("Simulation cases", candidate_logs[3]),
+            )
+        )
+        if item
+    ]
+    tail_source = next((item["path"] for item in logs if not item["path"].endswith(".json")), "")
+    return {
+        "step": step_name,
+        "state": state.value,
+        "logs": logs,
+        "artifacts": _build_frontend_step_artifacts(workspace, workspace_step),
+        "log_tail": _read_text_tail(tail_source, CLI_LOG_TAIL_BYTES) if tail_source else "",
+    }
+
+
+def _failure_messages(prefix: str, failure: Any) -> list[str]:
+    messages = [prefix]
+    if not isinstance(failure, dict):
+        return messages
+    logs = failure.get("logs")
+    if isinstance(logs, list) and logs:
+        first_log = logs[0]
+        if isinstance(first_log, dict) and first_log.get("path"):
+            messages.append(f"log: {first_log['path']}")
+    tail = str(failure.get("log_tail", "")).strip()
+    if tail:
+        tail_lines = tail.splitlines()[-8:]
+        messages.extend(tail_lines)
+    return messages
 
 
 def _build_frontend_step_detail(
@@ -976,6 +1106,23 @@ def _json_read(path: Any) -> Any:
             return json.load(f)
     except Exception:
         return None
+
+
+def _read_text_tail(path: Any, max_bytes: int) -> str:
+    path_text = str(path or "").strip()
+    if not path_text:
+        return ""
+    try:
+        resolved = Path(path_text).expanduser().resolve()
+        if not resolved.is_file():
+            return ""
+        with resolved.open("rb") as f:
+            size = resolved.stat().st_size
+            f.seek(max(size - max_bytes, 0))
+            data = f.read(max_bytes)
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def _step_section(step: Any, section: str) -> dict[str, Any]:
