@@ -16,15 +16,23 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.utility.json import json_read, json_write
+
+try:
+    import click
+    import typer
+except ImportError:
+    click = None
+    typer = None
 
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
@@ -142,19 +150,205 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: Sequence[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if _typer_available():
+        return _run_typer(raw_argv)
+    return _run_argparse(raw_argv)
+
+
+def _run_argparse(argv: Sequence[str]) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(list(argv))
+    return _run_command(
+        str(args.command),
+        bool(getattr(args, "json", False)),
+        lambda: _dispatch(args),
+    )
 
+
+def _typer_available() -> bool:
+    return click is not None and typer is not None
+
+
+def _load_typer_modules() -> tuple[Any, Any]:
+    if click is None or typer is None:
+        raise ImportError("Typer is required for the structured workspace CLI")
+
+    return click, typer
+
+
+def _run_typer(argv: Sequence[str]) -> int:
+    click, typer = _load_typer_modules()
+    command = typer.main.get_command(build_typer_app(typer))
     try:
-        result = _dispatch(args)
-    except WorkspaceCliError as exc:
-        result = exc.result
-    except Exception as exc:
-        cmd = _command_to_cmd(getattr(args, "command", "workspace"))
-        result = CliResult(cmd=cmd, response="error", data={}, message=[str(exc)])
+        result = command.main(
+            args=list(argv),
+            prog_name="fecompiler workspace",
+            standalone_mode=False,
+        )
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code or 0)
+    except click.ClickException as exc:
+        exc.show()
+        return int(exc.exit_code or 1)
+    return int(result or 0)
 
-    _render_result(result, json_output=bool(getattr(args, "json", False)))
+
+def _call_command(command: str, callback: Callable[[], CliResult]) -> CliResult:
+    try:
+        return callback()
+    except WorkspaceCliError as exc:
+        return exc.result
+    except Exception as exc:
+        return CliResult(cmd=_command_to_cmd(command), response="error", data={}, message=[str(exc)])
+
+
+def _run_command(command: str, json_output: bool, callback: Callable[[], CliResult]) -> int:
+    result = _call_command(command, callback)
+    _render_result(result, json_output=json_output)
     return _exit_code(result.response)
+
+
+def build_typer_app(typer_module: Any | None = None) -> Any:
+    """Build the Typer workspace command app without making Typer a hard import."""
+    if typer_module is None:
+        _, typer_module = _load_typer_modules()
+
+    app = typer_module.Typer(
+        add_completion=False,
+        no_args_is_help=True,
+        rich_markup_mode=None,
+        help="Manage fecompiler workspaces with ECOS Studio CLI-compatible JSON responses.",
+    )
+
+    def finish(command: str, json_output: bool, callback: Callable[[], CliResult]) -> None:
+        result = _call_command(command, callback)
+        _render_result(result, json_output=json_output)
+        raise typer_module.Exit(code=_exit_code(result.response))
+
+    @app.command("create", help="Create a frontend workspace")
+    def create_cmd(
+        input_json: Annotated[
+            str | None,
+            typer.Option("--input-json", help="Workspace create request JSON path, or '-' for stdin"),
+        ] = None,
+        directory: Annotated[str | None, typer.Option("--directory", help="Workspace directory")] = None,
+        design: Annotated[str | None, typer.Option("--design", help="Design name")] = None,
+        top: Annotated[str | None, typer.Option("--top", help="Top module name")] = None,
+        clock: Annotated[str | None, typer.Option("--clock", help="Clock port name")] = None,
+        freq: Annotated[float | None, typer.Option("--freq", help="Clock frequency in MHz")] = None,
+        origin_def: Annotated[str | None, typer.Option("--origin-def")] = None,
+        origin_verilog: Annotated[str | None, typer.Option("--origin-verilog")] = None,
+        filelist: Annotated[str | None, typer.Option("--filelist")] = None,
+        cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        soc_filelist: Annotated[str | None, typer.Option("--soc-filelist")] = None,
+        testbench: Annotated[str | None, typer.Option("--testbench")] = None,
+        sim_cpp: Annotated[list[str] | None, typer.Option("--sim-cpp")] = None,
+        sim_cflag: Annotated[list[str] | None, typer.Option("--sim-cflag")] = None,
+        sim_ldflag: Annotated[list[str] | None, typer.Option("--sim-ldflag")] = None,
+        sim_arg: Annotated[list[str] | None, typer.Option("--sim-arg")] = None,
+        sim_image: Annotated[list[str] | None, typer.Option("--sim-image")] = None,
+        sim_program: Annotated[list[str] | None, typer.Option("--sim-program")] = None,
+        sim_program_source: Annotated[list[str] | None, typer.Option("--sim-program-source")] = None,
+        sim_all_tests: Annotated[bool, typer.Option("--sim-all-tests")] = False,
+        sim_build_all_programs: Annotated[bool, typer.Option("--sim-build-all-programs")] = False,
+        sim_tests_dir: Annotated[str | None, typer.Option("--sim-tests-dir")] = None,
+        sim_programs_dir: Annotated[str | None, typer.Option("--sim-programs-dir")] = None,
+        sim_tests_out_dir: Annotated[str | None, typer.Option("--sim-tests-out-dir")] = None,
+        sim_soc_root: Annotated[str | None, typer.Option("--sim-soc-root")] = None,
+        sim_build_test_script: Annotated[str | None, typer.Option("--sim-build-test-script")] = None,
+        rtl: Annotated[list[str] | None, typer.Option("--rtl", help="RTL source path; repeatable")] = None,
+        soc_variant: Annotated[str | None, typer.Option("--soc-variant")] = None,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(
+            input_json=input_json or "",
+            directory=directory or "",
+            design=design or "",
+            top=top or "",
+            clock=clock or "",
+            freq=freq,
+            origin_def=origin_def or "",
+            origin_verilog=origin_verilog or "",
+            filelist=filelist or "",
+            cpu_filelist=cpu_filelist or "",
+            soc_filelist=soc_filelist or "",
+            testbench=testbench or "",
+            sim_cpp=list(sim_cpp or []),
+            sim_cflag=list(sim_cflag or []),
+            sim_ldflag=list(sim_ldflag or []),
+            sim_arg=list(sim_arg or []),
+            sim_image=list(sim_image or []),
+            sim_program=list(sim_program or []),
+            sim_program_source=list(sim_program_source or []),
+            sim_all_tests=sim_all_tests,
+            sim_build_all_programs=sim_build_all_programs,
+            sim_tests_dir=sim_tests_dir or "",
+            sim_programs_dir=sim_programs_dir or "",
+            sim_tests_out_dir=sim_tests_out_dir or "",
+            sim_soc_root=sim_soc_root or "",
+            sim_build_test_script=sim_build_test_script or "",
+            rtl=list(rtl or []),
+            soc_variant=soc_variant or "",
+        )
+        finish("create", json_output, lambda: _create(args))
+
+    @app.command("load", help="Load an existing frontend workspace")
+    def load_cmd(
+        directory: Annotated[str, typer.Option("--directory")] = "",
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(directory=directory)
+        finish("load", json_output, lambda: _load(args))
+
+    @app.command("run-flow", help="Run the full frontend flow")
+    def run_flow_cmd(
+        directory: Annotated[str, typer.Option("--directory")] = "",
+        rerun: Annotated[bool, typer.Option("--rerun")] = False,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(directory=directory, rerun=rerun)
+        finish("run-flow", json_output, lambda: _run_flow(args))
+
+    @app.command("run-step", help="Run one frontend flow step")
+    def run_step_cmd(
+        directory: Annotated[str, typer.Option("--directory")] = "",
+        step: Annotated[str, typer.Option("--step")] = "",
+        rerun: Annotated[bool, typer.Option("--rerun")] = False,
+        sim_test_suite: Annotated[str | None, typer.Option("--sim-test-suite")] = None,
+        sim_cpu_test_mode: Annotated[str, typer.Option("--sim-cpu-test-mode")] = "all",
+        sim_cpu_test_case: Annotated[list[str] | None, typer.Option("--sim-cpu-test-case")] = None,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(
+            directory=directory,
+            step=step,
+            rerun=rerun,
+            sim_test_suite=sim_test_suite or "",
+            sim_cpu_test_mode=sim_cpu_test_mode,
+            sim_cpu_test_case=list(sim_cpu_test_case or []),
+        )
+        finish("run-step", json_output, lambda: _run_step(args))
+
+    @app.command("get-info", help="Get step information")
+    def get_info_cmd(
+        directory: Annotated[str, typer.Option("--directory")] = "",
+        step: Annotated[str, typer.Option("--step")] = "",
+        info_id: Annotated[str, typer.Option("--id")] = "",
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(directory=directory, step=step, id=info_id)
+        finish("get-info", json_output, lambda: _get_info(args))
+
+    @app.command("get-home", help="Get workspace home.json")
+    def get_home_cmd(
+        directory: Annotated[str, typer.Option("--directory")] = "",
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(directory=directory)
+        finish("get-home", json_output, lambda: _get_home(args))
+
+    return app
 
 
 def _add_json_flag(parser: argparse.ArgumentParser) -> None:

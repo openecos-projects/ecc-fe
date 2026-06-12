@@ -1,0 +1,22 @@
+[build-system]
+build-backend = "uv_build"
+requires = ["uv-build>=0.8.5"]
+
+[project]
+name = "ecc-fe"
+version = "0.1.0-alpha.0"
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.12",
+]
+
+[project.scripts]
+fecompiler = "fecompiler.cli.main:main"
+
+[tool.uv]
+build-backend.module-name = ["fecompiler"]
+build-backend.module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+norecursedirs = ["bazel-bin", "bazel-out", "bazel-ecc-fe", "bazel-testlogs", ".venv"]

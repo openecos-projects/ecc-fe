@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
+from fecompiler.cli import workspace as workspace_cli
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
@@ -350,6 +351,51 @@ def test_workspace_load_repairs_old_frontend_soc_workspace_defaults(tmp_path, mo
     assert ws["soc_filelist"] == str(soc_root / "filelist.soc.f")
     assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
     assert ws["sim_cflags"] == [f"-I{soc_root}"]
+
+
+def test_workspace_help_uses_typer_when_available(capsys):
+    if not workspace_cli._typer_available():
+        return
+
+    assert workspace_cli_run(["--help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Usage: fecompiler workspace" in output
+    assert "create" in output
+    assert "run-step" in output
+
+
+def test_workspace_create_help_lists_gui_compatible_options(capsys):
+    if not workspace_cli._typer_available():
+        return
+
+    assert workspace_cli_run(["create", "--help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Usage: fecompiler workspace create" in output
+    assert "--input-json" in output
+    assert "--cpu-filelist" in output
+    assert "--soc-variant" in output
+    assert "--sim-cpp" in output
+    assert "--sim-program-source" in output
+
+
+def test_workspace_cli_falls_back_to_argparse_when_typer_is_missing(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    import fecompiler.cli.workspace as workspace_module
+
+    monkeypatch.setattr(workspace_module, "click", None)
+    monkeypatch.setattr(workspace_module, "typer", None)
+
+    assert workspace_module.run(["load", "--directory", str(tmp_path / "missing"), "--json"]) == 1
+
+    response = json.loads(capsys.readouterr().out)
+    assert response["cmd"] == "load_workspace"
+    assert response["response"] == "failed"
+    assert response["data"]["directory"] == str(tmp_path / "missing")
 
 
 def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
