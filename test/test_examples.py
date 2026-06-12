@@ -124,17 +124,20 @@ def test_lint_report_written():
 
 # ── sim step ──────────────────────────────────────────────────────────────────
 
-def test_sim_step_state_is_success():
+def test_sim_step_state_is_incomplete_without_testbench():
     ws     = load_workspace(str(TEST_WS_DIR))
     engine = EngineFlow(workspace=ws)
     step   = engine.get_step("sim", "verilator")
     assert step is not None
-    assert step["state"] == "Success"
+    assert step["state"] == "Incomplete"
 
 
 # ── full flow ─────────────────────────────────────────────────────────────────
 
 def test_run_all_completes():
     flow = json.loads((TEST_WS_DIR / "home" / "flow.json").read_text())
-    for step in flow["steps"]:
-        assert step["state"] == "Success", f"step {step['name']} not Success"
+    states = {step["name"]: step["state"] for step in flow["steps"]}
+    assert states["prepare"] == "Success"
+    assert states["elab"] == "Success"
+    assert states["lint"] == "Success"
+    assert states["sim"] == "Incomplete"

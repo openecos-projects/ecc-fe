@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import shlex
 import subprocess
 import sys
@@ -37,6 +38,14 @@ _SYSTEM_VERILATOR_INCLUDE = Path("/usr/local/share/verilator/include")
 _WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
 _WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
+_WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.py")
+_RTTHREAD_REQUIRED_LOG_MARKERS = (
+    "Thread Operating System",
+    "Hello RISC-V!",
+    "msh />help",
+    "RT-Thread shell commands:",
+    "[soc-sim] timeout after",
+)
 
 
 def _repo_tool_path(local: Path, workspace_rel: Path, system: Path) -> Path | None:
@@ -91,11 +100,23 @@ def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
 def _sim_cflags_args(workspace: dict[str, Any]) -> list[str]:
     user_flags = [str(f).strip() for f in workspace.get("sim_cflags", []) or [] if str(f).strip()]
     user_flags = [_normalize_sim_cflag(flag) for flag in user_flags]
+    user_flags = _ensure_soc_include_flag(workspace, user_flags)
     has_std = any(flag.startswith("-std=") for flag in user_flags)
     flags = ([] if has_std else ["-std=c++20"]) + user_flags
     if not flags:
         return []
     return ["-CFLAGS", " ".join(flags)]
+
+
+def _ensure_soc_include_flag(workspace: dict[str, Any], flags: list[str]) -> list[str]:
+    soc_root = _workspace_soc_root(workspace)
+    if soc_root is None:
+        return flags
+
+    include = f"-I{soc_root}"
+    if any(flag == include or flag == f"-I{soc_root}/" for flag in flags):
+        return flags
+    return [*flags, include]
 
 
 def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
@@ -160,6 +181,10 @@ def _rtthread_requested(workspace: dict[str, Any]) -> bool:
     return False
 
 
+def _sim_suite_name(workspace: dict[str, Any]) -> str:
+    return "rtthread" if _rtthread_requested(workspace) else "cpu_tests"
+
+
 def _arg_present(args: list[str], option: str) -> bool:
     return option in args or any(arg.startswith(f"{option}=") for arg in args)
 
@@ -167,7 +192,7 @@ def _arg_present(args: list[str], option: str) -> bool:
 def _append_rtthread_difftest_args(workspace: dict[str, Any], args: list[str]) -> list[str]:
     out = list(args)
     if not _arg_present(out, "--max-cycles"):
-        out.extend(["--max-cycles", "200000000"])
+        out.extend(["--max-cycles", "10000000"])
     out.extend([
         "--diff",
         "--ref",
@@ -320,6 +345,26 @@ def _effective_sim_cases(images: list[str], run_args: list[str]) -> list[dict[st
     return [{"name": case_name, "image": image, "args": run_args}]
 
 
+def _is_rtthread_case(case_name: str, image: str) -> bool:
+    if case_name == "rtthread.soc":
+        return True
+    return Path(str(image)).stem == "rtthread.soc"
+
+
+def _case_output_ok(case_name: str, image: str, returncode: int, output: str) -> tuple[bool, dict[str, Any]]:
+    if not _is_rtthread_case(case_name, image):
+        return _sim_output_ok(returncode, output), {}
+
+    missing = [marker for marker in _RTTHREAD_REQUIRED_LOG_MARKERS if marker not in output]
+    validation = {
+        "type": "rtthread_terminal",
+        "required_markers": list(_RTTHREAD_REQUIRED_LOG_MARKERS),
+        "missing_markers": missing,
+    }
+    ok = returncode == 0 and not missing and "FAILED" not in output and "%Error" not in output
+    return ok, validation
+
+
 def _image_from_run_args(args: list[str]) -> str:
     image = _option_value(args, "--image")
     return str(_resolve_path(image)) if image else ""
@@ -440,22 +485,25 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         case_name = _safe_case_name(f"{name}.soc")
         out_dir = flat_out_dir if flat_out_dir is not None else case_output_root / case_name
         out_dir.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            str(build_script),
-            "--src", str(src),
-            "--name", name,
-            "--out_dir", str(out_dir),
-        ]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-            output = (result.stdout + result.stderr).strip()
-            rc = int(result.returncode)
-        except OSError as exc:
-            output = str(exc)
+        cmd = _build_program_command(build_script, src, name, out_dir)
+        preflight_errors = _rtthread_build_preflight_errors(workspace) if name == "rtthread" else []
+        if preflight_errors:
+            output = "\n".join(preflight_errors)
             rc = 1
-        lines.append(f"[build_program] name={name} rc={rc} src={src}")
+        else:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+                output = (result.stdout + result.stderr).strip()
+                rc = int(result.returncode)
+            except OSError as exc:
+                output = str(exc)
+                rc = 1
+        lines.append(f"[build_program] name={name} rc={rc} src={_build_program_source_label(src, name)}")
         if output:
             lines.append(output)
+        diagnosis = _build_program_failure_diagnosis(name, output)
+        if rc != 0 and diagnosis:
+            lines.append(f"[build_program] diagnosis: {diagnosis}")
         img = out_dir / f"{name}.soc.bin"
         if rc == 0 and img.exists():
             canonical = str(img.resolve())
@@ -470,6 +518,98 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         build_log_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
     return images, ok
+
+
+def _build_program_command(build_script: Path, src: Path, name: str, out_dir: Path) -> list[str]:
+    if name == "rtthread":
+        return [
+            str(build_script),
+            "--name", "rtthread",
+            "--out_dir", str(out_dir),
+        ]
+    return [
+        str(build_script),
+        "--src", str(src),
+        "--name", name,
+        "--out_dir", str(out_dir),
+    ]
+
+
+def _build_program_source_label(src: Path, name: str) -> str:
+    return "rtthread-am BSP" if name == "rtthread" else str(src)
+
+
+def _build_program_failure_diagnosis(name: str, output: str) -> str:
+    if name != "rtthread":
+        return ""
+    if "scons is required to build rt-thread-am" in output:
+        return "missing dependency: install scons or keep the RT-Thread fallback helper available"
+    if "AM_HOME must point to an AbstractMachine repo" in output:
+        return "missing dependency: set AM_HOME to an AbstractMachine repo"
+    if "No RISC-V GCC toolchain found in PATH" in output:
+        return "missing dependency: add a RISC-V GCC toolchain to PATH"
+    if "rt-thread-am BSP not found" in output:
+        return "missing dependency: initialize the rt-thread-am submodule"
+    return ""
+
+
+def _rtthread_build_preflight_errors(workspace: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+
+    soc_root = _workspace_soc_root(workspace)
+    rtthread_root = Path(os.getenv("RTTHREAD_AM_ROOT", "")).expanduser() if os.getenv("RTTHREAD_AM_ROOT") else None
+    if rtthread_root is None and soc_root is not None:
+        rtthread_root = soc_root.parent / "rt-thread-am"
+    if rtthread_root is None:
+        rtthread_root = _invocation_root() / "rt-thread-am"
+    rtthread_bsp = rtthread_root / "bsp" / "abstract-machine"
+    if not rtthread_bsp.is_dir():
+        errors.append(f"rt-thread-am BSP not found: {rtthread_bsp}")
+
+    am_home = Path(os.getenv("AM_HOME", "")).expanduser() if os.getenv("AM_HOME") else Path("/home/luyoung/ysyx-workbench/abstract-machine")
+    if not (am_home / "Makefile").is_file():
+        errors.append("AM_HOME must point to an AbstractMachine repo")
+
+    cross_compile = _riscv_cross_compile_prefix()
+    if not cross_compile:
+        errors.append("No RISC-V GCC toolchain found in PATH")
+    elif shutil.which(f"{cross_compile}gcc") is None:
+        errors.append(f"Configured cross toolchain prefix is invalid: {cross_compile}")
+
+    hexdump = os.getenv("HEXDUMP_BIN", "hexdump")
+    if shutil.which(hexdump) is None:
+        errors.append(f"hexdump tool not found: {hexdump}")
+
+    if shutil.which("scons") is None and _rtthread_prepare_helper(workspace) is None:
+        errors.append("scons is required to build rt-thread-am")
+
+    return errors
+
+
+def _rtthread_prepare_helper(workspace: dict[str, Any]) -> Path | None:
+    soc_root = _workspace_soc_root(workspace)
+    candidates: list[Path] = []
+    if soc_root is not None:
+        candidates.append(soc_root.parent / "rtthread_prepare.py")
+    candidates.extend([
+        _invocation_root() / _WORKSPACE_REL_RTTHREAD_PREPARE,
+        Path(__file__).resolve().parents[2] / "thirdparty" / "rtthread_prepare.py",
+    ])
+    return next((path.resolve() for path in candidates if path.is_file()), None)
+
+
+def _riscv_cross_compile_prefix() -> str:
+    if os.getenv("RISCV_PREFIX", "").strip():
+        return os.getenv("RISCV_PREFIX", "").strip()
+    for prefix in (
+        "riscv64-none-elf-",
+        "riscv-none-elf-",
+        "riscv64-unknown-linux-gnu-",
+        "riscv64-linux-gnu-",
+    ):
+        if shutil.which(f"{prefix}gcc") is not None:
+            return prefix
+    return ""
 
 
 def _invocation_root() -> Path:
@@ -580,6 +720,7 @@ class VerilatorSimStep(BaseStep):
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
         init_sim_subflow(step)
+        self._clear_previous_run_outputs(step)
         compiled = self._run_compile(step, workspace)
         self._run_simulate(step, workspace, compiled)
         self._write_report(step)
@@ -588,8 +729,6 @@ class VerilatorSimStep(BaseStep):
         compile_state, compile_info = self._substep_status(step, SimSubFlowEnum.compile.value)
         if compile_state == "Incomplete":
             return False
-        if compile_info.get("skipped") == "no testbench":
-            return True
 
         cases_json = Path(step.report["dir"]) / "cases.json"
         if cases_json.exists():
@@ -622,11 +761,17 @@ class VerilatorSimStep(BaseStep):
 
         cpp_sources = _sim_cpp_sources(workspace)
         if not cpp_sources:
+            message = (
+                "simulation testbench is not configured; provide workspace.testbench "
+                "or create a frontend SoC workspace so defaults can be inferred"
+            )
+            (Path(step.log["dir"]) / "log.txt").write_text(message + "\n", encoding="utf-8")
+            (Path(step.report["dir"]) / "log.txt").write_text(message + "\n", encoding="utf-8")
             update_substep_ok(
                 step,
                 SimSubFlowEnum.compile.value,
-                True,
-                info={"skipped": "no testbench"},
+                False,
+                info={"error": "missing sim testbench"},
             )
             return False
         missing = [src for src in cpp_sources if not Path(src).exists()]
@@ -673,6 +818,22 @@ class VerilatorSimStep(BaseStep):
         return bool(log_path) and Path(log_path).exists()
 
     @staticmethod
+    def _clear_previous_run_outputs(step: WorkspaceStep) -> None:
+        report_dir = Path(step.report["dir"])
+        for path in (
+            Path(step.log["dir"]) / "log.txt",
+            report_dir / "log.txt",
+            report_dir / "cases.json",
+            report_dir / "build_programs.log.txt",
+            Path(step.report["step"]),
+        ):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
     def _load_case_reports(step: WorkspaceStep) -> list[Any]:
         cases_json = Path(step.report["dir"]) / "cases.json"
         if not cases_json.exists():
@@ -690,12 +851,21 @@ class VerilatorSimStep(BaseStep):
         case_root = Path(step.report["dir"]) / "cases"
         runs_root = Path(step.report["dir"]) / "runs"
         output_cases_root = Path(step.output["dir"]) / "cases"
+        suite = _sim_suite_name(workspace)
 
         if not compiled or not sim_bin.exists():
+            previous_log = sim_log.read_text(encoding="utf-8") if sim_log.exists() else ""
+            sim_log.write_text(
+                previous_log
+                + ("\n" if previous_log and not previous_log.endswith("\n") else "")
+                + "simulation binary was not compiled; see compile sub-step\n",
+                encoding="utf-8",
+            )
+            json_write(str(cases_json), {"suite": suite, "run_id": "", "cases": []})
             update_substep_ok(
                 step,
                 SimSubFlowEnum.simulate.value,
-                True,
+                False,
                 info={"skipped": "not compiled"},
             )
             return
@@ -710,6 +880,7 @@ class VerilatorSimStep(BaseStep):
                 "build test programs failed; see build_programs.log.txt\n",
                 encoding="utf-8",
             )
+            json_write(str(cases_json), {"suite": suite, "run_id": "", "cases": []})
             update_substep_ok(
                 step,
                 SimSubFlowEnum.simulate.value,
@@ -752,25 +923,27 @@ class VerilatorSimStep(BaseStep):
 
             for log_path in (logs["latest_log"], logs["run_log"], logs["output_log"]):
                 log_path.write_text(output, encoding="utf-8")
-            case_ok = _sim_output_ok(rc, output)
+            case_ok, validation = _case_output_ok(case_name, image, rc, output)
             if not case_ok:
                 all_ok = False
                 failed_cases.append(case_name)
 
-            cases_report.append(
-                {
-                    "name": case_name,
-                    "image": image,
-                    "returncode": rc,
-                    "ok": case_ok,
-                    "log": str(logs["output_log"]),
-                    "latest_log": str(logs["output_log"]),
-                    "report_log": str(logs["latest_log"]),
-                    "run_log": str(logs["run_log"]),
-                    "wave": wave,
-                    "run_id": run_id,
-                }
-            )
+            case_report = {
+                "name": case_name,
+                "suite": suite,
+                "image": image,
+                "returncode": rc,
+                "ok": case_ok,
+                "log": str(logs["output_log"]),
+                "latest_log": str(logs["output_log"]),
+                "report_log": str(logs["latest_log"]),
+                "run_log": str(logs["run_log"]),
+                "wave": wave,
+                "run_id": run_id,
+            }
+            if validation:
+                case_report["validation"] = validation
+            cases_report.append(case_report)
             summary_lines.append(
                 f"[{case_name}] rc={rc} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
             )
@@ -778,8 +951,8 @@ class VerilatorSimStep(BaseStep):
         summary_text = "\n".join(summary_lines) + "\n"
         sim_log.write_text(summary_text, encoding="utf-8")
         (run_root / "log.txt").write_text(summary_text, encoding="utf-8")
-        json_write(str(cases_json), {"run_id": run_id, "cases": cases_report})
-        json_write(str(run_root / "cases.json"), {"run_id": run_id, "cases": cases_report})
+        json_write(str(cases_json), {"suite": suite, "run_id": run_id, "cases": cases_report})
+        json_write(str(run_root / "cases.json"), {"suite": suite, "run_id": run_id, "cases": cases_report})
         update_substep_ok(
             step,
             SimSubFlowEnum.simulate.value,
@@ -789,6 +962,7 @@ class VerilatorSimStep(BaseStep):
                 "failed_cases": failed_cases,
                 "run_id": run_id,
                 "run_dir": str(run_root),
+                "suite": suite,
             },
         )
 
@@ -796,12 +970,13 @@ class VerilatorSimStep(BaseStep):
         sim_log   = Path(step.report["dir"]) / "log.txt"
         cases_json = Path(step.report["dir"]) / "cases.json"
         compile_state, compile_info = self._substep_status(step, SimSubFlowEnum.compile.value)
-        if compile_info.get("skipped") == "no testbench":
-            sim_ok = True
-            failed_cases: list[str] = []
+        cases_payload = json_read(str(cases_json)) if cases_json.exists() else {}
+        if compile_state != "Success":
+            sim_ok = False
+            failed_cases = []
             total_cases = 0
-        elif cases_json.exists():
-            cases = self._load_case_reports(step)
+        elif isinstance(cases_payload, dict) and cases_payload.get("cases") is not None:
+            cases = cases_payload.get("cases", [])
             failed_cases = [
                 str(c.get("name", ""))
                 for c in cases
@@ -830,6 +1005,10 @@ class VerilatorSimStep(BaseStep):
             "compile":  compile_status,
             "simulate": "pass" if sim_ok else "fail",
         }
+        if isinstance(cases_payload, dict) and cases_payload.get("suite"):
+            payload["suite"] = str(cases_payload.get("suite"))
+        if isinstance(cases_payload, dict) and cases_payload.get("run_id"):
+            payload["run_id"] = str(cases_payload.get("run_id"))
         if total_cases > 0:
             payload["cases"] = total_cases
             payload["failed_cases"] = failed_cases

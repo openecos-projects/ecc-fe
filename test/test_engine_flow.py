@@ -10,9 +10,17 @@ from types import SimpleNamespace
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow, _format_runtime
+from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.tools.slang.runner import SlangElabStep
-from fecompiler.tools.verilator.runner import _prepare_sim_images, _sim_cases_from_images, _sim_run_args
+from fecompiler.tools.verilator.runner import (
+    _prepare_sim_images,
+    _rtthread_build_preflight_errors,
+    _rtthread_prepare_helper,
+    _sim_cases_from_images,
+    _sim_cflags_args,
+    _sim_run_args,
+)
 
 FIRST_STEP, FIRST_TOOL = DEFAULT_FLOW_STEPS[0]
 
@@ -37,6 +45,24 @@ def _build_engine(tmp_path: Path) -> tuple[EngineFlow, dict]:
         engine.load()
     engine.create_step_workspaces()
     return engine, ws
+
+
+def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:
+    soc_root = fe_root / "fecompiler" / "thirdparty" / directory_name
+    driver_dir = soc_root / "driver"
+    scripts_dir = soc_root / "scripts"
+    programs_dir = soc_root / "tests" / "programs"
+    out_dir = soc_root / "tests" / "out"
+    driver_dir.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
+    programs_dir.mkdir(parents=True)
+    out_dir.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("ysyxSoCFull.v\n", encoding="utf-8")
+    (driver_dir / "main.cpp").write_text("int main(){return 0;}\n", encoding="utf-8")
+    (driver_dir / "dpi_mem.cpp").write_text("int dpi_mem(){return 0;}\n", encoding="utf-8")
+    (driver_dir / "difftest.cpp").write_text("int difftest(){return 0;}\n", encoding="utf-8")
+    (scripts_dir / "build_test.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    return soc_root.resolve()
 
 
 # ── _format_runtime ────────────────────────────────────────────────────────────
@@ -190,22 +216,213 @@ def test_run_step_updates_state(tmp_path):
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Success"
 
 
+def test_run_step_interruption_clears_ongoing_state(tmp_path, monkeypatch):
+    engine, _ = _build_engine(tmp_path)
+
+    def raise_interrupt(_step):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(engine, "_run_single_step", raise_interrupt)
+
+    try:
+        engine.run_step(FIRST_STEP)
+    except KeyboardInterrupt:
+        pass
+
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+
+
+def test_clear_stale_ongoing_states_marks_incomplete(tmp_path):
+    engine, _ = _build_engine(tmp_path)
+    engine.set_state(name=FIRST_STEP, tool=FIRST_TOOL, state=StateEnum.Ongoing)
+
+    assert engine.clear_stale_ongoing_states() is True
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+    assert engine.clear_stale_ongoing_states() is False
+
+
+def test_cpu_tests_selected_empty_cases_falls_back_to_smoke_defaults(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    (programs_dir / "add.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (programs_dir / "load-store.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    workspace = {"sim_programs_dir": str(programs_dir)}
+
+    _apply_sim_test_suite(workspace, "cpu_tests", "selected", [])
+
+    assert workspace["sim_build_all_programs"] is False
+    assert workspace["sim_program_names"] == ["add", "load-store"]
+
+
+def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
+    soc_root = tmp_path / "SoC"
+    soc_root.mkdir()
+    workspace = {
+        "sim_cflags": [],
+        "sim_soc_root": str(soc_root),
+    }
+
+    args = _sim_cflags_args(workspace)
+
+    assert args == ["-CFLAGS", f"-std=c++20 -I{soc_root}"]
+
+
+def test_sim_without_testbench_fails_instead_of_fake_success(tmp_path):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_no_tb"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_no_tb"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    assert state == StateEnum.Incomplete
+    log_path = Path(ws["directory"]) / "sim_verilator" / "report" / "log.txt"
+    assert "simulation testbench is not configured" in log_path.read_text(encoding="utf-8")
+
+
+def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe"
+    soc_root = _make_fake_soc_root(fe_root, "SoC2")
+    cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
+    cpu_filelist.parent.mkdir()
+    cpu_filelist.write_text("", encoding="utf-8")
+    request = tmp_path / "create.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_soc_defaults"),
+                "cpu_filelist": str(cpu_filelist),
+                "soc_variant": "soc2",
+                "sim_cflags": [],
+                "sim_cpp_sources": [],
+                "sim_ldflags": [],
+                "parameters": {"Design": "chip", "Top module": "ysyxSoCTop"},
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_soc_defaults"))
+
+    assert ws["soc_variant"] == "soc2"
+    assert ws["sim_soc_root"] == str(soc_root)
+    assert ws["soc_filelist"] == str(soc_root / "filelist.soc.f")
+    assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
+    assert ws["sim_cpp_sources"] == [
+        str(soc_root / "driver" / "dpi_mem.cpp"),
+        str(soc_root / "driver" / "difftest.cpp"),
+    ]
+    assert ws["sim_cflags"] == [f"-I{soc_root}"]
+    assert ws["sim_ldflags"] == ["-ldl"]
+    assert ws["sim_programs_dir"] == str(soc_root / "tests" / "programs")
+    assert ws["sim_build_test_script"] == str(soc_root / "scripts" / "build_test.sh")
+
+
+def test_workspace_load_repairs_old_frontend_soc_workspace_defaults(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe"
+    soc_root = _make_fake_soc_root(fe_root, "SoC3")
+    cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
+    cpu_filelist.parent.mkdir()
+    cpu_filelist.write_text("", encoding="utf-8")
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_old_soc"),
+        parameters={"Design": "chip", "Top module": "ysyxSoCTop", "soc_variant": "soc3"},
+        cpu_filelist=str(cpu_filelist),
+    )
+    create_workspace(spec)
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+
+    assert workspace_cli_run(["load", "--directory", str(tmp_path / "ws_old_soc"), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_old_soc"))
+
+    assert ws["sim_soc_root"] == str(soc_root)
+    assert ws["soc_filelist"] == str(soc_root / "filelist.soc.f")
+    assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
+    assert ws["sim_cflags"] == [f"-I{soc_root}"]
+
+
+def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    for name in ("add", "load-store", "fib"):
+        (programs_dir / f"{name}.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    soc_root = tmp_path / "SoC"
+    soc_root.mkdir()
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    workspace = {
+        "sim_programs_dir": str(programs_dir),
+        "sim_soc_root": str(soc_root),
+        "soc_filelist": str(soc_root / "filelist.soc.f"),
+    }
+
+    _apply_sim_test_suite(workspace, "rtthread")
+    assert workspace["sim_program_names"] == ["rtthread"]
+    assert workspace["sim_build_all_programs"] is False
+
+    _apply_sim_test_suite(workspace, "cpu_tests", "selected", ["fib"])
+    assert workspace["sim_program_names"] == ["fib"]
+    assert workspace["sim_build_all_programs"] is False
+    assert "--diff" in workspace["sim_run_args"]
+    assert "--timeout-ok" not in workspace["sim_run_args"]
+
+    _apply_sim_test_suite(workspace, "rtthread")
+    assert workspace["sim_program_names"] == ["rtthread"]
+    assert workspace["sim_run_args"] == [
+        "--max-cycles",
+        "10000000",
+        "--diff",
+        "--ref",
+        str(soc_root / "tools" / "riscv32-spike-so"),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+        "--timeout-ok",
+    ]
+
+
+def test_default_sim_smoke_suite_uses_two_cases_not_all(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    for name in ("add", "load-store", "fib"):
+        (programs_dir / f"{name}.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    workspace = {"sim_programs_dir": str(programs_dir)}
+
+    _apply_default_sim_smoke_suite(workspace)
+
+    assert workspace["sim_build_all_programs"] is False
+    assert workspace["sim_program_names"] == ["add", "load-store"]
+
+
 # ── run_all ────────────────────────────────────────────────────────────────────
 
-def test_run_all_succeeds(tmp_path):
+def test_run_all_stops_at_sim_without_testbench(tmp_path):
     engine, _ = _build_engine(tmp_path)
     ok, reports = engine.run_all()
-    assert ok is True
+    assert ok is False
     assert len(reports) == len(DEFAULT_FLOW_STEPS)
-    for r in reports:
-        assert r["state"] == "Success"
+    assert [report["state"] for report in reports[:-1]] == ["Success", "Success", "Success"]
+    assert reports[-1]["step"] == "sim"
+    assert reports[-1]["state"] == "Incomplete"
 
 
-def test_run_all_with_rerun(tmp_path):
+def test_run_all_with_rerun_stops_at_sim_without_testbench(tmp_path):
     engine, _ = _build_engine(tmp_path)
     engine.run_all()
     ok, _ = engine.run_all(rerun=True)
-    assert ok is True
+    assert ok is False
+    assert engine.get_step("sim", "verilator")["state"] == "Incomplete"
 
 
 # ── load ───────────────────────────────────────────────────────────────────────
@@ -576,6 +793,155 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     assert Path(simulate_cmd[simulate_cmd.index("--wave") + 1]) == expected_wave
 
 
+def test_rtthread_run_does_not_reuse_previous_cpu_tests_cases(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    tb = tmp_path / "tb_main.cpp"
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    (programs_dir / "add.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_rtthread_no_reuse"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+        testbench=str(tb),
+        sim_programs_dir=str(programs_dir),
+        sim_build_test_script=str(build_script),
+        sim_program_names=["add"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_rtthread_no_reuse"))
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "--name" in cmd:
+            name = cmd[cmd.index("--name") + 1]
+            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
+            return SimpleNamespace(returncode=0, stdout="booted but no shell transcript\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="cpu ok\n", stderr="")
+
+    def _fake_sim_process(cmd, *, stream_output):
+        if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
+            return 0, "booted but no shell transcript\n"
+        return 0, "cpu ok\n"
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._run_sim_process", _fake_sim_process)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+
+    ws["sim_program_names"] = ["add"]
+    state = engine.run_step("sim", rerun=True)
+    assert state == StateEnum.Success
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    cpu_payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert cpu_payload["suite"] == "cpu_tests"
+    assert cpu_payload["cases"][0]["name"] == "add.soc"
+
+    ws["sim_program_names"] = ["rtthread"]
+    ws["sim_run_args"] = ["--max-cycles", "10000000", "--wave", "/dev/null"]
+    state = engine.run_step("sim", rerun=True)
+
+    rtthread_payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    rtthread_case = rtthread_payload["cases"][0]
+    assert state == StateEnum.Incomplete
+    assert rtthread_payload["suite"] == "rtthread"
+    assert rtthread_case["name"] == "rtthread.soc"
+    assert rtthread_case["ok"] is False
+    assert "Thread Operating System" in rtthread_case["validation"]["missing_markers"]
+    assert cpu_payload["run_id"] != rtthread_payload["run_id"]
+
+
+def test_rtthread_terminal_markers_are_required_for_success(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    tb = tmp_path / "tb_main.cpp"
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_rtthread_markers"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+        testbench=str(tb),
+        sim_programs_dir=str(programs_dir),
+        sim_build_test_script=str(build_script),
+        sim_program_names=["rtthread"],
+        sim_run_args=["--max-cycles", "10000000", "--wave", "/dev/null"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_rtthread_markers"))
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        if "--binary" in cmd:
+            sim_bin = Path(cmd[cmd.index("-o") + 1])
+            sim_bin.parent.mkdir(parents=True, exist_ok=True)
+            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sim_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "--name" in cmd:
+            name = cmd[cmd.index("--name") + 1]
+            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def _fake_sim_process(cmd, *, stream_output):
+        output = "\n".join([
+            "[soc-sim][difftest] enabled",
+            "Thread Operating System",
+            "Hello RISC-V!",
+            "msh />help",
+            "RT-Thread shell commands:",
+            "[soc-sim] timeout after 10000000 cycles",
+            "",
+        ])
+        return 0, output
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._run_sim_process", _fake_sim_process)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    assert state == StateEnum.Success
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    case = payload["cases"][0]
+    assert payload["suite"] == "rtthread"
+    assert case["ok"] is True
+    assert case["validation"]["missing_markers"] == []
+
+
 def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
     rtl = tmp_path / "chip_top.v"
     rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
@@ -608,6 +974,7 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
     state = engine.run_step("sim", rerun=True)
 
     assert state == StateEnum.Success
@@ -628,7 +995,7 @@ def test_rtthread_program_enables_default_difftest_args(tmp_path):
     })
 
     assert "--max-cycles" in args
-    assert args[args.index("--max-cycles") + 1] == "200000000"
+    assert args[args.index("--max-cycles") + 1] == "10000000"
     assert "--diff" in args
     assert args[args.index("--ref") + 1] == str(ref_so)
     assert args[args.index("--diff-image-offset") + 1] == "0x100"
@@ -680,6 +1047,7 @@ def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
 
     case_root = tmp_path / "ws" / "sim_verilator" / "output" / "cases"
     images, ok = _prepare_sim_images(
@@ -695,6 +1063,8 @@ def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch)
 
     assert ok is True
     assert [Path(call[call.index("--name") + 1]).name for call in run_calls] == ["add", "bit", "rtthread"]
+    rtthread_call = next(call for call in run_calls if call[call.index("--name") + 1] == "rtthread")
+    assert "--src" not in rtthread_call
     expected = {
         case_root / "add.soc" / "add.soc.bin",
         case_root / "bit.soc" / "bit.soc.bin",
@@ -707,6 +1077,123 @@ def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch)
     add_case = next(case for case in cases if case["name"] == "add.soc")
     assert "--timeout-ok" in rtthread_case["args"]
     assert "--timeout-ok" not in add_case["args"]
+
+
+def test_rtthread_build_failure_reports_dependency_diagnosis(tmp_path, monkeypatch):
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    build_script.chmod(0o755)
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        run_calls.append(list(cmd))
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="scons is required to build rt-thread-am\n",
+        )
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
+
+    build_log = tmp_path / "build_programs.log.txt"
+    images, ok = _prepare_sim_images(
+        {
+            "soc_filelist": str(soc_root / "filelist.soc.f"),
+            "sim_program_names": ["rtthread"],
+            "sim_programs_dir": str(programs_dir),
+            "sim_run_args": ["--diff"],
+        },
+        build_log_path=build_log,
+        case_output_root=tmp_path / "cases",
+    )
+
+    assert images == []
+    assert ok is False
+    assert run_calls and "--src" not in run_calls[0]
+    content = build_log.read_text(encoding="utf-8")
+    assert "src=rtthread-am BSP" in content
+    assert "scons is required to build rt-thread-am" in content
+    assert "diagnosis: missing dependency: install scons or keep the RT-Thread fallback helper available" in content
+
+
+def test_rtthread_build_preflight_reports_missing_scons_without_spawn(tmp_path, monkeypatch):
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    rtthread_bsp = soc_root.parent / "rt-thread-am" / "bsp" / "abstract-machine"
+    am_home = tmp_path / "abstract-machine"
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    rtthread_bsp.mkdir(parents=True)
+    am_home.mkdir()
+    (am_home / "Makefile").write_text("", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    build_script.chmod(0o755)
+
+    def _fake_which(command):
+        if command == "scons":
+            return None
+        return f"/usr/bin/{command}"
+
+    def _fake_run(*args, **kwargs):
+        raise AssertionError("rtthread preflight should fail before subprocess.run")
+
+    monkeypatch.setenv("AM_HOME", str(am_home))
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_prepare_helper", lambda workspace: None)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    build_log = tmp_path / "build_programs.log.txt"
+    images, ok = _prepare_sim_images(
+        {
+            "soc_filelist": str(soc_root / "filelist.soc.f"),
+            "sim_program_names": ["rtthread"],
+            "sim_programs_dir": str(programs_dir),
+            "sim_run_args": ["--diff"],
+        },
+        build_log_path=build_log,
+        case_output_root=tmp_path / "cases",
+    )
+
+    assert images == []
+    assert ok is False
+    content = build_log.read_text(encoding="utf-8")
+    assert "scons is required to build rt-thread-am" in content
+    assert "diagnosis: missing dependency: install scons or keep the RT-Thread fallback helper available" in content
+
+
+def test_rtthread_build_preflight_allows_fallback_helper_without_scons(tmp_path, monkeypatch):
+    soc_root = tmp_path / "thirdparty" / "SoC"
+    helper = soc_root.parent / "rtthread_prepare.py"
+    rtthread_bsp = soc_root.parent / "rt-thread-am" / "bsp" / "abstract-machine"
+    am_home = tmp_path / "abstract-machine"
+    soc_root.mkdir(parents=True)
+    rtthread_bsp.mkdir(parents=True)
+    am_home.mkdir()
+    helper.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (am_home / "Makefile").write_text("", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+
+    def _fake_which(command):
+        if command == "scons":
+            return None
+        return f"/usr/bin/{command}"
+
+    monkeypatch.setenv("AM_HOME", str(am_home))
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
+
+    workspace = {"soc_filelist": str(soc_root / "filelist.soc.f")}
+
+    assert _rtthread_prepare_helper(workspace) == helper.resolve()
+    assert _rtthread_build_preflight_errors(workspace) == []
 
 
 def test_elab_check_result_rejects_20_errors_log(tmp_path):

@@ -118,6 +118,7 @@ if [[ "${IS_RTTHREAD}" == "1" ]]; then
   RTTHREAD_AM_ROOT="${RTTHREAD_AM_ROOT:-${ROOT}/../rt-thread-am}"
   RTTHREAD_BSP="${RTTHREAD_AM_ROOT}/bsp/abstract-machine"
   RTTHREAD_ARCH="${RTTHREAD_ARCH:-riscv32-nemu}"
+  RTTHREAD_PREPARE="${ROOT}/../rtthread_prepare.py"
   if [[ ! -d "${RTTHREAD_BSP}" ]]; then
     echo "rt-thread-am BSP not found: ${RTTHREAD_BSP}" >&2
     exit 1
@@ -130,19 +131,29 @@ if [[ "${IS_RTTHREAD}" == "1" ]]; then
       exit 1
     fi
   fi
-  if ! command -v scons >/dev/null 2>&1; then
-    echo "scons is required to build rt-thread-am" >&2
+  if command -v scons >/dev/null 2>&1; then
+    make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
+  elif [[ -x "${RTTHREAD_PREPARE}" || -f "${RTTHREAD_PREPARE}" ]]; then
+    echo "[build_test] scons not found; generating rt-thread-am fallback files"
+    python3 "${RTTHREAD_PREPARE}" --bsp "${RTTHREAD_BSP}" --arch "${RTTHREAD_ARCH}"
+  else
+    echo "scons is required to build rt-thread-am; fallback helper not found: ${RTTHREAD_PREPARE}" >&2
     exit 1
   fi
   export RTT_CC_PREFIX="${CROSS_COMPILE}"
-  make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
+  RTTHREAD_AM_APPS_MK="${TMPDIR}/rtthread-empty-am-apps.mk"
+  if [[ -f "${RTTHREAD_PREPARE}" ]]; then
+    python3 "${RTTHREAD_PREPARE}" --bsp "${RTTHREAD_BSP}" --arch "${RTTHREAD_ARCH}" --am-apps-only --am-apps-mk "${RTTHREAD_AM_APPS_MK}"
+  else
+    printf '# ECOS frontend RT-Thread smoke test uses no bundled AM apps.\n' > "${RTTHREAD_AM_APPS_MK}"
+  fi
 
   RTTHREAD_WRAPPER_MK="$(cd "${TMPDIR}" && pwd)/rtthread-am.mk"
   {
     echo "include Makefile"
     echo "CFLAGS += -Wno-error -DECC_FE_SOC"
   } > "${RTTHREAD_WRAPPER_MK}"
-  make -C "${RTTHREAD_BSP}" -f "${RTTHREAD_WRAPPER_MK}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" image
+  make -C "${RTTHREAD_BSP}" -f "${RTTHREAD_WRAPPER_MK}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" AM_APPS_MK="${RTTHREAD_AM_APPS_MK}" image
 
   RTTHREAD_IMAGE="${RTTHREAD_BSP}/build/rtthread-${RTTHREAD_ARCH}"
   cp -f "${RTTHREAD_IMAGE}.elf" "${PREFIX}.elf"

@@ -33,6 +33,7 @@ _STR_PARAMETER_FIELDS = (
     "sim_tests_out_dir",
     "sim_soc_root",
     "sim_build_test_script",
+    "soc_variant",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",

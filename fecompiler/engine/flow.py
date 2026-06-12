@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,19 @@ class EngineFlow:
             step["runtime"] = ""
             step["peak memory (mb)"] = 0
         self.save()
+
+    def clear_stale_ongoing_states(self) -> bool:
+        changed = False
+        for step in self.flow.get("steps", []):
+            if step.get("state") != StateEnum.Ongoing.value:
+                continue
+            step["state"] = StateEnum.Incomplete.value
+            step["runtime"] = step.get("runtime") or ""
+            step["peak memory (mb)"] = step.get("peak memory (mb)", 0)
+            changed = True
+        if changed:
+            self.save()
+        return changed
 
     def get_step(self, name: str, tool: str) -> dict[str, Any] | None:
         for step in self.flow.get("steps", []):
@@ -187,6 +201,7 @@ class EngineFlow:
         start = time.time()
         self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
         self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
+        restore_signal_handlers = _install_interruption_handlers()
         try:
             self._run_single_step(ws_step)
             success = self._check_step_result(ws_step)
@@ -204,6 +219,16 @@ class EngineFlow:
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
             self._flow_logger.error("[ERROR]   %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
+        except BaseException as exc:
+            runtime = _format_runtime(time.time() - start)
+            self._finish_step(ws_step, StateEnum.Incomplete, runtime)
+            if _is_interruption(exc):
+                self._flow_logger.warning("[CANCEL]  %-20s  elapsed=%s", step_name, runtime)
+            else:
+                self._flow_logger.error("[ABORT]   %-20s  elapsed=%s", step_name, runtime)
+            raise
+        finally:
+            restore_signal_handlers()
 
     def _finish_step(self, step: WorkspaceStep, state: StateEnum, runtime: str) -> None:
         self.set_state(
@@ -272,3 +297,35 @@ def _build_flow_logger(workspace_dir: str) -> logging.Logger:
         log.addHandler(handler)
 
     return log
+
+
+def _is_interruption(exc: BaseException) -> bool:
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return True
+    return isinstance(exc, OSError) and getattr(exc, "errno", None) in {
+        getattr(signal, "SIGINT", 2),
+        getattr(signal, "SIGTERM", 15),
+    }
+
+
+def _install_interruption_handlers():
+    previous: dict[int, Any] = {}
+
+    def handle_interruption(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, handle_interruption)
+        except (ValueError, OSError):
+            continue
+
+    def restore() -> None:
+        for signum, handler in previous.items():
+            try:
+                signal.signal(signum, handler)
+            except (ValueError, OSError):
+                continue
+
+    return restore

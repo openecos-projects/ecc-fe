@@ -29,6 +29,12 @@ from fecompiler.utility.json import json_read, json_write
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
 CLI_LOG_TAIL_BYTES = 24 * 1024
+DEFAULT_SOC_VARIANT = "soc1"
+SOC_VARIANT_DIRECTORIES = {
+    "soc1": "SoC",
+    "soc2": "SoC2",
+    "soc3": "SoC3",
+}
 
 _PATH_FIELDS = {
     "directory",
@@ -175,6 +181,7 @@ def _dispatch(args: argparse.Namespace) -> CliResult:
 def _create(args: argparse.Namespace) -> CliResult:
     request, base_dir = _create_request_from_args(args)
     normalized = _normalize_create_request(request, base_dir)
+    _apply_default_soc_runtime_options(normalized)
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
         raise WorkspaceCliError("create_workspace", "failed", "missing required field: directory")
@@ -225,17 +232,37 @@ def _create(args: argparse.Namespace) -> CliResult:
 
 
 def _load(args: argparse.Namespace) -> CliResult:
-    workspace, _ = _load_runtime(args.directory, cmd="load_workspace")
+    workspace, engine = _load_runtime(args.directory, cmd="load_workspace")
+    repaired = _repair_workspace_sim_defaults(workspace)
+    recovered = engine.clear_stale_ongoing_states()
     return CliResult(
         cmd="load_workspace",
         response="success",
-        data={"directory": workspace["directory"], "workspace_id": workspace["directory"]},
-        message=[f"load frontend workspace success: {workspace['directory']}"],
+        data={
+            "directory": workspace["directory"],
+            "workspace_id": workspace["directory"],
+            "recovered_stale_ongoing": recovered,
+            "repaired_sim_defaults": repaired,
+        },
+        message=[
+            f"load frontend workspace success: {workspace['directory']}",
+            *(
+                ["recovered stale frontend running state from a previous interrupted run"]
+                if recovered
+                else []
+            ),
+            *(
+                ["repaired frontend SoC simulation defaults"]
+                if repaired
+                else []
+            ),
+        ],
     )
 
 
 def _run_flow(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="rtl2gds")
+    _repair_workspace_sim_defaults(workspace)
     if args.rerun:
         engine.clear_states()
 
@@ -294,6 +321,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
 
 def _run_step(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="run_step")
+    _repair_workspace_sim_defaults(workspace)
     step = str(args.step).strip()
     if not step:
         raise WorkspaceCliError("run_step", "failed", "missing required field: step")
@@ -353,6 +381,7 @@ def _run_step(args: argparse.Namespace) -> CliResult:
 
 def _get_info(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="get_info")
+    _repair_workspace_sim_defaults(workspace)
     step_name = str(args.step).strip()
     info_id = str(args.id).strip()
     response_data = {"step": step_name, "id": info_id, "info": {}}
@@ -580,6 +609,147 @@ def _validate_create_request_paths(normalized: dict[str, Any]) -> None:
         )
 
 
+def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
+    defaults = _default_soc_runtime_options(data)
+    if not defaults:
+        return False
+
+    changed = False
+    for field in (
+        "soc_variant",
+        "sim_soc_root",
+        "soc_filelist",
+        "testbench",
+        "sim_build_test_script",
+        "sim_programs_dir",
+        "sim_tests_dir",
+    ):
+        if str(data.get(field, "")).strip():
+            continue
+        value = defaults.get(field, "")
+        if value:
+            data[field] = value
+            changed = True
+
+    for field in ("sim_cpp_sources", "sim_cflags", "sim_ldflags"):
+        if _normalize_str_list(data.get(field, [])):
+            continue
+        values = _normalize_str_list(defaults.get(field, []))
+        if values:
+            data[field] = values
+            changed = True
+
+    return changed
+
+
+def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
+    defaults = _default_soc_runtime_options(workspace)
+    if not defaults:
+        return False
+
+    updates: dict[str, Any] = {}
+    for field in (
+        "soc_variant",
+        "sim_soc_root",
+        "soc_filelist",
+        "testbench",
+        "sim_build_test_script",
+        "sim_programs_dir",
+        "sim_tests_dir",
+    ):
+        if str(workspace.get(field, "")).strip():
+            continue
+        value = defaults.get(field, "")
+        if value:
+            updates[field] = value
+
+    for field in ("sim_cpp_sources", "sim_cflags", "sim_ldflags"):
+        if _normalize_str_list(workspace.get(field, [])):
+            continue
+        values = _normalize_str_list(defaults.get(field, []))
+        if values:
+            updates[field] = values
+
+    if not updates:
+        return False
+    _update_workspace_parameters(workspace, updates)
+    return True
+
+
+def _default_soc_runtime_options(data: dict[str, Any]) -> dict[str, Any]:
+    if not _should_apply_soc_runtime_options(data):
+        return {}
+
+    soc_root = _infer_soc_root(data)
+    if soc_root is None:
+        return {}
+
+    variant = _infer_soc_variant(data, soc_root)
+    return {
+        "soc_variant": variant,
+        "sim_soc_root": str(soc_root),
+        "soc_filelist": str(soc_root / "filelist.soc.f"),
+        "testbench": str(soc_root / "driver" / "main.cpp"),
+        "sim_cpp_sources": [
+            str(soc_root / "driver" / "dpi_mem.cpp"),
+            str(soc_root / "driver" / "difftest.cpp"),
+        ],
+        "sim_cflags": [f"-I{soc_root}"],
+        "sim_ldflags": ["-ldl"],
+        "sim_programs_dir": str(soc_root / "tests" / "programs"),
+        "sim_tests_dir": str(soc_root / "tests" / "out"),
+        "sim_build_test_script": str(soc_root / "scripts" / "build_test.sh"),
+    }
+
+
+def _should_apply_soc_runtime_options(data: dict[str, Any]) -> bool:
+    return any(
+        str(data.get(field, "")).strip()
+        for field in ("cpu_filelist", "soc_filelist", "sim_soc_root", "soc_variant")
+    )
+
+
+def _infer_soc_root(data: dict[str, Any]) -> Path | None:
+    for field in ("sim_soc_root", "soc_filelist"):
+        value = str(data.get(field, "")).strip()
+        if not value:
+            continue
+        path = Path(value).expanduser().resolve()
+        if field == "soc_filelist":
+            path = path.parent
+        if path.exists():
+            return path
+
+    variant = _normalize_soc_variant(data.get("soc_variant", ""))
+    root = _frontend_repo_root()
+    candidate = root / "fecompiler" / "thirdparty" / SOC_VARIANT_DIRECTORIES[variant]
+    if candidate.exists():
+        return candidate.resolve()
+    return None
+
+
+def _infer_soc_variant(data: dict[str, Any], soc_root: Path) -> str:
+    explicit = _normalize_soc_variant(data.get("soc_variant", ""))
+    if explicit != DEFAULT_SOC_VARIANT or str(data.get("soc_variant", "")).strip():
+        return explicit
+    for variant, directory in SOC_VARIANT_DIRECTORIES.items():
+        if soc_root.name == directory:
+            return variant
+    return explicit
+
+
+def _normalize_soc_variant(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in SOC_VARIANT_DIRECTORIES else DEFAULT_SOC_VARIANT
+
+
+def _frontend_repo_root() -> Path:
+    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+    return Path(__file__).resolve().parents[2]
+
+
 def _apply_sim_test_suite(
     workspace: dict[str, Any],
     suite: Any,
@@ -596,7 +766,7 @@ def _apply_sim_test_suite(
         if mode not in {"all", "selected"}:
             raise WorkspaceCliError("run_step", "failed", f"unknown CPU Tests mode: {mode}")
         if mode == "selected" and not cases:
-            raise WorkspaceCliError("run_step", "failed", "select at least one CPU test case")
+            cases = _default_cpu_test_cases(workspace)
         if mode == "selected":
             _validate_cpu_test_cases(workspace, cases)
         updates = {
@@ -612,7 +782,7 @@ def _apply_sim_test_suite(
             "sim_images": [],
             "sim_build_all_programs": False,
             "sim_program_names": ["rtthread"],
-            "sim_run_args": ["--max-cycles", "10000000", "--wave", "/dev/null"],
+            "sim_run_args": _default_rtthread_run_args(workspace),
         }
     else:
         raise WorkspaceCliError("run_step", "failed", f"unknown frontend sim test suite: {suite_name}")
@@ -694,6 +864,24 @@ def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
         "0x100",
         "--diff-reset-vector",
         "0x80000000",
+    ]
+
+
+def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
+    soc_root = _workspace_soc_root(workspace)
+    args = ["--max-cycles", "10000000"]
+    if not soc_root:
+        return [*args, "--timeout-ok"]
+    return [
+        *args,
+        "--diff",
+        "--ref",
+        str(soc_root / "tools" / "riscv32-spike-so"),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+        "--timeout-ok",
     ]
 
 
@@ -789,13 +977,12 @@ def _failure_payload(
         )
         if item
     ]
-    tail_source = next((item["path"] for item in logs if not item["path"].endswith(".json")), "")
     return {
         "step": step_name,
         "state": state.value,
         "logs": logs,
         "artifacts": _build_frontend_step_artifacts(workspace, workspace_step),
-        "log_tail": _read_text_tail(tail_source, CLI_LOG_TAIL_BYTES) if tail_source else "",
+        "log_tail": _failure_log_tail(logs),
     }
 
 
@@ -805,14 +992,39 @@ def _failure_messages(prefix: str, failure: Any) -> list[str]:
         return messages
     logs = failure.get("logs")
     if isinstance(logs, list) and logs:
-        first_log = logs[0]
-        if isinstance(first_log, dict) and first_log.get("path"):
-            messages.append(f"log: {first_log['path']}")
+        preferred = _failure_log_item([item for item in logs if isinstance(item, dict)])
+        if preferred.get("path"):
+            messages.append(f"log: {preferred['path']}")
     tail = str(failure.get("log_tail", "")).strip()
     if tail:
         tail_lines = tail.splitlines()[-8:]
         messages.extend(tail_lines)
     return messages
+
+
+def _failure_log_tail(logs: list[dict[str, str]]) -> str:
+    preferred = _failure_log_item(logs)
+    if preferred.get("path"):
+        tail = _read_text_tail(preferred.get("path", ""), CLI_LOG_TAIL_BYTES)
+        if tail.strip():
+            return tail
+    return ""
+
+
+def _failure_log_item(logs: list[dict[str, str]]) -> dict[str, str]:
+    preferred_labels = ("Build programs log", "Tool log", "Step log")
+    for label in preferred_labels:
+        for item in logs:
+            if item.get("label") != label:
+                continue
+            if _read_text_tail(item.get("path", ""), CLI_LOG_TAIL_BYTES).strip():
+                return item
+    for item in logs:
+        if str(item.get("path", "")).endswith(".json"):
+            continue
+        if _read_text_tail(item.get("path", ""), CLI_LOG_TAIL_BYTES).strip():
+            return item
+    return {}
 
 
 def _build_frontend_step_detail(
@@ -879,9 +1091,11 @@ def _build_frontend_step_summary(step: Any, state: str, runtime: str) -> dict[st
 def _build_frontend_step_logs(step_log_path: str, report_log_path: str) -> list[dict[str, str]]:
     logs: list[dict[str, str]] = []
     seen: set[str] = set()
+    report_dir = _optional_path(Path(report_log_path).parent if report_log_path else "")
     for item in (
         _existing_path_item(step_log_path, "Step log"),
         _existing_path_item(report_log_path, "Tool log"),
+        _existing_path_item(report_dir / "build_programs.log.txt" if report_dir else "", "Build programs log"),
     ):
         path = str((item or {}).get("path", ""))
         if item and path not in seen:
@@ -1018,6 +1232,7 @@ def _build_frontend_sim_cases(step: Any) -> list[dict[str, Any]]:
         cases.append(
             {
                 "name": str(raw_case.get("name", "")),
+                "suite": str(raw_case.get("suite", "")),
                 "ok": bool(raw_case.get("ok", False)),
                 "returncode": raw_case.get("returncode"),
                 "image": str(raw_case.get("image", "")),
@@ -1026,6 +1241,7 @@ def _build_frontend_sim_cases(step: Any) -> list[dict[str, Any]]:
                 "run_log": str(raw_case.get("run_log", "")),
                 "wave": str(raw_case.get("wave", "")),
                 "run_id": str(raw_case.get("run_id", "")),
+                "validation": raw_case.get("validation", {}) if isinstance(raw_case.get("validation"), dict) else {},
             }
         )
     return cases
