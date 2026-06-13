@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
+from fecompiler.catalog import catalog_payload, validate_frontend_config
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
@@ -117,6 +118,18 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--sim-build-test-script", default="")
     create.add_argument("--rtl", action="append", default=[], help="RTL source path; repeatable")
     create.add_argument("--soc-variant", default="")
+
+    catalog = subparsers.add_parser("catalog-list", help="List frontend core/SoC/toolchain/test catalogs")
+    _add_json_flag(catalog)
+
+    validate = subparsers.add_parser("validate-config", help="Validate a frontend catalog configuration")
+    _add_json_flag(validate)
+    validate.add_argument("--input-json", default="", help="Frontend config JSON path, or '-' for stdin")
+    validate.add_argument("--core-id", default="")
+    validate.add_argument("--soc-harness-id", default="")
+    validate.add_argument("--toolchain-id", default="")
+    validate.add_argument("--test-suite-id", default="")
+    validate.add_argument("--cpu-filelist", default="")
 
     load = subparsers.add_parser("load", help="Load an existing frontend workspace")
     _add_json_flag(load)
@@ -293,6 +306,35 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
         )
         finish("create", json_output, lambda: _create(args))
 
+    @app.command("catalog-list", help="List frontend core/SoC/toolchain/test catalogs")
+    def catalog_list_cmd(
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        finish("catalog-list", json_output, _catalog_list)
+
+    @app.command("validate-config", help="Validate a frontend catalog configuration")
+    def validate_config_cmd(
+        input_json: Annotated[
+            str | None,
+            typer.Option("--input-json", help="Frontend config JSON path, or '-' for stdin"),
+        ] = None,
+        core_id: Annotated[str | None, typer.Option("--core-id")] = None,
+        soc_harness_id: Annotated[str | None, typer.Option("--soc-harness-id")] = None,
+        toolchain_id: Annotated[str | None, typer.Option("--toolchain-id")] = None,
+        test_suite_id: Annotated[str | None, typer.Option("--test-suite-id")] = None,
+        cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        args = argparse.Namespace(
+            input_json=input_json or "",
+            core_id=core_id or "",
+            soc_harness_id=soc_harness_id or "",
+            toolchain_id=toolchain_id or "",
+            test_suite_id=test_suite_id or "",
+            cpu_filelist=cpu_filelist or "",
+        )
+        finish("validate-config", json_output, lambda: _validate_config(args))
+
     @app.command("load", help="Load an existing frontend workspace")
     def load_cmd(
         directory: Annotated[str, typer.Option("--directory")] = "",
@@ -359,6 +401,10 @@ def _dispatch(args: argparse.Namespace) -> CliResult:
     command = str(args.command)
     if command == "create":
         return _create(args)
+    if command == "catalog-list":
+        return _catalog_list()
+    if command == "validate-config":
+        return _validate_config(args)
     if command == "load":
         return _load(args)
     if command == "run-flow":
@@ -372,9 +418,40 @@ def _dispatch(args: argparse.Namespace) -> CliResult:
     raise WorkspaceCliError("workspace", "error", f"unknown workspace command: {command}")
 
 
+def _catalog_list() -> CliResult:
+    return CliResult(
+        cmd="catalog_list",
+        response="success",
+        data=catalog_payload(),
+        message=["frontend catalog list loaded"],
+    )
+
+
+def _validate_config(args: argparse.Namespace) -> CliResult:
+    request, base_dir = _catalog_config_from_args(args)
+    normalized = _normalize_catalog_config_paths(request, base_dir)
+    result = validate_frontend_config(normalized)
+    response = "success" if result.ok else "failed"
+    return CliResult(
+        cmd="validate_frontend_config",
+        response=response,
+        data=result.to_dict(),
+        message=[result.summary],
+    )
+
+
 def _create(args: argparse.Namespace) -> CliResult:
     request, base_dir = _create_request_from_args(args)
     normalized = _normalize_create_request(request, base_dir)
+    validation = validate_frontend_config(_frontend_catalog_config_from_create_request(normalized))
+    if not validation.ok:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            validation.summary,
+            data={"validation": validation.to_dict()},
+        )
+    _apply_catalog_defaults(normalized, validation.normalized)
     _apply_default_soc_runtime_options(normalized)
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
@@ -383,6 +460,10 @@ def _create(args: argparse.Namespace) -> CliResult:
 
     parameters = _normalize_parameters(normalized.get("parameters", {}))
     parameters.setdefault("Design Tool", "frontend")
+    parameters["frontend_core_id"] = validation.normalized["core_id"]
+    parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
+    parameters["toolchain_id"] = validation.normalized["toolchain_id"]
+    parameters["test_suite_id"] = validation.normalized["test_suite_id"]
     if normalized.get("soc_variant"):
         parameters["soc_variant"] = normalized["soc_variant"]
 
@@ -715,6 +796,19 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
     return request, base_dir
 
 
+def _catalog_config_from_args(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
+    base_dir = Path.cwd()
+    request: dict[str, Any] = {}
+    if args.input_json:
+        request, base_dir = _load_input_json(args.input_json)
+
+    for field in ("core_id", "soc_harness_id", "toolchain_id", "test_suite_id", "cpu_filelist"):
+        value = str(getattr(args, field, "") or "").strip()
+        if value:
+            request[field] = value
+    return request, base_dir
+
+
 def _load_input_json(path_text: str) -> tuple[dict[str, Any], Path]:
     if path_text == "-":
         return json.load(sys.stdin), Path.cwd()
@@ -740,6 +834,45 @@ def _normalize_create_request(request: dict[str, Any], base_dir: Path) -> dict[s
             for item in _normalize_str_list(normalized.get(field, []))
         ]
     return normalized
+
+
+def _normalize_catalog_config_paths(request: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    normalized = dict(request)
+    value = str(normalized.get("cpu_filelist", "")).strip()
+    if value:
+        normalized["cpu_filelist"] = _resolve_path(value, base_dir)
+    return normalized
+
+
+def _frontend_catalog_config_from_create_request(request: dict[str, Any]) -> dict[str, Any]:
+    parameters = request.get("parameters", {})
+    params = parameters if isinstance(parameters, dict) else {}
+    return {
+        "core_id": request.get("core_id") or params.get("frontend_core_id") or params.get("core_id"),
+        "soc_harness_id": (
+            request.get("soc_harness_id")
+            or params.get("soc_harness_id")
+            or request.get("soc_variant")
+            or params.get("soc_variant")
+        ),
+        "toolchain_id": request.get("toolchain_id") or params.get("toolchain_id"),
+        "test_suite_id": (
+            request.get("test_suite_id")
+            or params.get("test_suite_id")
+            or request.get("sim_test_suite")
+            or params.get("sim_test_suite")
+        ),
+        "cpu_filelist": request.get("cpu_filelist") or params.get("cpu_filelist"),
+    }
+
+
+def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any]) -> None:
+    request["core_id"] = normalized.get("core_id", "")
+    request["soc_harness_id"] = normalized.get("soc_harness_id", "")
+    request["toolchain_id"] = normalized.get("toolchain_id", "")
+    request["test_suite_id"] = normalized.get("test_suite_id", "")
+    if normalized.get("soc_variant"):
+        request["soc_variant"] = normalized["soc_variant"]
 
 
 def _normalize_parameters(raw: Any) -> dict[str, Any]:

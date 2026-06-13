@@ -1,0 +1,46 @@
+[
+  {
+    "id": "riscv32-unknown-elf",
+    "name": "RISC-V 32-bit ELF",
+    "description": "Bare-metal RISC-V 32-bit GNU toolchain profile.",
+    "isa": ["rv32"],
+    "prefix": "riscv32-unknown-elf-",
+    "march": "rv32im",
+    "mabi": "ilp32",
+    "status": "stable",
+    "tags": ["riscv", "bare-metal"]
+  },
+  {
+    "id": "riscv64-unknown-elf",
+    "name": "RISC-V 64-bit ELF",
+    "description": "Bare-metal RISC-V 64-bit GNU toolchain profile.",
+    "isa": ["rv64", "rv32"],
+    "prefix": "riscv64-unknown-elf-",
+    "march": "rv32im",
+    "mabi": "ilp32",
+    "status": "stable",
+    "tags": ["riscv", "bare-metal"]
+  },
+  {
+    "id": "custom-external",
+    "name": "Custom External Toolchain",
+    "description": "User-managed compiler, linker script, image format, and runtime options.",
+    "isa": ["custom"],
+    "prefix": "",
+    "march": "",
+    "mabi": "",
+    "status": "experimental",
+    "tags": ["custom"]
+  },
+  {
+    "id": "loongarch-custom",
+    "name": "LoongArch Custom",
+    "description": "Experimental placeholder for user-supplied LoongArch toolchains and binaries.",
+    "isa": ["loongarch32", "loongarch64"],
+    "prefix": "loongarch64-unknown-elf-",
+    "march": "",
+    "mabi": "",
+    "status": "planned",
+    "tags": ["loongarch", "experimental"]
+  }
+]

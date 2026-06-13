@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ysyx-am-soc",
+    "name": "YSYX AM SoC Harness",
+    "description": "Current ECOS frontend SoC harness for ysyx-style CPU integration and AM/RT-Thread tests.",
+    "variant": "soc1",
+    "isa": ["rv32"],
+    "bus": "ysyx-soc",
+    "integration_level": "sim_ready",
+    "status": "stable",
+    "directory": "fecompiler/thirdparty/SoC",
+    "tags": ["default", "cpu-tests", "rtthread"]
+  },
+  {
+    "id": "ysyx-am-soc-alt",
+    "name": "YSYX AM SoC Harness Alt",
+    "description": "Alternative copy of the current YSYX AM SoC harness kept for compatibility experiments.",
+    "variant": "soc2",
+    "isa": ["rv32"],
+    "bus": "ysyx-soc",
+    "integration_level": "sim_ready",
+    "status": "experimental",
+    "directory": "fecompiler/thirdparty/SoC2",
+    "tags": ["compatibility", "cpu-tests"]
+  },
+  {
+    "id": "ysyx-am-soc-extended",
+    "name": "YSYX AM SoC Harness Extended",
+    "description": "Extended compatibility copy of the current YSYX AM SoC harness.",
+    "variant": "soc3",
+    "isa": ["rv32"],
+    "bus": "ysyx-soc",
+    "integration_level": "sim_ready",
+    "status": "experimental",
+    "directory": "fecompiler/thirdparty/SoC3",
+    "tags": ["compatibility", "cpu-tests"]
+  },
+  {
+    "id": "minimal-riscv-soc",
+    "name": "Minimal RISC-V SoC Harness",
+    "description": "Planned small memory/UART harness for lightweight open-source RISC-V core demos.",
+    "variant": "minimal-riscv",
+    "isa": ["rv32"],
+    "bus": "simple-memory",
+    "integration_level": "metadata_only",
+    "status": "planned",
+    "directory": "",
+    "tags": ["planned", "minimal"]
+  }
+]
