@@ -11,6 +11,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+_CAPABILITY_ORDER = {
+    "metadata_only": 0,
+    "filelist_ready": 1,
+    "lint_ready": 2,
+    "elab_ready": 3,
+    "sim_ready": 4,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogEntry:
     id: str
@@ -41,7 +50,16 @@ class CatalogEntry:
 
     @property
     def sim_ready(self) -> bool:
-        return self.integration_level == "sim_ready"
+        return self.supports("sim_ready")
+
+    @property
+    def filelist_ready(self) -> bool:
+        return self.supports("filelist_ready") or bool(self.data.get("cpu_filelist"))
+
+    def supports(self, capability: str) -> bool:
+        level = _CAPABILITY_ORDER.get(self.integration_level, -1)
+        required = _CAPABILITY_ORDER.get(capability, 10)
+        return level >= required
 
 
 @dataclass(frozen=True, slots=True)

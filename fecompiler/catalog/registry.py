@@ -65,8 +65,9 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         if entry is None:
             issues.append(ValidationIssue("error", "unknown_catalog_id", f"Unknown {field}: {entry_id}", field))
 
+    effective_cpu_filelist = _effective_cpu_filelist(config, core)
     if core is not None and bool(core.data.get("requires_filelist")):
-        filelist = str(config.get("cpu_filelist", "")).strip()
+        filelist = effective_cpu_filelist
         if not filelist:
             issues.append(ValidationIssue("error", "missing_cpu_filelist", "CPU filelist is required.", "cpu_filelist"))
         elif not Path(filelist).expanduser().exists():
@@ -88,8 +89,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
             issues.append(
                 ValidationIssue(
                     "error",
-                    "core_adapter_not_implemented",
-                    f"{core.name} is listed as {core.status}; use it as metadata until an adapter is implemented.",
+                    "core_sim_adapter_not_implemented",
+                    _core_adapter_message(core, soc),
                     "core_id",
                 )
             )
@@ -131,7 +132,11 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "soc_variant": str(soc.data.get("variant", "")) if soc is not None else "",
         "toolchain_id": toolchain_id,
         "test_suite_id": test_suite_id,
-        "cpu_filelist": str(config.get("cpu_filelist", "")).strip(),
+        "cpu_filelist": effective_cpu_filelist,
+        "core_cpu_filelist": str(core.data.get("cpu_filelist", "")) if core is not None else "",
+        "core_capability": core.integration_level if core is not None else "",
+        "soc_harness_capability": soc.integration_level if soc is not None else "",
+        "required_capability": "sim_ready",
     }
     return ValidationResult(
         ok=not has_errors,
@@ -191,6 +196,25 @@ def _find(entries: list[CatalogEntry], entry_id: str) -> CatalogEntry | None:
     return next((entry for entry in entries if entry.id == entry_id), None)
 
 
+def _effective_cpu_filelist(config: dict[str, Any], core: CatalogEntry | None) -> str:
+    filelist = str(config.get("cpu_filelist", "")).strip()
+    if filelist:
+        return filelist
+    if core is None or bool(core.data.get("requires_filelist")):
+        return ""
+    return str(core.data.get("cpu_filelist", "")).strip()
+
+
+def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:
+    soc_name = soc.name if soc is not None else "the selected SoC harness"
+    if core.filelist_ready:
+        return (
+            f"{core.name} has a built-in RTL filelist, but it does not yet have "
+            f"a simulation adapter for {soc_name}."
+        )
+    return f"{core.name} is listed as {core.status}; use it as metadata until an adapter is implemented."
+
+
 def _isa_compatible(*entries: CatalogEntry) -> bool:
     isa_sets = [_expanded_isa_set(entry.isa) for entry in entries if entry.isa]
     if not isa_sets:
@@ -240,4 +264,6 @@ def _summary_for(
         return f"{core.name} can run {test_suite.name} on {soc.name}." if core and soc and test_suite else "Configuration is supported."
     if support_level == "experimental":
         return "Configuration is usable for catalog exploration, but one or more adapters are not implemented yet."
+    if core is not None and core.filelist_ready and not core.sim_ready:
+        return f"{core.name} RTL filelist is ready, but simulation workspace creation still needs a SoC adapter."
     return "Configuration is not ready to create a frontend workspace."
