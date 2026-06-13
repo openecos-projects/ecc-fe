@@ -4,7 +4,10 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 py_library(
     name = "fecompiler",
-    data = glob(["fecompiler/catalog/builtin/*.json"]),
+    data = glob([
+        "fecompiler/adapters/**/*.f",
+        "fecompiler/catalog/builtin/*.json",
+    ]),
     srcs = glob(["fecompiler/**/*.py"]),
     imports = ["."],
     visibility = ["//visibility:public"],
