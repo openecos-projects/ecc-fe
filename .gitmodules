@@ -16,3 +16,6 @@
 [submodule "fecompiler/thirdparty/scr1"]
 	path = fecompiler/thirdparty/scr1
 	url = https://github.com/syntacore/scr1.git
+[submodule "fecompiler/thirdparty/ibex"]
+	path = fecompiler/thirdparty/ibex
+	url = https://github.com/lowRISC/ibex.git

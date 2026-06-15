@@ -1,15 +1,21 @@
 # Ibex CPU Adapter
 
-Ibex is listed in the ECOS frontend catalog as an open-source CPU candidate.
-This directory currently contains metadata only.  It intentionally does not
-claim simulation support until the RTL source, filelist, and
-`ecos_ibex_cpu_wrapper` are added and validated.
+Ibex is integrated as an experimental ECOS frontend CPU adapter.  The wrapper
+keeps upstream Ibex RTL unmodified and adapts the native instruction/data
+memory request interfaces to `ysyx-axi-cpu-socket-v1`.
 
 Upstream repository: https://github.com/lowRISC/ibex
 
-Planned ECOS work:
+Current ECOS scope:
 
-- Add or fetch Ibex RTL sources.
-- Build a wrapper for `ysyx-axi-cpu-socket-v1`.
-- Add a CPU filelist and update this adapter from `metadata_only` to the
-  appropriate readiness level.
+- `filelist.cpu.f` lists the minimal Ibex RTL dependencies needed by the ECOS
+  adapter.
+- `ecos_ibex_cpu_wrapper.sv` exposes the stable ECOS CPU wrapper contract and a
+  `ysyx_00000000` compatibility module for existing SoC harnesses.
+- CPU tests and smoke tests are declared as supported without difftest.
+
+Known limitations:
+
+- This is an experimental adapter.  It has not been promoted to a verified
+  production profile.
+- Difftest is not exposed yet.
