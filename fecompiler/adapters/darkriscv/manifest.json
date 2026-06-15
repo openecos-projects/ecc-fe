@@ -1,0 +1,9 @@
+{
+  "id": "darkriscv",
+  "name": "DarkRISCV",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_darkriscv_cpu_wrapper",
+  "sim_ready": false,
+  "supports_difftest": false
+}

@@ -22,3 +22,9 @@
 [submodule "fecompiler/thirdparty/cv32e40p"]
 	path = fecompiler/thirdparty/cv32e40p
 	url = https://github.com/openhwgroup/cv32e40p.git
+[submodule "fecompiler/thirdparty/darkriscv"]
+	path = fecompiler/thirdparty/darkriscv
+	url = https://github.com/darklife/darkriscv.git
+[submodule "fecompiler/thirdparty/learn-fpga"]
+	path = fecompiler/thirdparty/learn-fpga
+	url = https://github.com/BrunoLevy/learn-fpga.git

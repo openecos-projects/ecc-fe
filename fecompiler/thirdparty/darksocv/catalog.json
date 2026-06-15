@@ -1,0 +1,26 @@
+{
+  "id": "darksocv",
+  "name": "DarkSoCV",
+  "description": "DarkRISCV companion SoC candidate. Listed for future ECOS wrapper work; not wired to the simulator contract yet.",
+  "variant": "darksocv",
+  "source": "opensource",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "native-harvard",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "BSD-3-Clause",
+  "repository": "https://github.com/darklife/darkriscv",
+  "directory": "fecompiler/thirdparty/darkriscv",
+  "tags": [
+    "riscv",
+    "darkriscv",
+    "candidate"
+  ]
+}

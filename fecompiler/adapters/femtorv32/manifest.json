@@ -1,0 +1,9 @@
+{
+  "id": "femtorv32",
+  "name": "FemtoRV32 Electron",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_femtorv32_cpu_wrapper",
+  "sim_ready": true,
+  "supports_difftest": false
+}
