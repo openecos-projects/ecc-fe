@@ -88,10 +88,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
             issues.append(
                 ValidationIssue(
                     "error",
-                    "cpu_socket_not_compatible",
-                    f"{core.name} exposes {core.data.get('cpu_socket_contract', 'unknown CPU socket')}, "
-                    f"but {soc.name} expects {soc.data.get('cpu_socket_contract', 'unknown CPU socket')}.",
-                    "core_id",
+                    "catalog_wrapper_contract_violation",
+                    f"Internal catalog error: CPU wrapper {core.name} declares "
+                    f"{core.data.get('cpu_socket_contract', 'unknown CPU socket')}, "
+                    f"but SoC wrapper {soc.name} declares "
+                    f"{soc.data.get('cpu_socket_contract', 'unknown CPU socket')}. "
+                    "Wrapper authors must keep this contract consistent.",
+                    "catalog",
                 )
             )
 

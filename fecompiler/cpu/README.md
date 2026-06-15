@@ -35,3 +35,8 @@ Adding a new CPU should require:
 
 Until a CPU wrapper exists, the catalog entry should remain `filelist_ready` or
 `metadata_only`, not `sim_ready`.
+
+Users should not need to reason about CPU socket compatibility.  If a CPU and
+SoC are both listed as `sim_ready`, their wrappers must already agree on the
+socket contract.  A socket mismatch is an ECOS catalog/wrapper integration bug,
+not a user configuration problem.
