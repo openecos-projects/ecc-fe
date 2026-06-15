@@ -10,6 +10,7 @@
     "status": "stable",
     "wrapper_contract": "ecos-sim-wrapper-v1",
     "wrapper_top": "ecos_sim_top",
+    "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "directory": "fecompiler/thirdparty/SoC",
     "tags": ["default", "cpu-tests", "rtthread"]
   },
@@ -24,6 +25,7 @@
     "status": "experimental",
     "wrapper_contract": "ecos-sim-wrapper-v1",
     "wrapper_top": "ecos_sim_top",
+    "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "directory": "fecompiler/thirdparty/SoC2",
     "tags": ["compatibility", "cpu-tests"]
   },
@@ -38,6 +40,7 @@
     "status": "experimental",
     "wrapper_contract": "ecos-sim-wrapper-v1",
     "wrapper_top": "ecos_sim_top",
+    "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "directory": "fecompiler/thirdparty/SoC3",
     "tags": ["compatibility", "cpu-tests"]
   },
@@ -52,6 +55,7 @@
     "status": "planned",
     "wrapper_contract": "ecos-sim-wrapper-v1",
     "wrapper_top": "ecos_sim_top",
+    "cpu_socket_contract": "simple-memory-cpu-socket-v1",
     "directory": "",
     "tags": ["planned", "minimal"]
   }

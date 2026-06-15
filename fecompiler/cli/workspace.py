@@ -459,6 +459,10 @@ def _create(args: argparse.Namespace) -> CliResult:
         parameters["Top module"] = normalized["top_module"]
     parameters.setdefault("Design Tool", "frontend")
     parameters["frontend_core_id"] = validation.normalized["core_id"]
+    parameters["cpu_wrapper_id"] = validation.normalized["core_id"]
+    parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
+    parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
+    parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]

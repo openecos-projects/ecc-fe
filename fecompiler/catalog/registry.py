@@ -84,6 +84,16 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
                     "isa",
                 )
             )
+        if not _cpu_socket_compatible(core, soc):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "cpu_socket_not_compatible",
+                    f"{core.name} exposes {core.data.get('cpu_socket_contract', 'unknown CPU socket')}, "
+                    f"but {soc.name} expects {soc.data.get('cpu_socket_contract', 'unknown CPU socket')}.",
+                    "core_id",
+                )
+            )
 
         if not core.sim_ready:
             issues.append(
@@ -135,9 +145,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_filelist": effective_cpu_filelist,
         "core_cpu_filelist": str(core.data.get("cpu_filelist", "")) if core is not None else "",
         "core_capability": core.integration_level if core is not None else "",
+        "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
+        "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
+        "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
         "soc_harness_capability": soc.integration_level if soc is not None else "",
         "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
         "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
+        "soc_cpu_socket_contract": str(soc.data.get("cpu_socket_contract", "")) if soc is not None else "",
         "required_capability": "sim_ready",
     }
     return ValidationResult(
@@ -225,6 +239,12 @@ def _isa_compatible(*entries: CatalogEntry) -> bool:
     for isa in isa_sets[1:]:
         common = common.intersection(isa)
     return bool(common)
+
+
+def _cpu_socket_compatible(core: CatalogEntry, soc: CatalogEntry) -> bool:
+    core_socket = str(core.data.get("cpu_socket_contract", "")).strip()
+    soc_socket = str(soc.data.get("cpu_socket_contract", "")).strip()
+    return not core_socket or not soc_socket or core_socket == soc_socket
 
 
 def _expanded_isa_set(values: list[str]) -> set[str]:

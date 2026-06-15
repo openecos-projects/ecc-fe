@@ -36,6 +36,10 @@ _STR_PARAMETER_FIELDS = (
     "soc_variant",
     "soc_wrapper_id",
     "soc_wrapper_contract",
+    "cpu_wrapper_id",
+    "cpu_wrapper_contract",
+    "cpu_socket_contract",
+    "cpu_wrapper_top",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",
