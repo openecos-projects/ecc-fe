@@ -23,13 +23,15 @@ class CpuWrapper:
     wrapper_contract: str = "ecos-cpu-wrapper-v1"
     wrapper_top: str = "ysyx_00000000"
     sim_ready: bool = False
+    supports_difftest: bool = True
 
-    def metadata(self) -> dict[str, str]:
+    def metadata(self) -> dict[str, Any]:
         return {
             "cpu_wrapper_id": self.id,
             "cpu_wrapper_contract": self.wrapper_contract,
             "cpu_socket_contract": self.socket_contract,
             "cpu_wrapper_top": self.wrapper_top,
+            "cpu_supports_difftest": self.supports_difftest,
         }
 
 
@@ -56,7 +58,8 @@ def get_cpu_wrapper(config: dict[str, Any] | str | None) -> CpuWrapper | None:
             id="picorv32",
             name="PicoRV32",
             wrapper_top="ecos_picorv32_cpu_wrapper",
-            sim_ready=False,
+            sim_ready=True,
+            supports_difftest=False,
         )
     if wrapper_id == "scr1":
         return CpuWrapper(
