@@ -136,6 +136,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "core_cpu_filelist": str(core.data.get("cpu_filelist", "")) if core is not None else "",
         "core_capability": core.integration_level if core is not None else "",
         "soc_harness_capability": soc.integration_level if soc is not None else "",
+        "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
+        "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
         "required_capability": "sim_ready",
     }
     return ValidationResult(

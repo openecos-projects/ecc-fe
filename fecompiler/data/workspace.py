@@ -34,6 +34,8 @@ _STR_PARAMETER_FIELDS = (
     "sim_soc_root",
     "sim_build_test_script",
     "soc_variant",
+    "soc_wrapper_id",
+    "soc_wrapper_contract",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",

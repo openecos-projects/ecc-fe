@@ -8,6 +8,8 @@
     "bus": "ysyx-soc",
     "integration_level": "sim_ready",
     "status": "stable",
+    "wrapper_contract": "ecos-sim-wrapper-v1",
+    "wrapper_top": "ysyxSoCTop",
     "directory": "fecompiler/thirdparty/SoC",
     "tags": ["default", "cpu-tests", "rtthread"]
   },
@@ -20,6 +22,8 @@
     "bus": "ysyx-soc",
     "integration_level": "sim_ready",
     "status": "experimental",
+    "wrapper_contract": "ecos-sim-wrapper-v1",
+    "wrapper_top": "ysyxSoCTop",
     "directory": "fecompiler/thirdparty/SoC2",
     "tags": ["compatibility", "cpu-tests"]
   },
@@ -32,6 +36,8 @@
     "bus": "ysyx-soc",
     "integration_level": "sim_ready",
     "status": "experimental",
+    "wrapper_contract": "ecos-sim-wrapper-v1",
+    "wrapper_top": "ysyxSoCTop",
     "directory": "fecompiler/thirdparty/SoC3",
     "tags": ["compatibility", "cpu-tests"]
   },
@@ -44,6 +50,8 @@
     "bus": "simple-memory",
     "integration_level": "metadata_only",
     "status": "planned",
+    "wrapper_contract": "ecos-sim-wrapper-v1",
+    "wrapper_top": "ecos_sim_top",
     "directory": "",
     "tags": ["planned", "minimal"]
   }

@@ -26,6 +26,7 @@ from fecompiler.catalog import catalog_payload, validate_frontend_config
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
+from fecompiler.soc import soc_runtime_options
 from fecompiler.utility.json import json_read, json_write
 
 try:
@@ -38,12 +39,6 @@ except ImportError:
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
 CLI_LOG_TAIL_BYTES = 24 * 1024
-DEFAULT_SOC_VARIANT = "soc1"
-SOC_VARIANT_DIRECTORIES = {
-    "soc1": "SoC",
-    "soc2": "SoC2",
-    "soc3": "SoC3",
-}
 
 _PATH_FIELDS = {
     "directory",
@@ -118,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--sim-build-test-script", default="")
     create.add_argument("--rtl", action="append", default=[], help="RTL source path; repeatable")
     create.add_argument("--soc-variant", default="")
+    create.add_argument("--soc-harness-id", default="")
 
     catalog = subparsers.add_parser("catalog-list", help="List frontend core/SoC/toolchain/test catalogs")
     _add_json_flag(catalog)
@@ -462,6 +458,7 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters.setdefault("Design Tool", "frontend")
     parameters["frontend_core_id"] = validation.normalized["core_id"]
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
+    parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]
     parameters["test_suite_id"] = validation.normalized["test_suite_id"]
     if normalized.get("soc_variant"):
@@ -755,6 +752,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("sim_soc_root", "sim_soc_root"),
         ("sim_build_test_script", "sim_build_test_script"),
         ("soc_variant", "soc_variant"),
+        ("soc_harness_id", "soc_harness_id"),
     ):
         value = getattr(args, arg_name, "")
         if value:
@@ -944,6 +942,8 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
     changed = False
     for field in (
         "soc_variant",
+        "soc_wrapper_id",
+        "soc_wrapper_contract",
         "sim_soc_root",
         "soc_filelist",
         "testbench",
@@ -977,6 +977,8 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
     updates: dict[str, Any] = {}
     for field in (
         "soc_variant",
+        "soc_wrapper_id",
+        "soc_wrapper_contract",
         "sim_soc_root",
         "soc_filelist",
         "testbench",
@@ -1007,36 +1009,31 @@ def _default_soc_runtime_options(data: dict[str, Any]) -> dict[str, Any]:
     if not _should_apply_soc_runtime_options(data):
         return {}
 
-    soc_root = _infer_soc_root(data)
-    if soc_root is None:
-        return {}
+    defaults = soc_runtime_options(data)
+    if defaults:
+        return defaults
 
-    variant = _infer_soc_variant(data, soc_root)
-    return {
-        "soc_variant": variant,
-        "sim_soc_root": str(soc_root),
-        "soc_filelist": str(soc_root / "filelist.soc.f"),
-        "testbench": str(soc_root / "driver" / "main.cpp"),
-        "sim_cpp_sources": [
-            str(soc_root / "driver" / "dpi_mem.cpp"),
-            str(soc_root / "driver" / "difftest.cpp"),
-        ],
-        "sim_cflags": [f"-I{soc_root}"],
-        "sim_ldflags": ["-ldl"],
-        "sim_programs_dir": str(soc_root / "tests" / "programs"),
-        "sim_tests_dir": str(soc_root / "tests" / "out"),
-        "sim_build_test_script": str(soc_root / "scripts" / "build_test.sh"),
+    # Backward-compatible fallback for workspaces created before soc_wrapper_id
+    # was introduced: infer the wrapper from an explicit SoC root/filelist.
+    root = _explicit_soc_root(data)
+    if root is None:
+        return {}
+    inferred = {
+        **data,
+        "sim_soc_root": str(root),
+        "soc_harness_id": _soc_wrapper_id_from_root(root),
     }
+    return soc_runtime_options(inferred)
 
 
 def _should_apply_soc_runtime_options(data: dict[str, Any]) -> bool:
     return any(
         str(data.get(field, "")).strip()
-        for field in ("cpu_filelist", "soc_filelist", "sim_soc_root", "soc_variant")
+        for field in ("cpu_filelist", "soc_filelist", "sim_soc_root", "soc_variant", "soc_harness_id", "soc_wrapper_id")
     )
 
 
-def _infer_soc_root(data: dict[str, Any]) -> Path | None:
+def _explicit_soc_root(data: dict[str, Any]) -> Path | None:
     for field in ("sim_soc_root", "soc_filelist"):
         value = str(data.get(field, "")).strip()
         if not value:
@@ -1046,35 +1043,16 @@ def _infer_soc_root(data: dict[str, Any]) -> Path | None:
             path = path.parent
         if path.exists():
             return path
-
-    variant = _normalize_soc_variant(data.get("soc_variant", ""))
-    root = _frontend_repo_root()
-    candidate = root / "fecompiler" / "thirdparty" / SOC_VARIANT_DIRECTORIES[variant]
-    if candidate.exists():
-        return candidate.resolve()
     return None
 
 
-def _infer_soc_variant(data: dict[str, Any], soc_root: Path) -> str:
-    explicit = _normalize_soc_variant(data.get("soc_variant", ""))
-    if explicit != DEFAULT_SOC_VARIANT or str(data.get("soc_variant", "")).strip():
-        return explicit
-    for variant, directory in SOC_VARIANT_DIRECTORIES.items():
-        if soc_root.name == directory:
-            return variant
-    return explicit
-
-
-def _normalize_soc_variant(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return text if text in SOC_VARIANT_DIRECTORIES else DEFAULT_SOC_VARIANT
-
-
-def _frontend_repo_root() -> Path:
-    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-    return Path(__file__).resolve().parents[2]
+def _soc_wrapper_id_from_root(root: Path) -> str:
+    name = root.name
+    if name == "SoC2":
+        return "ysyx-am-soc-alt"
+    if name == "SoC3":
+        return "ysyx-am-soc-extended"
+    return "ysyx-am-soc"
 
 
 def _apply_sim_test_suite(
