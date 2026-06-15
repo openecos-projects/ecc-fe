@@ -19,3 +19,6 @@
 [submodule "fecompiler/thirdparty/ibex"]
 	path = fecompiler/thirdparty/ibex
 	url = https://github.com/lowRISC/ibex.git
+[submodule "fecompiler/thirdparty/cv32e40p"]
+	path = fecompiler/thirdparty/cv32e40p
+	url = https://github.com/openhwgroup/cv32e40p.git

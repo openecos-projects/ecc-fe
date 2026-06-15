@@ -1,0 +1,27 @@
+{
+  "id": "corev-mini-soc",
+  "name": "CORE-V Mini SoC Harness",
+  "description": "Small ECOS simulator harness for experimenting with CORE-V style open-source RISC-V CPU wrappers.",
+  "variant": "corev-mini",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "axi-lite-memory",
+  "integration_level": "sim_ready",
+  "status": "experimental",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [
+    "smoke",
+    "cpu-tests"
+  ],
+  "directory": "fecompiler/thirdparty/corev-mini-soc",
+  "tags": [
+    "core-v",
+    "minimal",
+    "cpu-tests",
+    "opensource"
+  ]
+}

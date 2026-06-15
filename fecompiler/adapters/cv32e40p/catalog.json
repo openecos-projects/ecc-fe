@@ -1,7 +1,7 @@
 {
   "id": "cv32e40p",
   "name": "CV32E40P",
-  "description": "OpenHW CORE-V 32-bit, 4-stage, in-order RISC-V core. Listed as a future ECOS CPU wrapper target.",
+  "description": "OpenHW CORE-V 32-bit, 4-stage, in-order RISC-V core with an experimental ECOS CPU wrapper for the ysyx AXI CPU socket. CPU smoke tests are supported without difftest.",
   "source": "opensource",
   "isa": [
     "rv32imc",
@@ -15,17 +15,23 @@
   "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
   "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
   "cpu_wrapper_top": "ecos_cv32e40p_cpu_wrapper",
-  "integration_level": "metadata_only",
-  "status": "planned",
+  "integration_level": "sim_ready",
+  "status": "experimental",
   "supports_difftest": false,
-  "supported_test_suites": [],
-  "license": "Solderpad-2.0",
+  "supported_test_suites": [
+    "cpu-tests",
+    "smoke"
+  ],
+  "license": "Apache-2.0 WITH SHL-2.1",
   "repository": "https://github.com/openhwgroup/cv32e40p",
+  "directory": "fecompiler/thirdparty/cv32e40p",
+  "cpu_filelist": "fecompiler/adapters/cv32e40p/filelist.cpu.f",
   "requires_filelist": false,
   "tags": [
     "riscv",
     "core-v",
     "systemverilog",
-    "candidate"
+    "sim-ready",
+    "experimental"
   ]
 }
