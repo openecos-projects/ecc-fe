@@ -1,0 +1,30 @@
+{
+  "id": "cva6",
+  "name": "CVA6",
+  "description": "OpenHW application-class RISC-V core. Listed as a larger future ECOS CPU integration target.",
+  "source": "opensource",
+  "isa": [
+    "rv32",
+    "rv64"
+  ],
+  "rtl_language": [
+    "systemverilog"
+  ],
+  "top_module": "cva6",
+  "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_wrapper_top": "ecos_cva6_cpu_wrapper",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "Solderpad-2.0",
+  "repository": "https://github.com/openhwgroup/cva6",
+  "requires_filelist": false,
+  "tags": [
+    "riscv",
+    "application",
+    "rv64",
+    "candidate"
+  ]
+}

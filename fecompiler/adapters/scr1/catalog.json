@@ -1,0 +1,38 @@
+{
+  "id": "scr1",
+  "name": "SCR1",
+  "description": "MCU-class RISC-V core with an experimental ECOS CPU wrapper for the ysyx AXI CPU socket. CPU smoke tests are supported without difftest.",
+  "source": "opensource",
+  "isa": [
+    "rv32i",
+    "rv32im",
+    "rv32ic",
+    "rv32imc"
+  ],
+  "rtl_language": [
+    "systemverilog"
+  ],
+  "top_module": "scr1_core_top",
+  "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_wrapper_top": "ecos_scr1_cpu_wrapper",
+  "integration_level": "sim_ready",
+  "status": "experimental",
+  "supports_difftest": false,
+  "supported_test_suites": [
+    "cpu-tests",
+    "smoke"
+  ],
+  "license": "SHL-0.51",
+  "repository": "https://github.com/syntacore/scr1",
+  "directory": "fecompiler/thirdparty/scr1",
+  "cpu_filelist": "fecompiler/adapters/scr1/filelist.cpu.f",
+  "requires_filelist": false,
+  "tags": [
+    "riscv",
+    "mcu",
+    "systemverilog",
+    "sim-ready",
+    "experimental"
+  ]
+}

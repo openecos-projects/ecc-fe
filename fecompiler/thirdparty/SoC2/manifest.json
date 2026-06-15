@@ -1,0 +1,24 @@
+{
+  "id": "ysyx-am-soc-alt",
+  "name": "YSYX AM SoC Harness Alt",
+  "variant": "soc2",
+  "top_module": "ecos_sim_top",
+  "sim_ready": true,
+  "contract": "ecos-sim-wrapper-v1",
+  "soc_filelist": "filelist.soc.f",
+  "testbench": "driver/main.cpp",
+  "sim_cpp_sources": [
+    "driver/dpi_mem.cpp",
+    "driver/difftest.cpp"
+  ],
+  "sim_cflags": [
+    "-I{soc_root}"
+  ],
+  "sim_ldflags": [
+    "-ldl"
+  ],
+  "sim_programs_dir": "tests/programs",
+  "sim_tests_dir": "tests/out",
+  "sim_build_test_script": "scripts/build_test.sh",
+  "supports_difftest": true
+}

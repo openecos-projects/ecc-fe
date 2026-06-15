@@ -1,0 +1,27 @@
+{
+  "id": "swervolf",
+  "name": "SweRVolf SoC",
+  "description": "CHIPS Alliance SweRVolf SoC candidate for future ECOS open-source integration.",
+  "variant": "swervolf",
+  "source": "opensource",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "axi-or-wishbone",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "Apache-2.0",
+  "repository": "https://github.com/chipsalliance/Cores-SweRVolf",
+  "directory": "fecompiler/thirdparty/swervolf",
+  "tags": [
+    "riscv",
+    "swerv",
+    "chipsalliance",
+    "candidate"
+  ]
+}

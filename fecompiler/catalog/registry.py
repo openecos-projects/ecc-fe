@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -117,10 +118,11 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
                 )
             )
         if not _suite_supported_by_harness(test_suite, soc):
+            severity = "error" if _soc_supported_test_suites(soc) else "warning"
             issues.append(
                 ValidationIssue(
-                    "warning",
-                    "suite_harness_contract",
+                    severity,
+                    "soc_test_suite_not_supported" if severity == "error" else "suite_harness_contract",
                     f"{test_suite.name} is not declared for {soc.name}.",
                     "test_suite_id",
                 )
@@ -166,6 +168,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
         "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
         "soc_cpu_socket_contract": str(soc.data.get("cpu_socket_contract", "")) if soc is not None else "",
+        "soc_supports_difftest": _soc_supports_difftest(soc),
+        "soc_supported_test_suites": _soc_supported_test_suites(soc),
         "required_capability": "sim_ready",
     }
     return ValidationResult(
@@ -179,10 +183,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
 
 @lru_cache(maxsize=1)
 def _catalog() -> dict[str, list[CatalogEntry]]:
-    return {
+    catalog = {
         category: [CatalogEntry.from_dict(item) for item in _load_builtin(filename)]
         for category, filename in _CATEGORY_FILES.items()
     }
+    catalog["cores"] = _merge_catalog_manifests(catalog["cores"], _catalog_manifest_dir("adapters"))
+    catalog["soc_harnesses"] = _merge_catalog_manifests(catalog["soc_harnesses"], _catalog_manifest_dir("thirdparty"))
+    return catalog
 
 
 def _load_builtin(filename: str) -> list[dict[str, Any]]:
@@ -192,6 +199,49 @@ def _load_builtin(filename: str) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         raise ValueError(f"catalog file must contain a list: {filename}")
     return [dict(item) for item in data if isinstance(item, dict)]
+
+
+def _merge_catalog_manifests(entries: list[CatalogEntry], root: Path) -> list[CatalogEntry]:
+    by_id = {entry.id: entry for entry in entries}
+    order = [entry.id for entry in entries]
+
+    for item in _load_catalog_manifests(root):
+        entry = CatalogEntry.from_dict(item)
+        if not entry.id:
+            continue
+        if entry.id not in by_id:
+            order.append(entry.id)
+        by_id[entry.id] = entry
+
+    return [by_id[entry_id] for entry_id in order if entry_id in by_id]
+
+
+def _load_catalog_manifests(root: Path) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for manifest_path in sorted(root.glob("*/catalog.json")):
+        try:
+            with manifest_path.open(encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            item = dict(data)
+            item.setdefault("manifest_path", str(manifest_path))
+            items.append(item)
+    return items
+
+
+def _catalog_manifest_dir(name: str) -> Path:
+    return _frontend_repo_root() / "fecompiler" / name
+
+
+def _frontend_repo_root() -> Path:
+    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+    return Path(__file__).resolve().parents[2]
 
 
 def _read_id(config: dict[str, Any], field: str, fallback: str) -> str:
@@ -284,6 +334,10 @@ def _expanded_isa_set(values: list[str]) -> set[str]:
 
 
 def _suite_supported_by_harness(test_suite: CatalogEntry, soc: CatalogEntry) -> bool:
+    supported = _soc_supported_test_suites(soc)
+    if supported:
+        return test_suite.id in supported
+
     requirements = {str(item) for item in test_suite.data.get("requires", [])}
     if not requirements:
         return True
@@ -311,6 +365,18 @@ def _core_supports_difftest(core: CatalogEntry | None) -> bool:
     if core is None:
         return True
     return bool(core.data.get("supports_difftest", True))
+
+
+def _soc_supports_difftest(soc: CatalogEntry | None) -> bool:
+    if soc is None:
+        return True
+    return bool(soc.data.get("supports_difftest", True))
+
+
+def _soc_supported_test_suites(soc: CatalogEntry | None) -> list[str]:
+    if soc is None:
+        return []
+    return [str(item).strip() for item in soc.data.get("supported_test_suites", []) if str(item).strip()]
 
 
 def _summary_for(

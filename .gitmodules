@@ -10,3 +10,9 @@
 [submodule "fecompiler/thirdparty/picorv32"]
 	path = fecompiler/thirdparty/picorv32
 	url = https://github.com/YosysHQ/picorv32.git
+[submodule "fecompiler/thirdparty/serv"]
+	path = fecompiler/thirdparty/serv
+	url = https://github.com/olofk/serv.git
+[submodule "fecompiler/thirdparty/scr1"]
+	path = fecompiler/thirdparty/scr1
+	url = https://github.com/syntacore/scr1.git

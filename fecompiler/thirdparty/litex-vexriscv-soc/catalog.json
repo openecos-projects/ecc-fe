@@ -1,0 +1,27 @@
+{
+  "id": "litex-vexriscv-soc",
+  "name": "LiteX VexRiscv SoC",
+  "description": "LiteX-generated SoC candidate using VexRiscv; listed for future ECOS wrapper and simulator integration.",
+  "variant": "litex-vexriscv",
+  "source": "opensource",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "wishbone-or-axi",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "BSD-2-Clause",
+  "repository": "https://github.com/enjoy-digital/litex",
+  "directory": "fecompiler/thirdparty/litex-vexriscv-soc",
+  "tags": [
+    "riscv",
+    "litex",
+    "vexriscv",
+    "candidate"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "picorv32",
+  "name": "PicoRV32",
+  "description": "Small RV32IM Verilog core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests are supported without CL3 difftest.",
+  "source": "opensource",
+  "isa": [
+    "rv32i",
+    "rv32im"
+  ],
+  "rtl_language": [
+    "verilog"
+  ],
+  "top_module": "picorv32",
+  "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_wrapper_top": "ecos_picorv32_cpu_wrapper",
+  "integration_level": "sim_ready",
+  "status": "experimental",
+  "supports_difftest": false,
+  "supported_test_suites": [
+    "cpu-tests",
+    "smoke"
+  ],
+  "license": "ISC",
+  "repository": "https://github.com/YosysHQ/picorv32",
+  "directory": "fecompiler/thirdparty/picorv32",
+  "cpu_filelist": "fecompiler/adapters/picorv32/filelist.cpu.f",
+  "requires_filelist": false,
+  "tags": [
+    "riscv",
+    "small",
+    "reference",
+    "sim-ready",
+    "experimental"
+  ]
+}

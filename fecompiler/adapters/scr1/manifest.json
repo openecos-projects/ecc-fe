@@ -1,0 +1,10 @@
+{
+  "id": "scr1",
+  "name": "SCR1",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_scr1_cpu_wrapper",
+  "sim_ready": true,
+  "cpu_filelist": "filelist.cpu.f",
+  "supports_difftest": false
+}

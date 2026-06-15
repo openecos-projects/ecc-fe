@@ -1,0 +1,9 @@
+{
+  "id": "picorv32",
+  "name": "PicoRV32",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_picorv32_cpu_wrapper",
+  "sim_ready": true,
+  "supports_difftest": false
+}

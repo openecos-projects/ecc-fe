@@ -8,6 +8,7 @@ runtime description here.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ class SocWrapper:
     sim_programs_dir: str = "tests/programs"
     sim_tests_dir: str = "tests/out"
     sim_build_test_script: str = "scripts/build_test.sh"
+    supports_difftest: bool = True
 
     def runtime_options(self) -> dict[str, Any]:
         if not self.sim_ready or self.root is None:
@@ -54,6 +56,7 @@ class SocWrapper:
             "sim_programs_dir": str(root / self.sim_programs_dir),
             "sim_tests_dir": str(root / self.sim_tests_dir),
             "sim_build_test_script": str(root / self.sim_build_test_script),
+            "soc_supports_difftest": self.supports_difftest,
         }
 
 
@@ -65,39 +68,15 @@ def get_soc_wrapper(config: dict[str, Any] | str | None) -> SocWrapper | None:
         data = dict(config or {})
         wrapper_id = _wrapper_id_from_config(data)
 
-    repo_root = _frontend_repo_root()
-    if wrapper_id == "ysyx-am-soc":
-        return _ysyx_wrapper("ysyx-am-soc", "YSYX AM SoC Harness", "soc1", repo_root / "fecompiler" / "thirdparty" / "SoC")
-    if wrapper_id == "ysyx-am-soc-alt":
-        return _ysyx_wrapper("ysyx-am-soc-alt", "YSYX AM SoC Harness Alt", "soc2", repo_root / "fecompiler" / "thirdparty" / "SoC2")
-    if wrapper_id == "ysyx-am-soc-extended":
-        return _ysyx_wrapper("ysyx-am-soc-extended", "YSYX AM SoC Harness Extended", "soc3", repo_root / "fecompiler" / "thirdparty" / "SoC3")
-    if wrapper_id == "minimal-riscv-soc":
-        return SocWrapper(
-            id="minimal-riscv-soc",
-            name="Minimal RISC-V SoC Harness",
-            variant="minimal-riscv",
-            root=None,
-            top_module="ecos_sim_top",
-            sim_ready=False,
-        )
+    manifest = _soc_manifest(wrapper_id)
+    if manifest is not None:
+        return _wrapper_from_manifest(manifest)
     return None
 
 
 def soc_runtime_options(config: dict[str, Any] | str | None) -> dict[str, Any]:
     wrapper = get_soc_wrapper(config)
     return wrapper.runtime_options() if wrapper is not None else {}
-
-
-def _ysyx_wrapper(wrapper_id: str, name: str, variant: str, root: Path) -> SocWrapper:
-    return SocWrapper(
-        id=wrapper_id,
-        name=name,
-        variant=variant,
-        root=root,
-        top_module="ecos_sim_top",
-        sim_ready=root.exists(),
-    )
 
 
 def _wrapper_id_from_config(data: dict[str, Any]) -> str:
@@ -124,3 +103,63 @@ def _frontend_repo_root() -> Path:
     if env_root:
         return Path(env_root).expanduser().resolve()
     return Path(__file__).resolve().parents[2]
+
+
+def _soc_manifest(wrapper_id: str) -> dict[str, Any] | None:
+    manifest_path = _manifest_paths().get(wrapper_id)
+    if manifest_path is None:
+        return None
+    with manifest_path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    return dict(data, _manifest_path=str(manifest_path)) if isinstance(data, dict) else None
+
+
+def _wrapper_from_manifest(data: dict[str, Any]) -> SocWrapper:
+    manifest_path = Path(str(data.get("_manifest_path", ""))).resolve()
+    root = manifest_path.parent if manifest_path.name else None
+    sim_ready = bool(data.get("sim_ready", False)) and root is not None and root.exists()
+    return SocWrapper(
+        id=str(data.get("id", "")).strip(),
+        name=str(data.get("name", "")).strip(),
+        variant=str(data.get("variant", "")).strip(),
+        root=root,
+        top_module=str(data.get("top_module", "ecos_sim_top")).strip() or "ecos_sim_top",
+        sim_ready=sim_ready,
+        contract=str(data.get("contract", "ecos-sim-wrapper-v1")).strip() or "ecos-sim-wrapper-v1",
+        soc_filelist=str(data.get("soc_filelist", "filelist.soc.f")).strip() or "filelist.soc.f",
+        testbench=str(data.get("testbench", "driver/main.cpp")).strip() or "driver/main.cpp",
+        sim_cpp_sources=tuple(_str_list(data.get("sim_cpp_sources", ["driver/dpi_mem.cpp", "driver/difftest.cpp"]))),
+        sim_cflags=tuple(_str_list(data.get("sim_cflags", ["-I{soc_root}"]))),
+        sim_ldflags=tuple(_str_list(data.get("sim_ldflags", ["-ldl"]))),
+        sim_programs_dir=str(data.get("sim_programs_dir", "tests/programs")).strip() or "tests/programs",
+        sim_tests_dir=str(data.get("sim_tests_dir", "tests/out")).strip() or "tests/out",
+        sim_build_test_script=str(data.get("sim_build_test_script", "scripts/build_test.sh")).strip() or "scripts/build_test.sh",
+        supports_difftest=bool(data.get("supports_difftest", True)),
+    )
+
+
+def _manifest_paths() -> dict[str, Path]:
+    root = _frontend_repo_root() / "fecompiler" / "thirdparty"
+    paths: dict[str, Path] = {}
+    if not root.exists():
+        return paths
+    for manifest_path in sorted(root.glob("*/manifest.json")):
+        try:
+            with manifest_path.open(encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        wrapper_id = str(data.get("id", "")).strip()
+        if wrapper_id:
+            paths[wrapper_id] = manifest_path
+    return paths
+
+
+def _str_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []

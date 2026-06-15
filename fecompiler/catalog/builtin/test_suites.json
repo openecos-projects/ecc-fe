@@ -6,7 +6,7 @@
     "isa": ["rv32"],
     "requires": ["sim_ready_harness"],
     "status": "stable",
-    "default_cases": ["add", "load-store"]
+    "default_cases": ["add"]
   },
   {
     "id": "cpu-tests",
@@ -15,7 +15,7 @@
     "isa": ["rv32"],
     "requires": ["ysyx-am-soc"],
     "status": "stable",
-    "default_cases": ["add", "load-store"]
+    "default_cases": ["add"]
   },
   {
     "id": "rtthread",

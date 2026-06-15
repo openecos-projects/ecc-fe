@@ -7,7 +7,9 @@ the selected SoC wrapper.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -47,19 +49,15 @@ def get_cpu_wrapper(config: dict[str, Any] | str | None) -> CpuWrapper | None:
             or DEFAULT_CPU_WRAPPER_ID
         )
 
+    manifest = _cpu_manifest(wrapper_id)
+    if manifest is not None:
+        return _wrapper_from_manifest(manifest)
+
     if wrapper_id == "custom-filelist":
         return CpuWrapper(
             id="custom-filelist",
             name="My CPU Filelist",
             sim_ready=True,
-        )
-    if wrapper_id == "picorv32":
-        return CpuWrapper(
-            id="picorv32",
-            name="PicoRV32",
-            wrapper_top="ecos_picorv32_cpu_wrapper",
-            sim_ready=True,
-            supports_difftest=False,
         )
     if wrapper_id == "scr1":
         return CpuWrapper(
@@ -83,3 +81,43 @@ def get_cpu_wrapper(config: dict[str, Any] | str | None) -> CpuWrapper | None:
             sim_ready=False,
         )
     return None
+
+
+def _cpu_manifest(wrapper_id: str) -> dict[str, Any] | None:
+    manifest_path = _manifest_paths().get(wrapper_id)
+    if manifest_path is None:
+        return None
+    with manifest_path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    return dict(data) if isinstance(data, dict) else None
+
+
+def _wrapper_from_manifest(data: dict[str, Any]) -> CpuWrapper:
+    return CpuWrapper(
+        id=str(data.get("id", "")).strip(),
+        name=str(data.get("name", "")).strip(),
+        socket_contract=str(data.get("socket_contract", DEFAULT_CPU_SOCKET)).strip() or DEFAULT_CPU_SOCKET,
+        wrapper_contract=str(data.get("wrapper_contract", "ecos-cpu-wrapper-v1")).strip() or "ecos-cpu-wrapper-v1",
+        wrapper_top=str(data.get("wrapper_top", "ysyx_00000000")).strip() or "ysyx_00000000",
+        sim_ready=bool(data.get("sim_ready", False)),
+        supports_difftest=bool(data.get("supports_difftest", True)),
+    )
+
+
+def _manifest_paths() -> dict[str, Path]:
+    root = Path(__file__).resolve().parents[1] / "adapters"
+    paths: dict[str, Path] = {}
+    if not root.exists():
+        return paths
+    for manifest_path in sorted(root.glob("*/manifest.json")):
+        try:
+            with manifest_path.open(encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        wrapper_id = str(data.get("id", "")).strip()
+        if wrapper_id:
+            paths[wrapper_id] = manifest_path
+    return paths

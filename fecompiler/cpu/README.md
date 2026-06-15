@@ -30,8 +30,36 @@ Adding a new CPU should require:
 
 1. Import or download the CPU RTL.
 2. Add a CPU wrapper that implements the ECOS CPU socket contract.
-3. Register CPU metadata including wrapper top, socket contract, ISA, filelist,
-   and integration level.
+3. Add a CPU adapter manifest next to the wrapper/filelist.
+4. Add catalog metadata next to the runtime manifest, including ISA,
+   repository, integration level, and
+   supported test suites.
+
+The runtime and catalog manifests live at:
+
+```text
+fecompiler/adapters/<cpu-id>/manifest.json
+fecompiler/adapters/<cpu-id>/catalog.json
+```
+
+Example:
+
+```json
+{
+  "id": "picorv32",
+  "name": "PicoRV32",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_picorv32_cpu_wrapper",
+  "sim_ready": true,
+  "supports_difftest": false
+}
+```
+
+The catalog manifest is merged after the builtin `cores.json` fallback and
+overrides any entry with the same `id`.  This lets new CPU integrations live in
+their own directory while older planned entries can remain in the central
+catalog until they are implemented.
 
 Until a CPU wrapper exists, the catalog entry should remain `filelist_ready` or
 `metadata_only`, not `sim_ready`.

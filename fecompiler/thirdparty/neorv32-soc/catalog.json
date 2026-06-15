@@ -1,0 +1,27 @@
+{
+  "id": "neorv32-soc",
+  "name": "NEORV32 SoC",
+  "description": "NEORV32 processor/SoC candidate for future ECOS open-source integration.",
+  "variant": "neorv32",
+  "source": "opensource",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "native-memory-mapped",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "BSD-3-Clause",
+  "repository": "https://github.com/stnolting/neorv32",
+  "directory": "fecompiler/thirdparty/neorv32-soc",
+  "tags": [
+    "riscv",
+    "neorv32",
+    "vhdl",
+    "candidate"
+  ]
+}

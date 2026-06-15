@@ -1,0 +1,31 @@
+{
+  "id": "ibex",
+  "name": "Ibex",
+  "description": "Production-quality 32-bit RISC-V SystemVerilog core from lowRISC. Listed as a future ECOS CPU wrapper target.",
+  "source": "opensource",
+  "isa": [
+    "rv32i",
+    "rv32e",
+    "rv32imc"
+  ],
+  "rtl_language": [
+    "systemverilog"
+  ],
+  "top_module": "ibex_core",
+  "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_wrapper_top": "ecos_ibex_cpu_wrapper",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "Apache-2.0",
+  "repository": "https://github.com/lowRISC/ibex",
+  "requires_filelist": false,
+  "tags": [
+    "riscv",
+    "embedded",
+    "systemverilog",
+    "candidate"
+  ]
+}

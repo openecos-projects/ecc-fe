@@ -1,0 +1,25 @@
+{
+  "id": "ysyx-am-soc-alt",
+  "name": "YSYX AM SoC Harness Alt",
+  "description": "Alternative copy of the current YSYX AM SoC harness kept for compatibility experiments.",
+  "variant": "soc2",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "ysyx-soc",
+  "integration_level": "sim_ready",
+  "status": "experimental",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": true,
+  "supported_test_suites": [
+    "smoke",
+    "cpu-tests"
+  ],
+  "directory": "fecompiler/thirdparty/SoC2",
+  "tags": [
+    "compatibility",
+    "cpu-tests"
+  ]
+}

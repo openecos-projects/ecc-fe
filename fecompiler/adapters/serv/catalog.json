@@ -1,0 +1,36 @@
+{
+  "id": "serv",
+  "name": "SERV",
+  "description": "Very small bit-serial RISC-V core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests are supported without difftest.",
+  "source": "opensource",
+  "isa": [
+    "rv32i",
+    "rv32i"
+  ],
+  "rtl_language": [
+    "verilog"
+  ],
+  "top_module": "serv_top",
+  "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_wrapper_top": "ecos_serv_cpu_wrapper",
+  "integration_level": "sim_ready",
+  "status": "experimental",
+  "supports_difftest": false,
+  "supported_test_suites": [
+    "cpu-tests",
+    "smoke"
+  ],
+  "license": "ISC",
+  "repository": "https://github.com/olofk/serv",
+  "directory": "fecompiler/thirdparty/serv",
+  "cpu_filelist": "fecompiler/adapters/serv/filelist.cpu.f",
+  "requires_filelist": false,
+  "tags": [
+    "riscv",
+    "small",
+    "bit-serial",
+    "sim-ready",
+    "experimental"
+  ]
+}

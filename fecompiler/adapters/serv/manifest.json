@@ -1,0 +1,9 @@
+{
+  "id": "serv",
+  "name": "SERV",
+  "socket_contract": "ysyx-axi-cpu-socket-v1",
+  "wrapper_contract": "ecos-cpu-wrapper-v1",
+  "wrapper_top": "ecos_serv_cpu_wrapper",
+  "sim_ready": true,
+  "supports_difftest": false
+}

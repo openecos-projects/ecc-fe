@@ -1,0 +1,27 @@
+{
+  "id": "opentitan-earlgrey",
+  "name": "OpenTitan Earl Grey",
+  "description": "OpenTitan Earl Grey top-level candidate. This is a larger SoC integration target for future ECOS exploration.",
+  "variant": "earlgrey",
+  "source": "opensource",
+  "isa": [
+    "rv32"
+  ],
+  "bus": "tlul",
+  "integration_level": "metadata_only",
+  "status": "planned",
+  "wrapper_contract": "ecos-sim-wrapper-v1",
+  "wrapper_top": "ecos_sim_top",
+  "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "supports_difftest": false,
+  "supported_test_suites": [],
+  "license": "Apache-2.0",
+  "repository": "https://github.com/lowRISC/opentitan",
+  "directory": "fecompiler/thirdparty/opentitan-earlgrey",
+  "tags": [
+    "riscv",
+    "opentitan",
+    "security",
+    "candidate"
+  ]
+}
