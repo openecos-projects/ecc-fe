@@ -240,16 +240,17 @@ class EngineFlow:
         )
 
     def _run_single_step(self, step: WorkspaceStep) -> None:
-        from fecompiler.tools.fe import STEP_REGISTRY
+        from fecompiler.tools.fe import get_step_registry
 
-        handler = STEP_REGISTRY.get(step.name)
+        handler = get_step_registry().get(step.name)
         if handler is None:
             raise RuntimeError(f"no step handler registered for: {step.name}")
         handler.run(step, self.workspace)
 
     def _check_step_result(self, step: WorkspaceStep) -> bool:
-        from fecompiler.tools.fe import STEP_REGISTRY
-        handler = STEP_REGISTRY.get(step.name)
+        from fecompiler.tools.fe import get_step_registry
+
+        handler = get_step_registry().get(step.name)
         if handler is None:
             return False
         return handler.check_result(step)

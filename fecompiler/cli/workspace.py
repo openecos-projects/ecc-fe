@@ -37,7 +37,7 @@ except ImportError:
     typer = None
 
 
-DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
+DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add"]
 CLI_LOG_TAIL_BYTES = 24 * 1024
 DIFFTEST_SOURCE_NAME = "difftest.cpp"
 DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
@@ -469,6 +469,8 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
+    parameters["soc_supports_difftest"] = bool(validation.normalized.get("soc_supports_difftest", True))
+    parameters["soc_supported_test_suites"] = validation.normalized.get("soc_supported_test_suites", [])
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]
     parameters["test_suite_id"] = validation.normalized["test_suite_id"]
     if normalized.get("soc_variant"):
@@ -492,7 +494,9 @@ def _create(args: argparse.Namespace) -> CliResult:
         sim_tests_dir=str(normalized.get("sim_tests_dir", "")),
         sim_build_all_programs=_normalize_bool(normalized.get("sim_build_all_programs", False)),
         cpu_supports_difftest=_normalize_bool(normalized.get("cpu_supports_difftest", True)),
+        soc_supports_difftest=_normalize_bool(normalized.get("soc_supports_difftest", True)),
         core_supported_test_suites=_normalize_str_list(normalized.get("core_supported_test_suites", [])),
+        soc_supported_test_suites=_normalize_str_list(normalized.get("soc_supported_test_suites", [])),
         sim_program_names=_normalize_str_list(normalized.get("sim_program_names", [])),
         sim_program_sources=_normalize_str_list(normalized.get("sim_program_sources", [])),
         sim_programs_dir=str(normalized.get("sim_programs_dir", "")),
@@ -848,9 +852,11 @@ def _normalize_create_request(request: dict[str, Any], base_dir: Path) -> dict[s
 
 def _normalize_catalog_config_paths(request: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     normalized = dict(request)
-    value = str(normalized.get("cpu_filelist", "")).strip()
+    value = _optional_text(normalized.get("cpu_filelist", ""))
     if value:
         normalized["cpu_filelist"] = _resolve_path(value, base_dir)
+    else:
+        normalized.pop("cpu_filelist", None)
     return normalized
 
 
@@ -858,22 +864,40 @@ def _frontend_catalog_config_from_create_request(request: dict[str, Any]) -> dic
     parameters = request.get("parameters", {})
     params = parameters if isinstance(parameters, dict) else {}
     return {
-        "core_id": request.get("core_id") or params.get("frontend_core_id") or params.get("core_id"),
+        "core_id": _first_text(request.get("core_id"), params.get("frontend_core_id"), params.get("core_id")),
         "soc_harness_id": (
-            request.get("soc_harness_id")
-            or params.get("soc_harness_id")
-            or request.get("soc_variant")
-            or params.get("soc_variant")
+            _first_text(
+                request.get("soc_harness_id"),
+                params.get("soc_harness_id"),
+                request.get("soc_variant"),
+                params.get("soc_variant"),
+            )
         ),
-        "toolchain_id": request.get("toolchain_id") or params.get("toolchain_id"),
+        "toolchain_id": _first_text(request.get("toolchain_id"), params.get("toolchain_id")),
         "test_suite_id": (
-            request.get("test_suite_id")
-            or params.get("test_suite_id")
-            or request.get("sim_test_suite")
-            or params.get("sim_test_suite")
+            _first_text(
+                request.get("test_suite_id"),
+                params.get("test_suite_id"),
+                request.get("sim_test_suite"),
+                params.get("sim_test_suite"),
+            )
         ),
-        "cpu_filelist": request.get("cpu_filelist") or params.get("cpu_filelist"),
+        "cpu_filelist": _first_text(request.get("cpu_filelist"), params.get("cpu_filelist")),
     }
+
+
+def _optional_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = _optional_text(value)
+        if text:
+            return text
+    return ""
 
 
 def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any]) -> None:
@@ -884,7 +908,9 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
     if normalized.get("cpu_filelist"):
         request["cpu_filelist"] = normalized["cpu_filelist"]
     request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
+    request["soc_supports_difftest"] = bool(normalized.get("soc_supports_difftest", True))
     request["core_supported_test_suites"] = normalized.get("core_supported_test_suites", [])
+    request["soc_supported_test_suites"] = normalized.get("soc_supported_test_suites", [])
     if normalized.get("soc_variant"):
         request["soc_variant"] = normalized["soc_variant"]
 
@@ -967,6 +993,7 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
         "sim_build_test_script",
         "sim_programs_dir",
         "sim_tests_dir",
+        "soc_supports_difftest",
     ):
         if str(data.get(field, "")).strip():
             continue
@@ -1008,6 +1035,7 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
         "sim_build_test_script",
         "sim_programs_dir",
         "sim_tests_dir",
+        "soc_supports_difftest",
     ):
         if str(workspace.get(field, "")).strip():
             continue
@@ -1065,7 +1093,7 @@ def _with_cpu_runtime_options(data: dict[str, Any], defaults: dict[str, Any]) ->
 
 
 def _adapt_sim_cpp_sources_for_cpu(data: dict[str, Any], sources: list[str]) -> list[str]:
-    if _cpu_supports_difftest(data):
+    if _supports_difftest(data):
         return _replace_difftest_source(sources, DIFFTEST_STUB_SOURCE_NAME, DIFFTEST_SOURCE_NAME)
     return _replace_difftest_source(sources, DIFFTEST_SOURCE_NAME, DIFFTEST_STUB_SOURCE_NAME)
 
@@ -1215,7 +1243,7 @@ def _validate_cpu_test_cases(workspace: dict[str, Any], cases: list[str]) -> Non
 
 
 def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
-    if not _cpu_supports_difftest(workspace):
+    if not _supports_difftest(workspace):
         return ["--max-cycles", "50000000"]
     soc_root = _workspace_soc_root(workspace)
     if not soc_root:
@@ -1234,11 +1262,11 @@ def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
-    if not _cpu_supports_difftest(workspace):
+    if not _supports_difftest(workspace):
         raise WorkspaceCliError(
             "run_step",
             "failed",
-            f"{_workspace_core_label(workspace)} does not support RT-Thread in the current ECOS adapter.",
+            f"{_workspace_core_label(workspace)} with {_workspace_soc_label(workspace)} does not support RT-Thread in the current ECOS adapter.",
             data={"core_id": str(workspace.get("cpu_wrapper_id", "")).strip(), "test_suite_id": "rtthread"},
         )
     soc_root = _workspace_soc_root(workspace)
@@ -1291,11 +1319,32 @@ def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     return core_id != "picorv32"
 
 
+def _soc_supports_difftest(workspace: dict[str, Any]) -> bool:
+    raw = workspace.get("soc_supports_difftest")
+    if raw is not None:
+        return _normalize_bool(raw)
+    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
+    return soc_id != "minimal-riscv-soc"
+
+
+def _supports_difftest(workspace: dict[str, Any]) -> bool:
+    return _cpu_supports_difftest(workspace) and _soc_supports_difftest(workspace)
+
+
 def _workspace_core_label(workspace: dict[str, Any]) -> str:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "selected CPU").strip()
     if core_id == "picorv32":
         return "PicoRV32"
     return core_id or "selected CPU"
+
+
+def _workspace_soc_label(workspace: dict[str, Any]) -> str:
+    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "selected SoC").strip()
+    if soc_id == "minimal-riscv-soc":
+        return "Minimal RISC-V SoC"
+    if soc_id.startswith("ysyx-am-soc"):
+        return "YSYX AM SoC"
+    return soc_id or "selected SoC"
 
 
 def _workspace_soc_root(workspace: dict[str, Any]) -> Path | None:

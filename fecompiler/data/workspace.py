@@ -22,8 +22,9 @@ _LIST_PARAMETER_FIELDS = (
     "sim_program_names",
     "sim_program_sources",
     "core_supported_test_suites",
+    "soc_supported_test_suites",
 )
-_BOOL_PARAMETER_FIELDS = ("sim_all_tests", "sim_build_all_programs", "cpu_supports_difftest")
+_BOOL_PARAMETER_FIELDS = ("sim_all_tests", "sim_build_all_programs", "cpu_supports_difftest", "soc_supports_difftest")
 _STR_PARAMETER_FIELDS = (
     "cpu_filelist",
     "soc_filelist",
@@ -116,7 +117,9 @@ class CreateWorkspaceData:
     sim_tests_dir: str = ""
     sim_build_all_programs: bool = False
     cpu_supports_difftest: bool = True
+    soc_supports_difftest: bool = True
     core_supported_test_suites: list[str] = field(default_factory=list)
+    soc_supported_test_suites: list[str] = field(default_factory=list)
     sim_program_names: list[str] = field(default_factory=list)
     sim_program_sources: list[str] = field(default_factory=list)
     sim_programs_dir: str = ""
@@ -233,7 +236,9 @@ def build_parameter_overrides(
     sim_tests_dir: str = "",
     sim_build_all_programs: bool = False,
     cpu_supports_difftest: bool = True,
+    soc_supports_difftest: bool = True,
     core_supported_test_suites: list[str] | None = None,
+    soc_supported_test_suites: list[str] | None = None,
     sim_program_names: list[str] | None = None,
     sim_program_sources: list[str] | None = None,
     sim_programs_dir: str = "",
@@ -263,7 +268,13 @@ def build_parameter_overrides(
         if resolved:
             updates[field] = resolved
 
-    for field in ("sim_cflags", "sim_ldflags", "sim_program_names", "core_supported_test_suites"):
+    for field in (
+        "sim_cflags",
+        "sim_ldflags",
+        "sim_program_names",
+        "core_supported_test_suites",
+        "soc_supported_test_suites",
+    ):
         cleaned = _clean_str_list(values[field])
         if cleaned:
             updates[field] = cleaned
@@ -273,7 +284,7 @@ def build_parameter_overrides(
         updates["sim_run_args"] = run_args
 
     for field in _BOOL_PARAMETER_FIELDS:
-        if field == "cpu_supports_difftest":
+        if field in {"cpu_supports_difftest", "soc_supports_difftest"}:
             updates[field] = _to_bool(values[field])
             continue
         if values[field]:
@@ -298,7 +309,7 @@ def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
 
 
 def _default_bool_parameter(field: str) -> bool:
-    if field == "cpu_supports_difftest":
+    if field in {"cpu_supports_difftest", "soc_supports_difftest"}:
         return True
     return False
 

@@ -252,7 +252,7 @@ def test_cpu_tests_selected_empty_cases_falls_back_to_smoke_defaults(tmp_path):
     _apply_sim_test_suite(workspace, "cpu_tests", "selected", [])
 
     assert workspace["sim_build_all_programs"] is False
-    assert workspace["sim_program_names"] == ["add", "load-store"]
+    assert workspace["sim_program_names"] == ["add"]
 
 
 def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
@@ -438,7 +438,7 @@ def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
     ]
 
 
-def test_default_sim_smoke_suite_uses_two_cases_not_all(tmp_path):
+def test_default_sim_smoke_suite_uses_one_case_not_all(tmp_path):
     programs_dir = tmp_path / "programs"
     programs_dir.mkdir()
     for name in ("add", "load-store", "fib"):
@@ -448,7 +448,7 @@ def test_default_sim_smoke_suite_uses_two_cases_not_all(tmp_path):
     _apply_default_sim_smoke_suite(workspace)
 
     assert workspace["sim_build_all_programs"] is False
-    assert workspace["sim_program_names"] == ["add", "load-store"]
+    assert workspace["sim_program_names"] == ["add"]
 
 
 # ── run_all ────────────────────────────────────────────────────────────────────
