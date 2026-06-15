@@ -125,6 +125,15 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
                     "test_suite_id",
                 )
             )
+        if not _suite_supported_by_core(test_suite, core):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "core_test_suite_not_supported",
+                    f"{core.name} does not support {test_suite.name} in the current ECOS adapter.",
+                    "test_suite_id",
+                )
+            )
         if test_suite.status == "planned":
             issues.append(
                 ValidationIssue(
@@ -151,6 +160,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
+        "cpu_supports_difftest": _core_supports_difftest(core),
+        "core_supported_test_suites": _core_supported_test_suites(core),
         "soc_harness_capability": soc.integration_level if soc is not None else "",
         "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
         "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
@@ -221,7 +232,13 @@ def _effective_cpu_filelist(config: dict[str, Any], core: CatalogEntry | None) -
         return filelist
     if core is None or bool(core.data.get("requires_filelist")):
         return ""
-    return str(core.data.get("cpu_filelist", "")).strip()
+    builtin = str(core.data.get("cpu_filelist", "")).strip()
+    if not builtin:
+        return ""
+    path = Path(builtin).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str((Path(__file__).resolve().parents[2] / path).resolve())
 
 
 def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:
@@ -277,6 +294,23 @@ def _suite_supported_by_harness(test_suite: CatalogEntry, soc: CatalogEntry) -> 
     if "ysyx-am-soc" in requirements and soc.id.startswith("ysyx-am-soc"):
         return True
     return not any(req.endswith("-soc") or req == "sim_ready_harness" for req in requirements)
+
+
+def _suite_supported_by_core(test_suite: CatalogEntry, core: CatalogEntry) -> bool:
+    supported = _core_supported_test_suites(core)
+    return not supported or test_suite.id in supported
+
+
+def _core_supported_test_suites(core: CatalogEntry | None) -> list[str]:
+    if core is None:
+        return []
+    return [str(item).strip() for item in core.data.get("supported_test_suites", []) if str(item).strip()]
+
+
+def _core_supports_difftest(core: CatalogEntry | None) -> bool:
+    if core is None:
+        return True
+    return bool(core.data.get("supports_difftest", True))
 
 
 def _summary_for(

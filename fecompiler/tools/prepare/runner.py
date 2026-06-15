@@ -79,6 +79,8 @@ class PrepareStep(BaseStep):
 
         def _add_filelist(label: str, path: str) -> None:
             data = self._parse_sv_filelist(path)
+            if label == "soc_filelist":
+                data = self._filter_soc_filelist_for_cpu_wrapper(data, workspace)
             _add_unique(data["rtl_files"], merged, seen_rtl)
             _add_unique(data["incdirs"], incdirs, seen_incdir)
             _add_unique(data["defines"], defines, seen_define)
@@ -134,11 +136,42 @@ class PrepareStep(BaseStep):
 
     @staticmethod
     def _filelist_info(path: str, data: dict[str, list[Any]]) -> dict[str, Any]:
-        return {
+        info = {
             "path": path,
             "rtl_files": len(data["rtl_files"]),
             "incdirs": len(data["incdirs"]),
             "defines": len(data["defines"]),
+        }
+        if data.get("filtered_rtl_files"):
+            info["filtered_rtl_files"] = len(data["filtered_rtl_files"])
+            info["filtered"] = [str(item) for item in data["filtered_rtl_files"]]
+        return info
+
+    @staticmethod
+    def _filter_soc_filelist_for_cpu_wrapper(
+        data: dict[str, list[Any]],
+        workspace: dict[str, Any],
+    ) -> dict[str, list[Any]]:
+        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
+        if not wrapper_top or wrapper_top == "ysyx_00000000":
+            return data
+
+        kept: list[Path] = []
+        filtered: list[Path] = []
+        for path in data["rtl_files"]:
+            p = Path(path)
+            if p.name == "ysyx_00000000.sv":
+                filtered.append(p)
+                continue
+            kept.append(p)
+
+        if not filtered:
+            return data
+        return {
+            "rtl_files": kept,
+            "incdirs": data["incdirs"],
+            "defines": data["defines"],
+            "filtered_rtl_files": filtered,
         }
 
     def _write_merged_filelist(self, step: WorkspaceStep, files: list[str]) -> Path:

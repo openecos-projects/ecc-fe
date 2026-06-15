@@ -39,6 +39,8 @@ except ImportError:
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add", "load-store"]
 CLI_LOG_TAIL_BYTES = 24 * 1024
+DIFFTEST_SOURCE_NAME = "difftest.cpp"
+DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
 
 _PATH_FIELDS = {
     "directory",
@@ -463,6 +465,8 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
     parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
+    parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
+    parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]
@@ -487,6 +491,8 @@ def _create(args: argparse.Namespace) -> CliResult:
         sim_all_tests=_normalize_bool(normalized.get("sim_all_tests", False)),
         sim_tests_dir=str(normalized.get("sim_tests_dir", "")),
         sim_build_all_programs=_normalize_bool(normalized.get("sim_build_all_programs", False)),
+        cpu_supports_difftest=_normalize_bool(normalized.get("cpu_supports_difftest", True)),
+        core_supported_test_suites=_normalize_str_list(normalized.get("core_supported_test_suites", [])),
         sim_program_names=_normalize_str_list(normalized.get("sim_program_names", [])),
         sim_program_sources=_normalize_str_list(normalized.get("sim_program_sources", [])),
         sim_programs_dir=str(normalized.get("sim_programs_dir", "")),
@@ -875,6 +881,10 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
     request["soc_harness_id"] = normalized.get("soc_harness_id", "")
     request["toolchain_id"] = normalized.get("toolchain_id", "")
     request["test_suite_id"] = normalized.get("test_suite_id", "")
+    if normalized.get("cpu_filelist"):
+        request["cpu_filelist"] = normalized["cpu_filelist"]
+    request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
+    request["core_supported_test_suites"] = normalized.get("core_supported_test_suites", [])
     if normalized.get("soc_variant"):
         request["soc_variant"] = normalized["soc_variant"]
 
@@ -973,6 +983,11 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
             data[field] = values
             changed = True
 
+    adapted_sources = _adapt_sim_cpp_sources_for_cpu(data, _normalize_str_list(data.get("sim_cpp_sources", [])))
+    if adapted_sources != _normalize_str_list(data.get("sim_cpp_sources", [])):
+        data["sim_cpp_sources"] = adapted_sources
+        changed = True
+
     return changed
 
 
@@ -1000,12 +1015,19 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
         if value:
             updates[field] = value
 
-    for field in ("sim_cpp_sources", "sim_cflags", "sim_ldflags"):
+    for field in ("sim_cflags", "sim_ldflags"):
         if _normalize_str_list(workspace.get(field, [])):
             continue
         values = _normalize_str_list(defaults.get(field, []))
         if values:
             updates[field] = values
+
+    existing_sources = _normalize_str_list(workspace.get("sim_cpp_sources", []))
+    default_sources = _normalize_str_list(defaults.get("sim_cpp_sources", []))
+    source_base = existing_sources or default_sources
+    adapted_sources = _adapt_sim_cpp_sources_for_cpu(workspace, source_base)
+    if adapted_sources and adapted_sources != existing_sources:
+        updates["sim_cpp_sources"] = adapted_sources
 
     if not updates:
         return False
@@ -1019,7 +1041,7 @@ def _default_soc_runtime_options(data: dict[str, Any]) -> dict[str, Any]:
 
     defaults = soc_runtime_options(data)
     if defaults:
-        return defaults
+        return _with_cpu_runtime_options(data, defaults)
 
     # Backward-compatible fallback for workspaces created before soc_wrapper_id
     # was introduced: infer the wrapper from an explicit SoC root/filelist.
@@ -1031,7 +1053,33 @@ def _default_soc_runtime_options(data: dict[str, Any]) -> dict[str, Any]:
         "sim_soc_root": str(root),
         "soc_harness_id": _soc_wrapper_id_from_root(root),
     }
-    return soc_runtime_options(inferred)
+    return _with_cpu_runtime_options(data, soc_runtime_options(inferred))
+
+
+def _with_cpu_runtime_options(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    if not defaults:
+        return {}
+    out = dict(defaults)
+    out["sim_cpp_sources"] = _adapt_sim_cpp_sources_for_cpu(data, _normalize_str_list(out.get("sim_cpp_sources", [])))
+    return out
+
+
+def _adapt_sim_cpp_sources_for_cpu(data: dict[str, Any], sources: list[str]) -> list[str]:
+    if _cpu_supports_difftest(data):
+        return _replace_difftest_source(sources, DIFFTEST_STUB_SOURCE_NAME, DIFFTEST_SOURCE_NAME)
+    return _replace_difftest_source(sources, DIFFTEST_SOURCE_NAME, DIFFTEST_STUB_SOURCE_NAME)
+
+
+def _replace_difftest_source(sources: list[str], old_name: str, new_name: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        path = Path(source)
+        candidate = str(path.with_name(new_name)) if path.name == old_name else source
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    return out
 
 
 def _should_apply_soc_runtime_options(data: dict[str, Any]) -> bool:
@@ -1073,7 +1121,8 @@ def _apply_sim_test_suite(
     if not suite_name or suite_name == "default":
         return
 
-    if suite_name == "cpu_tests":
+    if suite_name in {"cpu_tests", "cpu-tests", "smoke"}:
+        _validate_workspace_test_suite_supported(workspace, "cpu-tests")
         mode = str(cpu_test_mode or "all").strip().lower()
         cases = _normalize_str_list(cpu_test_cases)
         if mode not in {"all", "selected"}:
@@ -1090,6 +1139,7 @@ def _apply_sim_test_suite(
             "sim_run_args": _default_cpu_tests_run_args(workspace),
         }
     elif suite_name == "rtthread":
+        _validate_workspace_test_suite_supported(workspace, "rtthread")
         updates = {
             "sim_all_tests": False,
             "sim_images": [],
@@ -1104,6 +1154,7 @@ def _apply_sim_test_suite(
 
 
 def _apply_default_sim_smoke_suite(workspace: dict[str, Any]) -> None:
+    _validate_workspace_test_suite_supported(workspace, "cpu-tests")
     cases = _default_cpu_test_cases(workspace)
     if not cases:
         return
@@ -1164,6 +1215,8 @@ def _validate_cpu_test_cases(workspace: dict[str, Any], cases: list[str]) -> Non
 
 
 def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
+    if not _cpu_supports_difftest(workspace):
+        return ["--max-cycles", "50000000"]
     soc_root = _workspace_soc_root(workspace)
     if not soc_root:
         return ["--max-cycles", "50000000"]
@@ -1181,6 +1234,13 @@ def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
+    if not _cpu_supports_difftest(workspace):
+        raise WorkspaceCliError(
+            "run_step",
+            "failed",
+            f"{_workspace_core_label(workspace)} does not support RT-Thread in the current ECOS adapter.",
+            data={"core_id": str(workspace.get("cpu_wrapper_id", "")).strip(), "test_suite_id": "rtthread"},
+        )
     soc_root = _workspace_soc_root(workspace)
     args = ["--max-cycles", "10000000"]
     if not soc_root:
@@ -1196,6 +1256,46 @@ def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
         "0x80000000",
         "--timeout-ok",
     ]
+
+
+def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id: str) -> None:
+    supported = _workspace_supported_test_suites(workspace)
+    if supported and suite_id not in supported:
+        raise WorkspaceCliError(
+            "run_step",
+            "failed",
+            f"{_workspace_core_label(workspace)} does not support {suite_id} in the current ECOS adapter.",
+            data={
+                "core_id": str(workspace.get("cpu_wrapper_id", "")).strip(),
+                "test_suite_id": suite_id,
+                "supported_test_suites": supported,
+            },
+        )
+
+
+def _workspace_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
+    direct = _normalize_str_list(workspace.get("core_supported_test_suites", []))
+    if direct:
+        return direct
+    core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
+    if core_id == "picorv32":
+        return ["cpu-tests", "smoke"]
+    return []
+
+
+def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
+    raw = workspace.get("cpu_supports_difftest")
+    if raw is not None:
+        return _normalize_bool(raw)
+    core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
+    return core_id != "picorv32"
+
+
+def _workspace_core_label(workspace: dict[str, Any]) -> str:
+    core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "selected CPU").strip()
+    if core_id == "picorv32":
+        return "PicoRV32"
+    return core_id or "selected CPU"
 
 
 def _workspace_soc_root(workspace: dict[str, Any]) -> Path | None:
