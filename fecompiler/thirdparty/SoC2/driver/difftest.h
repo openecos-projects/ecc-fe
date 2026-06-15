@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <cstddef>
 
-class VysyxSoCTop;
+class Vecos_sim_top;
 
-void difftest_configure(const VysyxSoCTop *top,
+void difftest_configure(const Vecos_sim_top *top,
                         const char *ref_so_file,
                         const char *image_file,
                         uint32_t image_offset,

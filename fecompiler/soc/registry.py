@@ -23,7 +23,7 @@ class SocWrapper:
     name: str
     variant: str
     root: Path | None
-    top_module: str = "ysyxSoCTop"
+    top_module: str = "ecos_sim_top"
     sim_ready: bool = False
     contract: str = "ecos-sim-wrapper-v1"
     soc_filelist: str = "filelist.soc.f"
@@ -95,7 +95,7 @@ def _ysyx_wrapper(wrapper_id: str, name: str, variant: str, root: Path) -> SocWr
         name=name,
         variant=variant,
         root=root,
-        top_module="ysyxSoCTop",
+        top_module="ecos_sim_top",
         sim_ready=root.exists(),
     )
 

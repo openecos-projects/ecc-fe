@@ -21,10 +21,9 @@ module ecos_sim_top (
 endmodule
 ```
 
-The existing YSYX AM SoC flow still uses `ysyxSoCTop` as its compatible wrapper
-top.  Its manifest declares the same `ecos-sim-wrapper-v1` contract so the
-Python/CLI side can treat it as a standard SoC wrapper while the RTL top is
-migrated incrementally.
+The existing YSYX AM SoC flow now exposes `ecos_sim_top`, which wraps the
+private `ysyxSoCTop` internally.  The simulator driver should include and
+instantiate the generated `Vecos_sim_top` model.
 
 ## Integration Rule
 

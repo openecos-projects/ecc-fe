@@ -1,7 +1,7 @@
 #include "driver/difftest.h"
 
-#include "VysyxSoCTop.h"
-#include "VysyxSoCTop___024root.h"
+#include "Vecos_sim_top.h"
+#include "Vecos_sim_top___024root.h"
 
 #include <dlfcn.h>
 #include <svdpi.h>
@@ -51,7 +51,7 @@ using RefInit = void (*)(int port);
 
 CoreContext g_dut = {};
 CoreContext g_ref = {};
-const VysyxSoCTop *g_top = nullptr;
+const Vecos_sim_top *g_top = nullptr;
 void *g_ref_handle = nullptr;
 RefMemcpy g_ref_memcpy = nullptr;
 RefRegcpy g_ref_regcpy = nullptr;
@@ -68,7 +68,7 @@ uint32_t g_last_inst = 0;
 std::vector<uint8_t> g_ref_image;
 
 #define SOC_ROOT_FIELD(name) \
-  ysyxSoCTop__DOT__dut__DOT__asic__DOT__cpu__DOT__cpu__DOT__u_core__DOT__cl3_top__DOT__##name
+  ecos_sim_top__DOT__dut__DOT__dut__DOT__asic__DOT__cpu__DOT__cpu__DOT__u_core__DOT__cl3_top__DOT__##name
 
 [[noreturn]] void fatal(const char *msg) {
   std::fprintf(stderr, "[soc-sim][difftest] fatal: %s\n", msg);
@@ -298,7 +298,7 @@ void record_commit(uint32_t pc, uint32_t npc, uint32_t inst) {
 
 }  // namespace
 
-void difftest_configure(const VysyxSoCTop *top,
+void difftest_configure(const Vecos_sim_top *top,
                         const char *ref_so_file,
                         const char *image_file,
                         uint32_t image_offset,

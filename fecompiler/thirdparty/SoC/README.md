@@ -26,7 +26,7 @@ From repo root:
 ```bash
 python3 -m fecompiler.cli.main \
   --design cl3_soc \
-  --top ysyxSoCTop \
+  --top ecos_sim_top \
   --cpu-filelist /home/luyoung/ecc-fe/docs/examples/cl3/filelist.cpu.f \
   --soc-filelist /home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/filelist.soc.f \
   --testbench /home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/driver/main.cpp \

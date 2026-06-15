@@ -455,6 +455,8 @@ def _create(args: argparse.Namespace) -> CliResult:
     _validate_create_request_paths(normalized)
 
     parameters = _normalize_parameters(normalized.get("parameters", {}))
+    if normalized.get("top_module"):
+        parameters["Top module"] = normalized["top_module"]
     parameters.setdefault("Design Tool", "frontend")
     parameters["frontend_core_id"] = validation.normalized["core_id"]
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
@@ -944,6 +946,7 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
         "soc_variant",
         "soc_wrapper_id",
         "soc_wrapper_contract",
+        "top_module",
         "sim_soc_root",
         "soc_filelist",
         "testbench",
@@ -979,6 +982,7 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
         "soc_variant",
         "soc_wrapper_id",
         "soc_wrapper_contract",
+        "top_module",
         "sim_soc_root",
         "soc_filelist",
         "testbench",

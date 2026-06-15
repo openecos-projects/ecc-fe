@@ -99,7 +99,7 @@ from fecompiler.engine.flow import EngineFlow
 
 spec = CreateWorkspaceData(
     directory="/home/luyoung/ecc-fe/workspace_projects/cpu_soc_test",
-    parameters={"Design": "cpu_soc_test", "Top module": "ysyxSoCTop"},
+    parameters={"Design": "cpu_soc_test", "Top module": "ecos_sim_top"},
 
     # RTL inputs
     cpu_filelist="/path/to/cpu/filelist.cpu.f",
@@ -155,7 +155,7 @@ cd /home/luyoung/ecc-fe
 
 python3 -m fecompiler.cli.main \
   --design cl3_soc \
-  --top ysyxSoCTop \
+  --top ecos_sim_top \
   --cpu-filelist docs/examples/cl3/filelist.cpu.f \
   --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
   --testbench fecompiler/thirdparty/SoC/driver/main.cpp \

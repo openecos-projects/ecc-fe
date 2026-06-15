@@ -9,7 +9,7 @@
     "integration_level": "sim_ready",
     "status": "stable",
     "wrapper_contract": "ecos-sim-wrapper-v1",
-    "wrapper_top": "ysyxSoCTop",
+    "wrapper_top": "ecos_sim_top",
     "directory": "fecompiler/thirdparty/SoC",
     "tags": ["default", "cpu-tests", "rtthread"]
   },
@@ -23,7 +23,7 @@
     "integration_level": "sim_ready",
     "status": "experimental",
     "wrapper_contract": "ecos-sim-wrapper-v1",
-    "wrapper_top": "ysyxSoCTop",
+    "wrapper_top": "ecos_sim_top",
     "directory": "fecompiler/thirdparty/SoC2",
     "tags": ["compatibility", "cpu-tests"]
   },
@@ -37,7 +37,7 @@
     "integration_level": "sim_ready",
     "status": "experimental",
     "wrapper_contract": "ecos-sim-wrapper-v1",
-    "wrapper_top": "ysyxSoCTop",
+    "wrapper_top": "ecos_sim_top",
     "directory": "fecompiler/thirdparty/SoC3",
     "tags": ["compatibility", "cpu-tests"]
   },

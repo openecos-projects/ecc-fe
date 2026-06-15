@@ -1,4 +1,5 @@
 ysyxSoCFull.v
+ecos_sim_top.v
 ysyx_00000000.sv
 perip/amba/apb_delayer.v
 perip/amba/axi4_delayer.v

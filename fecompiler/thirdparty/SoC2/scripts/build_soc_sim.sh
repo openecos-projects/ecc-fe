@@ -73,7 +73,7 @@ fi
   --trace \
   --build -j "${JOBS}" --exe --timing --cc \
   --Mdir "${MDIR}" \
-  --top-module ysyxSoCTop \
+  --top-module ecos_sim_top \
   -o soc_top
 
 cp -f "${MDIR}/soc_top" "${OUT_BIN}"

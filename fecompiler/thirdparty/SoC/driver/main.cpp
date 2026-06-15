@@ -1,4 +1,4 @@
-#include "VysyxSoCTop.h"
+#include "Vecos_sim_top.h"
 #include "driver/difftest.h"
 #include "driver/dpi_mem.h"
 #include "verilated.h"
@@ -138,7 +138,7 @@ ParseResult parse_args(int argc, char **argv, Args *args) {
   return ParseResult::kOk;
 }
 
-void tick(VysyxSoCTop *top, VerilatedContext *contextp, VerilatedVcdC *tfp) {
+void tick(Vecos_sim_top *top, VerilatedContext *contextp, VerilatedVcdC *tfp) {
   top->clock = 0;
   top->eval();
   if (tfp != nullptr) {
@@ -175,7 +175,7 @@ int main(int argc, char **argv, char **) {
   contextp->commandArgs(argc, argv);
   contextp->traceEverOn(true);
   Verilated::traceEverOn(true);
-  const std::unique_ptr<VysyxSoCTop> top{new VysyxSoCTop{contextp.get(), ""}};
+  const std::unique_ptr<Vecos_sim_top> top{new Vecos_sim_top{contextp.get(), ""}};
   if (args.diff) {
     difftest_configure(top.get(), args.ref, args.image, args.diff_image_offset, args.diff_reset_vector);
   }
