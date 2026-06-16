@@ -195,9 +195,16 @@ int main(int argc, char **argv, char **) {
   top->reset = 0;
 
   uint64_t cycles = 0;
+  bool trap_seen = false;
+  uint32_t trap_code = 0;
   while (!contextp->gotFinish() && cycles < args.max_cycles) {
     tick(top.get(), contextp.get(), tfp);
     ++cycles;
+    if (top->trap_valid) {
+      trap_seen = true;
+      trap_code = static_cast<uint32_t>(top->trap_code);
+      break;
+    }
   }
 
   if (tfp != nullptr) {
@@ -205,6 +212,16 @@ int main(int argc, char **argv, char **) {
     delete tfp;
   }
   top->final();
+
+  if (trap_seen) {
+    if (trap_code == 0) {
+      std::cerr << "[soc-sim] HIT GOOD TRAP after " << cycles << " cycles\n";
+      return 0;
+    }
+    std::cerr << "[soc-sim] HIT BAD TRAP, code=" << trap_code
+              << " after " << cycles << " cycles\n";
+    return 1;
+  }
 
   if (cycles >= args.max_cycles) {
     difftest_dump_progress();

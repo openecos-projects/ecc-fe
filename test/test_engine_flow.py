@@ -255,6 +255,73 @@ def test_cpu_tests_selected_empty_cases_falls_back_to_smoke_defaults(tmp_path):
     assert workspace["sim_program_names"] == ["add"]
 
 
+def test_cpu_tests_empty_mode_defaults_to_selected_smoke_case(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    for name in ("add", "load-store", "fib"):
+        (programs_dir / f"{name}.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    workspace = {"sim_programs_dir": str(programs_dir)}
+
+    _apply_sim_test_suite(workspace, "cpu_tests", "", [])
+
+    assert workspace["sim_build_all_programs"] is False
+    assert workspace["sim_program_names"] == ["add"]
+
+
+def test_frontend_create_uses_soc_wrapper_top_even_with_legacy_top_param(tmp_path):
+    request = tmp_path / "create_frontend.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_frontend_top"),
+                "core_id": "picorv32",
+                "soc_harness_id": "minimal-riscv-soc",
+                "toolchain_id": "riscv32-unknown-elf",
+                "test_suite_id": "cpu-tests",
+                "parameters": {
+                    "Design": "chip",
+                    "Top module": "ysyxSoCTop",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_frontend_top"))
+
+    assert ws["top_module"] == "ecos_sim_top"
+    assert ws["soc_wrapper_top"] == "ecos_sim_top"
+    assert ws["soc_wrapper_id"] == "minimal-riscv-soc"
+
+
+def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
+    request = tmp_path / "create_frontend_smoke.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_frontend_smoke"),
+                "core_id": "picorv32",
+                "soc_harness_id": "minimal-riscv-soc",
+                "toolchain_id": "riscv32-unknown-elf",
+                "test_suite_id": "cpu-tests",
+                "parameters": {
+                    "Design": "chip",
+                    "Top module": "ecos_sim_top",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_frontend_smoke"))
+
+    assert ws["sim_build_all_programs"] is False
+    assert ws["sim_program_names"] == ["add"]
+    assert ws["sim_run_args"] == ["--max-cycles", "50000000"]
+
+
 def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
     soc_root = tmp_path / "SoC"
     soc_root.mkdir()
@@ -570,6 +637,126 @@ def test_prepare_merges_cpu_and_soc_filelists(tmp_path):
     assert set(prepared["rtl_files"]) == set(lines)
     assert set(prepared["incdirs"]) == {str(cpu_inc.resolve()), str(soc_inc.resolve())}
     assert prepared["defines"] == ["CPU_CFG=1", "SOC_CFG=1"]
+
+
+def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_path):
+    cpu_root = tmp_path / "cpu"
+    soc_root = tmp_path / "soc"
+    cpu_root.mkdir()
+    soc_root.mkdir()
+
+    cpu_alias = cpu_root / "ecos_cpu_wrapper.v"
+    soc_alias = soc_root / "ysyx_00000000.sv"
+    soc_top = soc_root / "ecos_sim_top.v"
+    cpu_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text("ecos_cpu_wrapper.v\n", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare_filter"),
+        parameters={
+            "Design": "chip",
+            "Top module": "ecos_sim_top",
+            "cpu_wrapper_top": "ecos_cpu_wrapper",
+        },
+        cpu_filelist=str(cpu_root / "filelist.cpu.f"),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_prepare_filter"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("prepare", rerun=True)
+
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+    prepare_report = json.loads(report.read_text(encoding="utf-8"))
+
+    assert state == StateEnum.Success
+    assert str(cpu_alias.resolve()) in prepared["rtl_files"]
+    assert str(soc_top.resolve()) in prepared["rtl_files"]
+    assert str(soc_alias.resolve()) not in prepared["rtl_files"]
+    assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
+
+
+def test_prepare_keeps_soc_cpu_alias_for_custom_filelist_without_adapter_alias(tmp_path):
+    cpu_root = tmp_path / "cpu"
+    soc_root = tmp_path / "soc"
+    cpu_root.mkdir()
+    soc_root.mkdir()
+
+    cpu_top = cpu_root / "custom_cpu.v"
+    soc_alias = soc_root / "ysyx_00000000.sv"
+    cpu_top.write_text("module custom_cpu(); endmodule\n", encoding="utf-8")
+    soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text("custom_cpu.v\n", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("ysyx_00000000.sv\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare_custom"),
+        parameters={
+            "Design": "chip",
+            "Top module": "ecos_sim_top",
+            "cpu_wrapper_top": "ysyx_00000000",
+        },
+        cpu_filelist=str(cpu_root / "filelist.cpu.f"),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_prepare_custom"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("prepare", rerun=True)
+
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+    prepare_report = json.loads(report.read_text(encoding="utf-8"))
+
+    assert state == StateEnum.Success
+    assert str(cpu_top.resolve()) in prepared["rtl_files"]
+    assert str(soc_alias.resolve()) in prepared["rtl_files"]
+    assert "filtered" not in prepare_report["inputs"]["soc_filelist"]
+
+
+def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path):
+    cpu_root = tmp_path / "cpu"
+    soc_root = tmp_path / "soc"
+    cpu_root.mkdir()
+    soc_root.mkdir()
+
+    (cpu_root / "cpu_alias.v").write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    (soc_root / "soc_alias.v").write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text(
+        f"cpu_alias.v\n{soc_root / 'soc_alias.v'}\n",
+        encoding="utf-8",
+    )
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare_duplicate_alias"),
+        parameters={
+            "Design": "chip",
+            "Top module": "ecos_sim_top",
+            "cpu_wrapper_top": "ysyx_00000000",
+            "soc_wrapper_id": "minimal-riscv-soc",
+        },
+        cpu_filelist=str(cpu_root / "filelist.cpu.f"),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_prepare_duplicate_alias"))
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("prepare", rerun=True)
+
+    assert state == StateEnum.Incomplete
+    prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
+    assert "requires exactly one ysyx_00000000 compatibility module" in prepare_subflow
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):

@@ -95,6 +95,8 @@ else
 fi
 if [[ "${SOC_USE_BOOTLOADER}" == "1" ]]; then
   PMEM_START=0x80000000
+elif [[ -n "${SOC_PROGRAM_LINK_BASE:-}" ]]; then
+  PMEM_START="${SOC_PROGRAM_LINK_BASE}"
 else
   PMEM_START=0x20000000
 fi
