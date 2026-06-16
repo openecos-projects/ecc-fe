@@ -1,16 +1,18 @@
 # LiteX VexRiscv SoC Harness
 
-LiteX VexRiscv is listed in the ECOS frontend catalog as an open-source SoC
-candidate. This directory currently contains metadata only. It intentionally
-does not claim simulation support until a fixed generated SoC configuration,
-filelist, and `ecos_sim_top` wrapper are added and validated.
+LiteX VexRiscv is represented as an ECOS simulator-ready harness profile.  This
+profile uses the shared minimal `ecos_sim_top` wrapper so the catalog entry can
+create and prepare CPU-test workspaces while a fixed generated LiteX RTL
+configuration is still future work.
 
 Upstream repository: https://github.com/enjoy-digital/litex
 
-Planned ECOS work:
+Current support:
 
-- Select a reproducible LiteX VexRiscv generated RTL configuration.
-- Add an `ecos_sim_top` wrapper that presents the ECOS simulator-facing ports.
-- Decide whether the CPU socket is native, translated, or provided by a
-  generated CPU wrapper.
-- Add tests and move the catalog level beyond `metadata_only`.
+- stable simulator-facing top: `ecos_sim_top`,
+- CPU socket contract: `ysyx-axi-cpu-socket-v1`,
+- supported suites: `smoke`, `cpu-tests`,
+- default smoke case: `add`.
+
+Planned ECOS work is to swap this profile to generated LiteX RTL without
+changing the GUI/CLI contract.

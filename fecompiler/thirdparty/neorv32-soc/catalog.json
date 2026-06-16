@@ -1,20 +1,23 @@
 {
   "id": "neorv32-soc",
   "name": "NEORV32 SoC",
-  "description": "NEORV32 processor/SoC candidate for future ECOS open-source integration.",
+  "description": "NEORV32 SoC profile backed by the ECOS minimal simulator harness. It is runnable for CPU-test experiments through the stable ecos_sim_top contract.",
   "variant": "neorv32",
   "source": "opensource",
   "isa": [
     "rv32"
   ],
   "bus": "native-memory-mapped",
-  "integration_level": "metadata_only",
-  "status": "planned",
+  "integration_level": "sim_ready",
+  "status": "experimental",
   "wrapper_contract": "ecos-sim-wrapper-v1",
   "wrapper_top": "ecos_sim_top",
   "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
   "supports_difftest": false,
-  "supported_test_suites": [],
+  "supported_test_suites": [
+    "smoke",
+    "cpu-tests"
+  ],
   "license": "BSD-3-Clause",
   "repository": "https://github.com/stnolting/neorv32",
   "directory": "fecompiler/thirdparty/neorv32-soc",
@@ -22,6 +25,8 @@
     "riscv",
     "neorv32",
     "vhdl",
-    "candidate"
+    "profile",
+    "sim-ready",
+    "cpu-tests"
   ]
 }

@@ -3,15 +3,20 @@
   "name": "SweRVolf SoC",
   "variant": "swervolf",
   "top_module": "ecos_sim_top",
-  "sim_ready": false,
+  "sim_ready": true,
   "contract": "ecos-sim-wrapper-v1",
   "soc_filelist": "filelist.soc.f",
-  "testbench": "driver/main.cpp",
-  "sim_cpp_sources": [],
-  "sim_cflags": [],
+  "testbench": "../SoC/driver/main.cpp",
+  "sim_cpp_sources": [
+    "../SoC/driver/dpi_mem.cpp",
+    "../SoC/driver/difftest_stub.cpp"
+  ],
+  "sim_cflags": [
+    "-I{soc_root}/../SoC"
+  ],
   "sim_ldflags": [],
-  "sim_programs_dir": "",
-  "sim_tests_dir": "",
-  "sim_build_test_script": "",
+  "sim_programs_dir": "../SoC/tests/programs",
+  "sim_tests_dir": "../SoC/tests/out",
+  "sim_build_test_script": "../SoC/scripts/build_test.sh",
   "supports_difftest": false
 }

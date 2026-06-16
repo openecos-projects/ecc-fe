@@ -74,6 +74,8 @@ module ecos_sim_top (
   reg [31:0] rdata_q;
   reg        rlast_q;
   reg [3:0]  rid_q;
+  reg        trap_valid_q;
+  reg [31:0] trap_code_q;
 
   function automatic [31:0] beat_bytes;
     input [2:0] size;
@@ -197,8 +199,8 @@ module ecos_sim_top (
   assign cpu_rid = rid_q;
 
   assign uart_tx = 1'b1;
-  assign trap_valid = 1'b0;
-  assign trap_code = 32'b0;
+  assign trap_valid = trap_valid_q;
+  assign trap_code = trap_code_q;
 
   always @(posedge clock) begin
     if (reset) begin
@@ -209,6 +211,8 @@ module ecos_sim_top (
       awsize_q <= 3'b010;
       bvalid_q <= 1'b0;
       bid_q <= 4'b0;
+      trap_valid_q <= 1'b0;
+      trap_code_q <= 32'b0;
     end else begin
       if (bvalid_q && cpu_bready) begin
         bvalid_q <= 1'b0;
@@ -225,6 +229,14 @@ module ecos_sim_top (
       if (aw_pending_q && !bvalid_q && cpu_wvalid) begin
         if (!is_local_mmio(awaddr_q)) begin
           mem_write(awaddr_q, {28'b0, cpu_wstrb}, cpu_wdata);
+        end else if (awaddr_q == UART_ADDR) begin
+`ifndef SYNTHESIS
+          $write("%c", cpu_wdata[7:0]);
+          $fflush();
+`endif
+        end else if (awaddr_q == HALT_ADDR) begin
+          trap_valid_q <= 1'b1;
+          trap_code_q <= cpu_wdata;
         end
 
         if (cpu_wlast || awlen_q == 8'b0) begin

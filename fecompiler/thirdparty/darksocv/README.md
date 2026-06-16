@@ -1,11 +1,16 @@
-# DarkSoCV Catalog Entry
+# DarkSoCV Harness Profile
 
-DarkSoCV is the SoC that ships with DarkRISCV.  It is listed as an ECOS
-candidate so users can see the direction of the catalog, but it is not wired to
-the ECOS simulator contract yet.
+DarkSoCV is represented in ECOS as a simulator-ready harness profile.  The
+profile keeps the public DarkSoCV catalog entry, but uses the shared
+`ecos_sim_top` CPU-test harness until a full DarkSoCV-specific simulator top is
+landed.
 
-Planned work:
+Current support:
 
-- add or reuse a simulator-facing `ecos_sim_top` wrapper,
-- connect the SoC or its CPU socket to `ysyx-axi-cpu-socket-v1`,
-- decide whether to use the DarkRISCV native firmware flow or ECOS CPU tests.
+- stable simulator-facing top: `ecos_sim_top`,
+- CPU socket contract: `ysyx-axi-cpu-socket-v1`,
+- supported suites: `smoke`, `cpu-tests`,
+- default smoke case: `add`.
+
+Future work can replace the shared minimal harness with a real DarkSoCV wrapper
+while keeping the same simulator-facing contract.

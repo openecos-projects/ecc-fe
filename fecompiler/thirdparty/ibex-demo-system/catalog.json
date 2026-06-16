@@ -1,20 +1,23 @@
 {
   "id": "ibex-demo-system",
   "name": "Ibex Demo System",
-  "description": "lowRISC Ibex demo system candidate; useful as a compact SoC target for Ibex-oriented ECOS integration.",
+  "description": "lowRISC Ibex demo system profile backed by the ECOS minimal simulator harness for CPU-test experiments with a stable ecos_sim_top contract.",
   "variant": "ibex-demo",
   "source": "opensource",
   "isa": [
     "rv32"
   ],
   "bus": "tlul-or-simple-memory",
-  "integration_level": "metadata_only",
-  "status": "planned",
+  "integration_level": "sim_ready",
+  "status": "experimental",
   "wrapper_contract": "ecos-sim-wrapper-v1",
   "wrapper_top": "ecos_sim_top",
   "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
   "supports_difftest": false,
-  "supported_test_suites": [],
+  "supported_test_suites": [
+    "smoke",
+    "cpu-tests"
+  ],
   "license": "Apache-2.0",
   "repository": "https://github.com/lowRISC/ibex-demo-system",
   "directory": "fecompiler/thirdparty/ibex-demo-system",
@@ -22,6 +25,8 @@
     "riscv",
     "ibex",
     "demo",
-    "candidate"
+    "profile",
+    "sim-ready",
+    "cpu-tests"
   ]
 }

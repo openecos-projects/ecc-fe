@@ -1,15 +1,18 @@
 # SweRVolf SoC Harness
 
-SweRVolf is listed in the ECOS frontend catalog as an open-source SoC
-candidate. This directory currently contains metadata only. It intentionally
-does not claim simulation support until the SoC RTL, filelist, wrapper, and
-test path are added and validated.
+SweRVolf is represented as an ECOS simulator-ready harness profile.  The
+profile uses the shared minimal `ecos_sim_top` wrapper for current CPU-test
+workspace creation while the full SweRVolf source integration remains future
+work.
 
 Upstream repository: https://github.com/chipsalliance/Cores-SweRVolf
 
-Planned ECOS work:
+Current support:
 
-- Add or fetch a stable SweRVolf source snapshot.
-- Add an `ecos_sim_top` wrapper with ECOS simulator-facing ports.
-- Decide which CPU socket adapter path ECOS will support.
-- Add runnable smoke tests before marking the harness `sim_ready`.
+- stable simulator-facing top: `ecos_sim_top`,
+- CPU socket contract: `ysyx-axi-cpu-socket-v1`,
+- supported suites: `smoke`, `cpu-tests`,
+- default smoke case: `add`.
+
+Planned ECOS work is to replace this profile with a stable SweRVolf RTL
+snapshot while keeping the same external simulator contract.
