@@ -1,7 +1,7 @@
 {
   "id": "femtorv-mini-soc",
-  "name": "FemtoRV Mini SoC Harness",
-  "description": "Small ECOS simulator harness profile for FemtoRV and other compact educational RISC-V cores.",
+  "name": "ECOS FemtoRV CPU Test Harness",
+  "description": "Local ECOS Verilog test harness profile for FemtoRV and compact educational RISC-V cores. It is a CPU-test environment, not a full SoC.",
   "variant": "femtorv-mini",
   "isa": [
     "rv32"
@@ -19,9 +19,10 @@
   ],
   "directory": "fecompiler/thirdparty/femtorv-mini-soc",
   "tags": [
+    "test-harness",
     "femtorv",
     "minimal",
     "cpu-tests",
-    "opensource"
+    "local"
   ]
 }

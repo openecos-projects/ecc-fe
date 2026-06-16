@@ -52,8 +52,8 @@
   },
   {
     "id": "minimal-riscv-soc",
-    "name": "Minimal RISC-V SoC Harness",
-    "description": "Small memory/UART harness for lightweight open-source RISC-V core demos.",
+    "name": "ECOS Minimal CPU Test Harness",
+    "description": "Local ECOS Verilog test harness for lightweight RISC-V CPU tests. It provides DPI memory, UART, and trap MMIO; it is not a full SoC.",
     "variant": "minimal-riscv",
     "isa": ["rv32"],
     "bus": "axi-lite-memory",
@@ -65,6 +65,6 @@
     "supports_difftest": false,
     "supported_test_suites": ["smoke", "cpu-tests"],
     "directory": "fecompiler/thirdparty/minimal-riscv-soc",
-    "tags": ["minimal", "cpu-tests", "opensource"]
+    "tags": ["test-harness", "minimal", "cpu-tests", "local"]
   }
 ]

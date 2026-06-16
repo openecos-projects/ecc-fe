@@ -1,7 +1,7 @@
 {
   "id": "corev-mini-soc",
-  "name": "CORE-V Mini SoC Harness",
-  "description": "Small ECOS simulator harness for experimenting with CORE-V style open-source RISC-V CPU wrappers.",
+  "name": "ECOS CORE-V CPU Test Harness",
+  "description": "Local ECOS Verilog test harness profile for CORE-V style RISC-V CPU wrappers. It is a CPU-test environment, not a full CORE-V SoC.",
   "variant": "corev-mini",
   "isa": [
     "rv32"
@@ -19,9 +19,10 @@
   ],
   "directory": "fecompiler/thirdparty/corev-mini-soc",
   "tags": [
+    "test-harness",
     "core-v",
     "minimal",
     "cpu-tests",
-    "opensource"
+    "local"
   ]
 }

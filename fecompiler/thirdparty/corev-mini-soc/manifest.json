@@ -1,6 +1,6 @@
 {
   "id": "corev-mini-soc",
-  "name": "CORE-V Mini SoC Harness",
+  "name": "ECOS CORE-V CPU Test Harness",
   "variant": "corev-mini",
   "top_module": "ecos_sim_top",
   "sim_ready": true,

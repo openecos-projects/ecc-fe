@@ -1,6 +1,6 @@
 {
   "id": "femtorv-mini-soc",
-  "name": "FemtoRV Mini SoC Harness",
+  "name": "ECOS FemtoRV CPU Test Harness",
   "variant": "femtorv-mini",
   "top_module": "ecos_sim_top",
   "sim_ready": true,

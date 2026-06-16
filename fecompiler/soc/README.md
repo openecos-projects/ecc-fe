@@ -48,7 +48,7 @@ Example:
 ```json
 {
   "id": "minimal-riscv-soc",
-  "name": "Minimal RISC-V SoC Harness",
+  "name": "ECOS Minimal CPU Test Harness",
   "variant": "minimal-riscv",
   "top_module": "ecos_sim_top",
   "sim_ready": true,

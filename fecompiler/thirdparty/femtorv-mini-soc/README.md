@@ -1,8 +1,9 @@
-# FemtoRV Mini SoC Harness
+# ECOS FemtoRV CPU Test Harness
 
-This is an ECOS catalog harness for small open-source RV32 cores such as
-FemtoRV32.  The first implementation reuses the shared minimal ECOS simulator
-top and the existing CPU-test driver/runtime from `fecompiler/thirdparty/SoC`.
+This is a local ECOS Verilog CPU test harness profile for small open-source RV32
+cores such as FemtoRV32. It is not a full SoC implementation. The first
+implementation reuses the shared minimal ECOS simulator top and the existing
+CPU-test driver/runtime from `fecompiler/thirdparty/SoC`.
 
 The goal is to keep the SoC side stable while CPU adapters evolve independently:
 
