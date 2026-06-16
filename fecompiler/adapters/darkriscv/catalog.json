@@ -1,7 +1,7 @@
 {
   "id": "darkriscv",
   "name": "DarkRISCV",
-  "description": "Small BSD-licensed RV32 core with a native Harvard bus. RTL filelist is available; ECOS simulation wrapper is planned.",
+  "description": "Small BSD-licensed RV32 core with a native Harvard bus and an experimental ECOS CPU wrapper for the ysyx AXI CPU socket. Start with one basic CPU test such as add.",
   "source": "opensource",
   "isa": [
     "rv32i",
@@ -14,20 +14,24 @@
   "cpu_wrapper_contract": "ecos-cpu-wrapper-v1",
   "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
   "cpu_wrapper_top": "ecos_darkriscv_cpu_wrapper",
-  "integration_level": "filelist_ready",
-  "status": "planned",
+  "integration_level": "sim_ready",
+  "status": "experimental",
   "supports_difftest": false,
-  "supported_test_suites": [],
+  "supported_test_suites": [
+    "cpu-tests",
+    "smoke"
+  ],
   "license": "BSD-3-Clause",
   "repository": "https://github.com/darklife/darkriscv",
   "directory": "fecompiler/thirdparty/darkriscv",
   "cpu_filelist": "fecompiler/adapters/darkriscv/filelist.cpu.f",
+  "sim_program_link_base": "0x0",
   "requires_filelist": false,
   "tags": [
     "riscv",
     "small",
     "harvard",
-    "filelist-ready",
-    "candidate"
+    "sim-ready",
+    "experimental"
   ]
 }

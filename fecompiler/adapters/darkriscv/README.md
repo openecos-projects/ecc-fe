@@ -1,15 +1,16 @@
 # DarkRISCV CPU Catalog Entry
 
-DarkRISCV is included as a real third-party RTL source candidate for future ECOS
-CPU adapter work.
+DarkRISCV is included as a real third-party RTL source with an experimental ECOS
+CPU adapter.
 
-This entry is intentionally marked `filelist_ready`, not `sim_ready`.  The core
-has a native Harvard-style memory interface and an upstream reset-PC convention
-that needs a dedicated ECOS wrapper before it can run the standard CPU tests.
+The core has a native Harvard-style memory interface and resets at a low address.
+`ecos_darkriscv_cpu_wrapper.v` keeps the upstream RTL unchanged and maps that low
+address alias into the ECOS CPU-test memory window used by the simulator harness.
 
 Current status:
 
 - Upstream source is available in `fecompiler/thirdparty/darkriscv`.
-- `filelist.cpu.f` points at the DarkRISCV core RTL.
-- Simulation is blocked until `ecos_darkriscv_cpu_wrapper` is implemented and
-  validated against `ysyx-axi-cpu-socket-v1`.
+- `filelist.cpu.f` points at the DarkRISCV core RTL and ECOS wrapper.
+- The adapter exposes `ysyx-axi-cpu-socket-v1`.
+- CPU Tests are enabled for basic one-case experiments such as `add`.
+- Difftest and RT-Thread are not supported by this adapter.
