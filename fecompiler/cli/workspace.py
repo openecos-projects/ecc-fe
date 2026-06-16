@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from fecompiler.catalog import catalog_payload, validate_frontend_config
+from fecompiler.catalog import catalog_payload, check_catalog_contracts, validate_frontend_config
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
@@ -120,6 +120,9 @@ def build_parser() -> argparse.ArgumentParser:
     catalog = subparsers.add_parser("catalog-list", help="List frontend core/SoC/toolchain/test catalogs")
     _add_json_flag(catalog)
 
+    catalog_check = subparsers.add_parser("catalog-check", help="Check frontend catalog adapter contracts")
+    _add_json_flag(catalog_check)
+
     validate = subparsers.add_parser("validate-config", help="Validate a frontend catalog configuration")
     _add_json_flag(validate)
     validate.add_argument("--input-json", default="", help="Frontend config JSON path, or '-' for stdin")
@@ -144,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_step.add_argument("--step", required=True)
     run_step.add_argument("--rerun", action="store_true")
     run_step.add_argument("--sim-test-suite", default="")
-    run_step.add_argument("--sim-cpu-test-mode", default="all")
+    run_step.add_argument("--sim-cpu-test-mode", default="selected")
     run_step.add_argument("--sim-cpu-test-case", action="append", default=[])
 
     get_info = subparsers.add_parser("get-info", help="Get step information")
@@ -310,6 +313,12 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
     ) -> None:
         finish("catalog-list", json_output, _catalog_list)
 
+    @app.command("catalog-check", help="Check frontend catalog adapter contracts")
+    def catalog_check_cmd(
+        json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+    ) -> None:
+        finish("catalog-check", json_output, _catalog_check)
+
     @app.command("validate-config", help="Validate a frontend catalog configuration")
     def validate_config_cmd(
         input_json: Annotated[
@@ -356,7 +365,7 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
         step: Annotated[str, typer.Option("--step")] = "",
         rerun: Annotated[bool, typer.Option("--rerun")] = False,
         sim_test_suite: Annotated[str | None, typer.Option("--sim-test-suite")] = None,
-        sim_cpu_test_mode: Annotated[str, typer.Option("--sim-cpu-test-mode")] = "all",
+        sim_cpu_test_mode: Annotated[str, typer.Option("--sim-cpu-test-mode")] = "selected",
         sim_cpu_test_case: Annotated[list[str] | None, typer.Option("--sim-cpu-test-case")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
@@ -401,6 +410,8 @@ def _dispatch(args: argparse.Namespace) -> CliResult:
         return _create(args)
     if command == "catalog-list":
         return _catalog_list()
+    if command == "catalog-check":
+        return _catalog_check()
     if command == "validate-config":
         return _validate_config(args)
     if command == "load":
@@ -422,6 +433,16 @@ def _catalog_list() -> CliResult:
         response="success",
         data=catalog_payload(),
         message=["frontend catalog list loaded"],
+    )
+
+
+def _catalog_check() -> CliResult:
+    result = check_catalog_contracts()
+    return CliResult(
+        cmd="catalog_check",
+        response="success" if result.ok else "failed",
+        data=result.to_dict(),
+        message=[result.summary],
     )
 
 
@@ -467,8 +488,12 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
+    if validation.normalized.get("core_sim_program_link_base"):
+        parameters["sim_program_link_base"] = validation.normalized["core_sim_program_link_base"]
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
+    parameters["soc_wrapper_contract"] = validation.normalized.get("soc_wrapper_contract", "")
+    parameters["soc_wrapper_top"] = validation.normalized.get("soc_wrapper_top", "")
     parameters["soc_supports_difftest"] = bool(validation.normalized.get("soc_supports_difftest", True))
     parameters["soc_supported_test_suites"] = validation.normalized.get("soc_supported_test_suites", [])
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]
@@ -503,11 +528,14 @@ def _create(args: argparse.Namespace) -> CliResult:
         sim_tests_out_dir=str(normalized.get("sim_tests_out_dir", "")),
         sim_soc_root=str(normalized.get("sim_soc_root", "")),
         sim_build_test_script=str(normalized.get("sim_build_test_script", "")),
+        sim_program_link_base=str(normalized.get("sim_program_link_base", "")),
         rtl_list=_normalize_str_list(normalized.get("rtl_list", [])),
     )
     workspace = create_workspace(spec)
     if workspace is None:
         raise WorkspaceCliError("create_workspace", "failed", f"create frontend workspace failed: {directory}")
+    _repair_workspace_sim_defaults(workspace)
+    _apply_workspace_create_test_suite_defaults(workspace, validation.normalized["test_suite_id"])
 
     engine = _build_engine(workspace)
     engine.create_step_workspaces()
@@ -905,6 +933,8 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
     request["soc_harness_id"] = normalized.get("soc_harness_id", "")
     request["toolchain_id"] = normalized.get("toolchain_id", "")
     request["test_suite_id"] = normalized.get("test_suite_id", "")
+    if normalized.get("soc_wrapper_top"):
+        request["top_module"] = normalized["soc_wrapper_top"]
     if normalized.get("cpu_filelist"):
         request["cpu_filelist"] = normalized["cpu_filelist"]
     request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
@@ -913,6 +943,8 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
     request["soc_supported_test_suites"] = normalized.get("soc_supported_test_suites", [])
     if normalized.get("soc_variant"):
         request["soc_variant"] = normalized["soc_variant"]
+    if normalized.get("core_sim_program_link_base"):
+        request["sim_program_link_base"] = normalized["core_sim_program_link_base"]
 
 
 def _normalize_parameters(raw: Any) -> dict[str, Any]:
@@ -1142,7 +1174,7 @@ def _soc_wrapper_id_from_root(root: Path) -> str:
 def _apply_sim_test_suite(
     workspace: dict[str, Any],
     suite: Any,
-    cpu_test_mode: Any = "all",
+    cpu_test_mode: Any = "selected",
     cpu_test_cases: Any = None,
 ) -> None:
     suite_name = str(suite or "").strip()
@@ -1151,7 +1183,7 @@ def _apply_sim_test_suite(
 
     if suite_name in {"cpu_tests", "cpu-tests", "smoke"}:
         _validate_workspace_test_suite_supported(workspace, "cpu-tests")
-        mode = str(cpu_test_mode or "all").strip().lower()
+        mode = str(cpu_test_mode or "selected").strip().lower()
         cases = _normalize_str_list(cpu_test_cases)
         if mode not in {"all", "selected"}:
             raise WorkspaceCliError("run_step", "failed", f"unknown CPU Tests mode: {mode}")
@@ -1179,6 +1211,19 @@ def _apply_sim_test_suite(
         raise WorkspaceCliError("run_step", "failed", f"unknown frontend sim test suite: {suite_name}")
 
     _update_workspace_parameters(workspace, updates)
+
+
+def _apply_workspace_create_test_suite_defaults(workspace: dict[str, Any], test_suite_id: Any) -> None:
+    suite = str(test_suite_id or "").strip()
+    if not suite or suite == "default":
+        return
+    if _normalize_str_list(workspace.get("sim_program_names", [])) or _normalize_str_list(workspace.get("sim_images", [])):
+        return
+    if suite in {"smoke", "cpu-tests", "cpu_tests"}:
+        _apply_default_sim_smoke_suite(workspace)
+        return
+    if suite == "rtthread":
+        _apply_sim_test_suite(workspace, "rtthread")
 
 
 def _apply_default_sim_smoke_suite(workspace: dict[str, Any]) -> None:
@@ -1292,9 +1337,10 @@ def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id
         raise WorkspaceCliError(
             "run_step",
             "failed",
-            f"{_workspace_core_label(workspace)} does not support {suite_id} in the current ECOS adapter.",
+            f"{_workspace_core_label(workspace)} on {_workspace_soc_label(workspace)} does not support {suite_id} in the current ECOS adapter.",
             data={
                 "core_id": str(workspace.get("cpu_wrapper_id", "")).strip(),
+                "soc_harness_id": str(workspace.get("soc_wrapper_id", "")).strip(),
                 "test_suite_id": suite_id,
                 "supported_test_suites": supported,
             },
@@ -1302,12 +1348,45 @@ def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id
 
 
 def _workspace_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
-    direct = _normalize_str_list(workspace.get("core_supported_test_suites", []))
-    if direct:
-        return direct
+    core_supported = _normalize_str_list(workspace.get("core_supported_test_suites", []))
+    soc_supported = _normalize_str_list(workspace.get("soc_supported_test_suites", []))
+    if core_supported and soc_supported:
+        return [suite for suite in core_supported if suite in soc_supported]
+    if core_supported:
+        return [suite for suite in core_supported if suite in _fallback_soc_supported_test_suites(workspace)]
+    if soc_supported:
+        return [suite for suite in _fallback_core_supported_test_suites(workspace) if suite in soc_supported]
+
+    core_fallback = _fallback_core_supported_test_suites(workspace)
+    soc_fallback = _fallback_soc_supported_test_suites(workspace)
+    if core_fallback and soc_fallback:
+        return [suite for suite in core_fallback if suite in soc_fallback]
+    if core_fallback:
+        return core_fallback
+    return soc_fallback
+
+
+def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id == "picorv32":
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "darkriscv"}:
         return ["cpu-tests", "smoke"]
+    if core_id in {"custom-filelist", "ysyx_00000000", ""}:
+        return ["smoke", "cpu-tests", "rtthread"]
+    return []
+
+
+def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
+    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
+    if soc_id == "ysyx-am-soc":
+        return ["smoke", "cpu-tests", "rtthread"]
+    if soc_id in {
+        "ysyx-am-soc-alt",
+        "ysyx-am-soc-extended",
+        "minimal-riscv-soc",
+        "corev-mini-soc",
+        "femtorv-mini-soc",
+    }:
+        return ["smoke", "cpu-tests"]
     return []
 
 
@@ -1316,7 +1395,9 @@ def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     if raw is not None:
         return _normalize_bool(raw)
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    return core_id != "picorv32"
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "darkriscv"}:
+        return False
+    return True
 
 
 def _soc_supports_difftest(workspace: dict[str, Any]) -> bool:
@@ -1324,7 +1405,9 @@ def _soc_supports_difftest(workspace: dict[str, Any]) -> bool:
     if raw is not None:
         return _normalize_bool(raw)
     soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
-    return soc_id != "minimal-riscv-soc"
+    if soc_id in {"minimal-riscv-soc", "corev-mini-soc", "femtorv-mini-soc"}:
+        return False
+    return True
 
 
 def _supports_difftest(workspace: dict[str, Any]) -> bool:

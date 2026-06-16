@@ -480,6 +480,10 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         env["SOC_USE_BOOTLOADER"] = "1"
         env["SOC_FAST_DIFF_BOOT"] = "1"
         lines.append("[build_program] difftest fast boot env enabled")
+    link_base = str(workspace.get("sim_program_link_base", "")).strip()
+    if link_base:
+        env["SOC_PROGRAM_LINK_BASE"] = link_base
+        lines.append(f"[build_program] program link base={link_base}")
     for src in sources:
         name = src.stem
         case_name = _safe_case_name(f"{name}.soc")

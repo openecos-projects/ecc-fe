@@ -35,9 +35,11 @@ _STR_PARAMETER_FIELDS = (
     "sim_tests_out_dir",
     "sim_soc_root",
     "sim_build_test_script",
+    "sim_program_link_base",
     "soc_variant",
     "soc_wrapper_id",
     "soc_wrapper_contract",
+    "soc_wrapper_top",
     "cpu_wrapper_id",
     "cpu_wrapper_contract",
     "cpu_socket_contract",
@@ -54,6 +56,7 @@ _PARAMETER_OVERRIDE_FIELDS = (
     "sim_tests_out_dir",
     "sim_soc_root",
     "sim_build_test_script",
+    "sim_program_link_base",
 )
 
 
@@ -126,6 +129,7 @@ class CreateWorkspaceData:
     sim_tests_out_dir: str = ""
     sim_soc_root: str = ""
     sim_build_test_script: str = ""
+    sim_program_link_base: str = ""
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -245,6 +249,7 @@ def build_parameter_overrides(
     sim_tests_out_dir: str = "",
     sim_soc_root: str = "",
     sim_build_test_script: str = "",
+    sim_program_link_base: str = "",
 ) -> dict[str, Any]:
     """Normalize runtime option fields into parameters/home schema."""
     updates: dict[str, Any] = {}
@@ -262,6 +267,9 @@ def build_parameter_overrides(
     ):
         if values[field]:
             updates[field] = _resolve_param_path(values[field])
+
+    if sim_program_link_base:
+        updates["sim_program_link_base"] = str(sim_program_link_base).strip()
 
     for field in ("sim_cpp_sources", "sim_images", "sim_program_sources"):
         resolved = _resolve_param_paths(values[field])

@@ -53,6 +53,34 @@ lint   (verilator)  verilator --lint-only
 sim    (verilator)  compile simulator, build/run simulation cases
 ```
 
+## Frontend Catalog Adapter Contract
+
+Open-source CPU and SoC integrations are catalog driven.  A CPU or SoC should
+only be marked `sim_ready` after its wrapper/filelist/runtime manifest follows
+the shared ECOS contracts:
+
+- CPU wrapper contract: `ecos-cpu-wrapper-v1`
+- CPU socket contract: `ysyx-axi-cpu-socket-v1`
+- SoC simulator wrapper contract: `ecos-sim-wrapper-v1`
+- SoC simulator top: `ecos_sim_top`
+
+The high-level shape is:
+
+```text
+CPU RTL -> CPU wrapper -> ysyx-axi-cpu-socket-v1
+       -> SoC wrapper/harness -> ecos_sim_top -> Verilator main.cpp / GUI
+```
+
+Before claiming a new adapter is runnable, run the static catalog check:
+
+```bash
+python3 -m fecompiler.cli.workspace catalog-check --json
+```
+
+This command does not build or simulate.  It checks that `sim_ready` catalog
+entries have concrete filelists, wrapper tops, runtime manifests, C++ simulator
+sources, and at least one supported test suite.
+
 ## Workspace Output
 
 Each project is created under `workspace_projects/<design>/` by default.

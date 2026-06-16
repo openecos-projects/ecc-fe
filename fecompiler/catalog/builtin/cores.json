@@ -12,6 +12,8 @@
     "cpu_wrapper_top": "ysyx_00000000",
     "integration_level": "sim_ready",
     "status": "stable",
+    "supports_difftest": true,
+    "supported_test_suites": ["smoke", "cpu-tests", "rtthread"],
     "license": "user-provided",
     "repository": "",
     "requires_filelist": true,

@@ -9,6 +9,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
 
 CATALOG_VERSION = 1
@@ -28,6 +29,11 @@ _CATEGORY_FILES = {
 def catalog_payload() -> dict[str, Any]:
     """Return the full catalog payload used by CLI and GUI."""
     catalog = _catalog()
+    compatibility = compatibility_matrix(
+        catalog["cores"],
+        catalog["soc_harnesses"],
+        catalog["test_suites"],
+    )
     return {
         "version": CATALOG_VERSION,
         "defaults": {
@@ -40,6 +46,7 @@ def catalog_payload() -> dict[str, Any]:
             category: [entry.to_dict() for entry in entries]
             for category, entries in catalog.items()
         },
+        "compatibility": [entry.to_dict() for entry in compatibility],
     }
 
 
@@ -75,7 +82,9 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
             issues.append(ValidationIssue("error", "cpu_filelist_not_found", f"CPU filelist not found: {filelist}", "cpu_filelist"))
 
     entries = [entry for entry in (core, soc, toolchain, test_suite) if entry is not None]
+    compatibility = None
     if len(entries) == 4:
+        compatibility = compatibility_for_pair(core, soc, catalog["test_suites"])
         if not _isa_compatible(core, soc, toolchain, test_suite):
             issues.append(
                 ValidationIssue(
@@ -85,6 +94,17 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
                     "isa",
                 )
             )
+
+        if not compatibility.can_create_workspace:
+            for issue in compatibility.issues:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        str(issue.get("code", "combination_not_ready")),
+                        str(issue.get("message", "CPU/SoC combination is not ready.")),
+                        "compatibility",
+                    )
+                )
         if not _cpu_socket_compatible(core, soc):
             issues.append(
                 ValidationIssue(
@@ -127,6 +147,15 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
                     "test_suite_id",
                 )
             )
+        if compatibility is not None and test_suite.id not in compatibility.supported_test_suites:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "combination_test_suite_not_supported",
+                    f"{test_suite.name} is not ready for {core.name} on {soc.name}.",
+                    "test_suite_id",
+                )
+            )
         if not _suite_supported_by_core(test_suite, core):
             issues.append(
                 ValidationIssue(
@@ -148,7 +177,14 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
 
     has_errors = any(issue.severity == "error" for issue in issues)
     warnings = [issue for issue in issues if issue.severity == "warning"]
-    support_level = "supported" if not has_errors and not warnings else "experimental" if not has_errors else "unsupported"
+    if has_errors:
+        support_level = "unsupported"
+    elif warnings:
+        support_level = "experimental"
+    elif compatibility is not None:
+        support_level = compatibility.support_level
+    else:
+        support_level = "supported"
     summary = _summary_for(support_level, core, soc, test_suite)
     normalized = {
         "core_id": core_id,
@@ -164,6 +200,7 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
         "cpu_supports_difftest": _core_supports_difftest(core),
         "core_supported_test_suites": _core_supported_test_suites(core),
+        "core_sim_program_link_base": str(core.data.get("sim_program_link_base", "")) if core is not None else "",
         "soc_harness_capability": soc.integration_level if soc is not None else "",
         "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
         "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
@@ -171,6 +208,9 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "soc_supports_difftest": _soc_supports_difftest(soc),
         "soc_supported_test_suites": _soc_supported_test_suites(soc),
         "required_capability": "sim_ready",
+        "compatibility_status": compatibility.status if compatibility is not None else "",
+        "compatibility_summary": compatibility.summary if compatibility is not None else "",
+        "compatible_test_suites": compatibility.supported_test_suites if compatibility is not None else [],
     }
     return ValidationResult(
         ok=not has_errors,

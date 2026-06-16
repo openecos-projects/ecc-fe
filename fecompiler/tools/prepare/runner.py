@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,9 @@ from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
 from fecompiler.utility.json import json_read, json_write
+
+
+COMPATIBILITY_CPU_ALIAS_TOP = "ysyx_00000000"
 
 
 class PrepareStep(BaseStep):
@@ -19,6 +23,7 @@ class PrepareStep(BaseStep):
         self.write_standard_outputs(step)
 
         prepared, source_info = self._collect_inputs(step, workspace)
+        alias_info = self._validate_frontend_cpu_alias(step, workspace, prepared["rtl_files"])
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
         manifest_path = self._write_prepared_manifest(step, prepared)
         self._persist_workspace_input_filelist(workspace, merged_path, manifest_path)
@@ -41,6 +46,8 @@ class PrepareStep(BaseStep):
             "defines": len(prepared["defines"]),
             "inputs": source_info,
         }
+        if alias_info:
+            report["compatibility_alias"] = alias_info
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
         self._update_substep(step, PrepareSubFlowEnum.report.value, ok=True)
@@ -69,6 +76,7 @@ class PrepareStep(BaseStep):
         seen_define: set[str] = set()
         incdirs: list[Path] = []
         defines: list[str] = []
+        cpu_filelist_defines_alias = False
 
         def _add_unique(items: list[Any], target: list[Any], seen: set[str]) -> None:
             for item in items:
@@ -78,9 +86,19 @@ class PrepareStep(BaseStep):
                     target.append(item)
 
         def _add_filelist(label: str, path: str) -> None:
+            nonlocal cpu_filelist_defines_alias
             data = self._parse_sv_filelist(path)
+            if label == "cpu_filelist":
+                cpu_filelist_defines_alias = self._filelist_defines_module(
+                    data["rtl_files"],
+                    COMPATIBILITY_CPU_ALIAS_TOP,
+                )
             if label == "soc_filelist":
-                data = self._filter_soc_filelist_for_cpu_wrapper(data, workspace)
+                data = self._filter_soc_filelist_for_cpu_wrapper(
+                    data,
+                    workspace,
+                    cpu_filelist_defines_alias=cpu_filelist_defines_alias,
+                )
             _add_unique(data["rtl_files"], merged, seen_rtl)
             _add_unique(data["incdirs"], incdirs, seen_incdir)
             _add_unique(data["defines"], defines, seen_define)
@@ -134,6 +152,54 @@ class PrepareStep(BaseStep):
         }
         return prepared, inputs
 
+    def _validate_frontend_cpu_alias(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        rtl_files: list[str],
+    ) -> dict[str, Any]:
+        if not self._requires_frontend_cpu_alias(workspace):
+            return {}
+
+        matches = [
+            str(Path(path))
+            for path in rtl_files
+            if self._file_defines_module(Path(path), COMPATIBILITY_CPU_ALIAS_TOP)
+        ]
+        info: dict[str, Any] = {
+            "module": COMPATIBILITY_CPU_ALIAS_TOP,
+            "count": len(matches),
+            "files": matches,
+        }
+        if len(matches) == 1:
+            return info
+
+        message = (
+            "frontend prepare requires exactly one "
+            f"{COMPATIBILITY_CPU_ALIAS_TOP} compatibility module, found {len(matches)}"
+        )
+        self._update_substep(
+            step,
+            PrepareSubFlowEnum.collect_inputs.value,
+            ok=False,
+            info={"error": message, **info},
+        )
+        raise RuntimeError(f"prepare failed: {message}")
+
+    @staticmethod
+    def _requires_frontend_cpu_alias(workspace: dict[str, Any]) -> bool:
+        return any(
+            str(workspace.get(field, "")).strip() == value
+            for field, value in (
+                ("top_module", "ecos_sim_top"),
+                ("soc_wrapper_top", "ecos_sim_top"),
+                ("cpu_socket_contract", "ysyx-axi-cpu-socket-v1"),
+            )
+        ) or any(
+            str(workspace.get(field, "")).strip()
+            for field in ("soc_wrapper_id", "soc_harness_id")
+        )
+
     @staticmethod
     def _filelist_info(path: str, data: dict[str, list[Any]]) -> dict[str, Any]:
         info = {
@@ -151,16 +217,18 @@ class PrepareStep(BaseStep):
     def _filter_soc_filelist_for_cpu_wrapper(
         data: dict[str, list[Any]],
         workspace: dict[str, Any],
+        *,
+        cpu_filelist_defines_alias: bool = False,
     ) -> dict[str, list[Any]]:
         wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
-        if not wrapper_top or wrapper_top == "ysyx_00000000":
+        if not cpu_filelist_defines_alias and (not wrapper_top or wrapper_top == COMPATIBILITY_CPU_ALIAS_TOP):
             return data
 
         kept: list[Path] = []
         filtered: list[Path] = []
         for path in data["rtl_files"]:
             p = Path(path)
-            if p.name == "ysyx_00000000.sv":
+            if PrepareStep._file_defines_module(p, COMPATIBILITY_CPU_ALIAS_TOP):
                 filtered.append(p)
                 continue
             kept.append(p)
@@ -173,6 +241,20 @@ class PrepareStep(BaseStep):
             "defines": data["defines"],
             "filtered_rtl_files": filtered,
         }
+
+    @staticmethod
+    def _filelist_defines_module(files: list[Any], module_name: str) -> bool:
+        return any(PrepareStep._file_defines_module(Path(path), module_name) for path in files)
+
+    @staticmethod
+    def _file_defines_module(path: Path, module_name: str) -> bool:
+        if path.name in {f"{module_name}.v", f"{module_name}.sv"}:
+            return True
+        pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
+        try:
+            return bool(pattern.search(path.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            return False
 
     def _write_merged_filelist(self, step: WorkspaceStep, files: list[str]) -> Path:
         merged_path = self._merged_filelist_path(step)

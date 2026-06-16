@@ -17,6 +17,24 @@ from typing import Any
 
 DEFAULT_SOC_WRAPPER_ID = "ysyx-am-soc"
 
+_LEGACY_WRAPPER_DIRS = {
+    "ysyx-am-soc": "SoC",
+    "ysyx-am-soc-alt": "SoC2",
+    "ysyx-am-soc-extended": "SoC3",
+}
+
+_LEGACY_WRAPPER_VARIANTS = {
+    "ysyx-am-soc": "soc1",
+    "ysyx-am-soc-alt": "soc2",
+    "ysyx-am-soc-extended": "soc3",
+}
+
+_LEGACY_WRAPPER_NAMES = {
+    "ysyx-am-soc": "YSYX AM SoC Harness",
+    "ysyx-am-soc-alt": "YSYX AM SoC Harness Alt",
+    "ysyx-am-soc-extended": "YSYX AM SoC Harness Extended",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SocWrapper:
@@ -71,7 +89,7 @@ def get_soc_wrapper(config: dict[str, Any] | str | None) -> SocWrapper | None:
     manifest = _soc_manifest(wrapper_id)
     if manifest is not None:
         return _wrapper_from_manifest(manifest)
-    return None
+    return _legacy_wrapper_from_directory(wrapper_id)
 
 
 def soc_runtime_options(config: dict[str, Any] | str | None) -> dict[str, Any]:
@@ -112,6 +130,24 @@ def _soc_manifest(wrapper_id: str) -> dict[str, Any] | None:
     with manifest_path.open(encoding="utf-8") as f:
         data = json.load(f)
     return dict(data, _manifest_path=str(manifest_path)) if isinstance(data, dict) else None
+
+
+def _legacy_wrapper_from_directory(wrapper_id: str) -> SocWrapper | None:
+    directory_name = _LEGACY_WRAPPER_DIRS.get(wrapper_id)
+    if directory_name is None:
+        return None
+
+    root = _frontend_repo_root() / "fecompiler" / "thirdparty" / directory_name
+    if not root.exists():
+        return None
+
+    return SocWrapper(
+        id=wrapper_id,
+        name=_LEGACY_WRAPPER_NAMES.get(wrapper_id, wrapper_id),
+        variant=_LEGACY_WRAPPER_VARIANTS.get(wrapper_id, ""),
+        root=root,
+        sim_ready=True,
+    )
 
 
 def _wrapper_from_manifest(data: dict[str, Any]) -> SocWrapper:

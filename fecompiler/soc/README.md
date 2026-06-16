@@ -72,3 +72,27 @@ entries.
 
 Adding a new CPU follows the same idea: add the CPU RTL, add a CPU wrapper for
 the SoC's CPU socket contract, then register the catalog metadata.
+
+## Static Contract Check
+
+A SoC entry may be marked `sim_ready` only when all of these are true:
+
+- `catalog.json` declares `wrapper_contract: ecos-sim-wrapper-v1`.
+- `catalog.json` declares `wrapper_top: ecos_sim_top`.
+- `catalog.json` declares `cpu_socket_contract: ysyx-axi-cpu-socket-v1`.
+- `catalog.json` declares at least one `supported_test_suites` item.
+- `manifest.json` exists next to the SoC wrapper.
+- The manifest points to an existing SoC filelist, testbench, build-test
+  script, and simulator C++ sources.
+- The SoC filelist exists, all RTL paths inside it exist, and it contains the
+  declared wrapper top module.
+
+Run the lightweight check before marking a harness runnable:
+
+```bash
+python3 -m fecompiler.cli.workspace catalog-check --json
+```
+
+This keeps catalog expansion honest: metadata-only SoCs can be shown as future
+targets, while `sim_ready` SoCs must already have the concrete ECOS wrapper
+collateral needed by workspace creation and preparation.

@@ -68,3 +68,25 @@ Users should not need to reason about CPU socket compatibility.  If a CPU and
 SoC are both listed as `sim_ready`, their wrappers must already agree on the
 socket contract.  A socket mismatch is an ECOS catalog/wrapper integration bug,
 not a user configuration problem.
+
+## Static Contract Check
+
+A CPU entry may be marked `sim_ready` only when all of these are true:
+
+- `catalog.json` declares `cpu_wrapper_contract: ecos-cpu-wrapper-v1`.
+- `catalog.json` declares `cpu_socket_contract: ysyx-axi-cpu-socket-v1`.
+- `catalog.json` declares `cpu_wrapper_top`.
+- `catalog.json` declares at least one `supported_test_suites` item.
+- Built-in CPU integrations declare `cpu_filelist`.
+- The CPU filelist exists and all RTL paths inside it exist.
+- The CPU filelist contains the declared wrapper top module.
+
+Run the lightweight check before asking users to try a new adapter:
+
+```bash
+python3 -m fecompiler.cli.workspace catalog-check --json
+```
+
+This only verifies adapter collateral and catalog consistency; it does not run
+Verilator or any CPU test.  Real runtime readiness is still proven by running at
+least one CPU test case through the GUI or CLI.
