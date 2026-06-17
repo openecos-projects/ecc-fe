@@ -109,6 +109,8 @@ def merge_structural_probe(report: dict[str, Any], probe: dict[str, Any]) -> dic
         "cells": probe_metrics.get("cells", 0) if isinstance(probe_metrics, dict) else 0,
         "wires": probe_metrics.get("wires", 0) if isinstance(probe_metrics, dict) else 0,
         "modules": probe_metrics.get("modules", 0) if isinstance(probe_metrics, dict) else 0,
+        "diagnostics": len(probe.get("diagnostics", [])) if isinstance(probe.get("diagnostics", []), list) else 0,
+        "module_risks": len(probe.get("module_risks", [])) if isinstance(probe.get("module_risks", []), list) else 0,
     }
     summary["structural_probe"] = precheck_summary
     summary["yosys_precheck"] = precheck_summary

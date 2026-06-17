@@ -151,14 +151,24 @@ def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
                         "$add": 1,
                     },
                 },
+                "\\decode": {
+                    "num_cells": 250,
+                    "num_wires": 500,
+                    "num_port_bits": 60,
+                    "num_cells_by_type": {
+                        "$mux": 210,
+                        "$add": 45,
+                        "$memrd": 1,
+                    },
+                },
             },
             "design": {
-                "num_cells": 3,
-                "num_wires": 5,
-                "num_port_bits": 2,
+                "num_cells": 253,
+                "num_wires": 505,
+                "num_port_bits": 62,
             },
         }), encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, stdout="Warning: demo warning\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"Warning: {rtl}:12:7: demo warning\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
 
@@ -182,10 +192,60 @@ def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
     probe = data["structural_probe"]
     assert probe["status"] == "success"
     assert probe["mode"] == "cpu_only_yosys_precheck"
-    assert probe["metrics"]["cells"] == 3
-    assert probe["metrics"]["mux_cells"] == 2
+    assert probe["metrics"]["cells"] == 253
+    assert probe["metrics"]["mux_cells"] == 212
     assert probe["quality"]["gate"] == "warnings"
     assert probe["diagnostics"][0]["severity"] == "warning"
+    assert probe["diagnostics"][0]["source"] == str(rtl)
+    assert probe["diagnostics"][0]["line"] == 12
+    assert probe["diagnostics"][0]["column"] == 7
+    assert probe["module_risks"][0]["module"] == "decode"
+    assert probe["module_risks"][0]["risk"] in {"medium", "high"}
+    assert "mux-heavy control/data selection" in probe["module_risks"][0]["reasons"]
+
+
+def test_yosys_precheck_error_blocks_review_step(tmp_path: Path, monkeypatch):
+    rtl = tmp_path / "cpu.v"
+    filelist = tmp_path / "filelist.cpu.f"
+    rtl.write_text("module cpu(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
+    filelist.write_text(f"{rtl}\n", encoding="utf-8")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
+
+    def fake_run(cmd, cwd, capture_output, text, timeout):
+        script = Path(cmd[cmd.index("-s") + 1])
+        stat_path = _stat_path_from_script(script.read_text(encoding="utf-8"))
+        stat_path.write_text(json.dumps({"modules": {}, "design": {}}), encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=f"ERROR: Parser error in line {rtl}:9:3: syntax error\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_yosys_error"),
+        parameters={"Design": "demo", "Top module": "cpu"},
+        cpu_filelist=str(filelist),
+    )
+    workspace = create_workspace(spec)
+    assert workspace is not None
+
+    loaded = load_workspace(str(tmp_path / "ws_yosys_error"))
+    assert loaded is not None
+    engine = EngineFlow(workspace=loaded)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("review", rerun=True) == StateEnum.Incomplete
+
+    report = tmp_path / "ws_yosys_error" / "review_fe" / "report" / "rtl_review.json"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    probe = data["yosys_precheck"]
+    assert probe["status"] == "failed"
+    assert probe["quality"]["gate"] == "failed"
+    assert probe["diagnostics"][0]["severity"] == "error"
+    assert any(issue["category"] == "syntax" for issue in data["issues"])
 
 
 def test_yosys_precheck_script_stays_frontend_only(tmp_path: Path, monkeypatch):

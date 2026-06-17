@@ -32,7 +32,7 @@ class RtlReviewStep(BaseStep):
         update_substep_ok(
             step,
             ReviewSubFlowEnum.scan_rtl.value,
-            True,
+            not _review_is_blocked_by_yosys_precheck(report),
             info={
                 "total_lines": report.get("metrics", {}).get("total_lines", 0),
                 "yosys_precheck": probe.get("status", ""),
@@ -41,7 +41,7 @@ class RtlReviewStep(BaseStep):
         update_substep_ok(
             step,
             ReviewSubFlowEnum.analyze_profiles.value,
-            True,
+            not _review_is_blocked_by_yosys_precheck(report),
             info=report.get("summary", {}),
         )
         update_substep_ok(step, ReviewSubFlowEnum.report.value, True)
@@ -56,7 +56,7 @@ class RtlReviewStep(BaseStep):
             data = json.loads(review_path.read_text(encoding="utf-8"))
         except Exception:
             return False
-        return bool(data.get("source_files"))
+        return bool(data.get("source_files")) and not _review_is_blocked_by_yosys_precheck(data)
 
     def _write_outputs(self, step: WorkspaceStep, report: dict[str, Any]) -> None:
         review_path = Path(step.report["dir"]) / "rtl_review.json"
@@ -67,7 +67,7 @@ class RtlReviewStep(BaseStep):
 
         json_write(review_path, report)
         json_write(output_path, report)
-        status = "Success" if report.get("source_files") else "Incomplete"
+        status = "Success" if report.get("source_files") and not _review_is_blocked_by_yosys_precheck(report) else "Incomplete"
         json_write(metrics_path, {
             "step": step.name,
             "status": status,
@@ -96,3 +96,27 @@ def _format_log(report: dict[str, Any]) -> str:
         prefix = str(issue.get("severity", "info")).upper()
         lines.append(f"[rtl-review][{prefix}] {issue.get('category', 'other')} {location} {issue.get('title', '')}")
     return "\n".join(lines) + "\n"
+
+
+def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:
+    probe = report.get("yosys_precheck") or report.get("structural_probe") or {}
+    if not isinstance(probe, dict):
+        return False
+
+    status = str(probe.get("status", "")).strip().lower()
+    if status in {"unavailable", "skipped", ""}:
+        return False
+
+    quality = probe.get("quality", {})
+    gate = str(quality.get("gate", "") if isinstance(quality, dict) else "").strip().lower()
+    if gate == "failed":
+        return True
+
+    if status in {"failed", "timeout"}:
+        diagnostics = probe.get("diagnostics", [])
+        return any(
+            isinstance(item, dict) and str(item.get("severity", "")).lower() == "error"
+            for item in diagnostics if isinstance(diagnostics, list)
+        ) or gate == "failed"
+
+    return False

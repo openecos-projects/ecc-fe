@@ -51,6 +51,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "top_module": _cpu_top(workspace),
             "inputs": inputs,
             "metrics": {},
+            "module_risks": [],
             "quality": _quality("skipped"),
             "diagnostics": [],
             "issues": [],
@@ -69,6 +70,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "top_module": _cpu_top(workspace),
             "inputs": inputs,
             "metrics": {},
+            "module_risks": [],
             "quality": _quality("unavailable"),
             "diagnostics": [],
             "issues": [],
@@ -106,6 +108,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "top_module": _cpu_top(workspace),
             "inputs": inputs,
             "metrics": {},
+            "module_risks": [],
             "quality": _quality("timeout"),
             "diagnostics": _diagnostics_from_log(output),
             "issues": [_issue(
@@ -130,6 +133,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "top_module": _cpu_top(workspace),
             "inputs": inputs,
             "metrics": {},
+            "module_risks": [],
             "quality": _quality("failed"),
             "diagnostics": [],
             "issues": [_issue(
@@ -146,6 +150,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
     stat = _read_json(stat_path)
     diagnostics = _diagnostics_from_log(output)
     metrics = _metrics_from_stat(stat, output)
+    module_risks = _module_risks_from_stat(stat)
     quality = _quality_from_run(result.returncode, diagnostics, metrics)
     issues = _issues_from_probe(output, diagnostics, metrics, result.returncode)
     status = "success" if result.returncode == 0 else "failed"
@@ -164,6 +169,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
         "inputs": inputs,
         "diagnostics": diagnostics,
         "metrics": metrics,
+        "module_risks": module_risks,
         "quality": quality,
         "issues": issues,
         "artifacts": paths,
@@ -321,6 +327,88 @@ def _metrics_from_stat(stat: dict[str, Any], log: str) -> dict[str, Any]:
     }
 
 
+def _module_risks_from_stat(stat: dict[str, Any]) -> list[dict[str, Any]]:
+    modules = stat.get("modules", {}) if isinstance(stat.get("modules"), dict) else {}
+    risks: list[dict[str, Any]] = []
+    for raw_name, raw_module in modules.items():
+        if not isinstance(raw_module, dict):
+            continue
+        cell_types = _extract_cell_types(raw_module)
+        cells = _int_or_zero(raw_module.get("num_cells")) or sum(cell_types.values())
+        wires = _int_or_zero(raw_module.get("num_wires"))
+        ports = _int_or_zero(raw_module.get("num_port_bits"))
+        processes = _int_or_zero(raw_module.get("num_processes"))
+        mux_cells = sum(count for name, count in cell_types.items() if "$mux" in name.lower() or "$pmux" in name.lower())
+        memory_cells = sum(count for name, count in cell_types.items() if "$mem" in name.lower() or "mem" in name.lower())
+        arithmetic_cells = sum(
+            count
+            for name, count in cell_types.items()
+            if any(op in name.lower() for op in ("$add", "$sub", "$mul", "$div", "$mod", "$alu"))
+        )
+        score = cells + wires // 2 + mux_cells * 3 + arithmetic_cells * 4 + memory_cells * 5 + processes * 12
+        reasons = _module_risk_reasons(
+            cells=cells,
+            wires=wires,
+            processes=processes,
+            mux_cells=mux_cells,
+            arithmetic_cells=arithmetic_cells,
+            memory_cells=memory_cells,
+        )
+        if not reasons and score < 100:
+            continue
+        risks.append({
+            "module": str(raw_name).lstrip("\\"),
+            "score": score,
+            "risk": _module_risk_bucket(score, reasons),
+            "cells": cells,
+            "wires": wires,
+            "ports": ports,
+            "processes": processes,
+            "mux_cells": mux_cells,
+            "arithmetic_cells": arithmetic_cells,
+            "memory_cells": memory_cells,
+            "reasons": reasons,
+            "top_cell_types": [
+                {"type": name, "count": count}
+                for name, count in sorted(cell_types.items(), key=lambda item: item[1], reverse=True)[:8]
+            ],
+        })
+    return sorted(risks, key=lambda item: int(item.get("score", 0)), reverse=True)[:12]
+
+
+def _module_risk_reasons(
+    *,
+    cells: int,
+    wires: int,
+    processes: int,
+    mux_cells: int,
+    arithmetic_cells: int,
+    memory_cells: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if cells >= 2000:
+        reasons.append("large cell population")
+    if wires >= 4000:
+        reasons.append("large wire population")
+    if mux_cells >= 200:
+        reasons.append("mux-heavy control/data selection")
+    if arithmetic_cells >= 40:
+        reasons.append("arithmetic-heavy datapath")
+    if memory_cells:
+        reasons.append("inferred memory candidate")
+    if processes >= 20:
+        reasons.append("many lowered procedural blocks")
+    return reasons
+
+
+def _module_risk_bucket(score: int, reasons: list[str]) -> str:
+    if score >= 8000 or len(reasons) >= 3:
+        return "high"
+    if score >= 2500 or len(reasons) >= 2:
+        return "medium"
+    return "low"
+
+
 def _extract_cell_types(module: dict[str, Any]) -> dict[str, int]:
     cells = module.get("num_cells_by_type")
     if isinstance(cells, dict):
@@ -351,14 +439,38 @@ def _diagnostics_from_log(log: str) -> list[dict[str, Any]]:
             severity = "warning"
         if not severity:
             continue
+        location = _diagnostic_location(line)
         diagnostics.append({
             "severity": severity,
             "message": line,
             "category": _diagnostic_category(line),
+            "source": location.get("source", ""),
+            "line": location.get("line", 0),
+            "column": location.get("column", 0),
         })
         if len(diagnostics) >= 80:
             break
     return diagnostics
+
+
+def _diagnostic_location(message: str) -> dict[str, Any]:
+    patterns = (
+        r"(?P<source>/[^:\s]+?\.(?:sv|svh|v|vh)):(?P<line>\d+):(?P<column>\d+)",
+        r"(?P<source>/[^:\s]+?\.(?:sv|svh|v|vh)):(?P<line>\d+)",
+        r"(?P<source>[^:\s]+?\.(?:sv|svh|v|vh)):(?P<line>\d+):(?P<column>\d+)",
+        r"(?P<source>[^:\s]+?\.(?:sv|svh|v|vh)):(?P<line>\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if not match:
+            continue
+        source = str(match.group("source"))
+        return {
+            "source": source,
+            "line": _int_or_zero(match.group("line")),
+            "column": _int_or_zero(match.groupdict().get("column")) or 1,
+        }
+    return {"source": "", "line": 0, "column": 0}
 
 
 def _diagnostic_category(message: str) -> str:
@@ -441,24 +553,32 @@ def _issues_from_probe(
 
     if returncode != 0:
         has_error = any(item.get("severity") == "error" for item in diagnostics)
+        first_location = _first_diagnostic_location(diagnostics)
         issues.append(_issue(
             "error" if has_error else "warning",
             ["IC", "FPGA"],
             "structural",
             "Yosys precheck failed before completion",
             "Yosys could not complete the CPU RTL precheck.",
+            path=first_location.get("source", ""),
+            line=first_location.get("line", 0),
+            column=first_location.get("column", 0),
             evidence={"returncode": returncode},
             recommendation="Check the Yosys precheck log, then run Elab/Lint for source-level diagnostics.",
         ))
 
     diagnostic_categories = {str(item.get("category", "")) for item in diagnostics}
     if "syntax" in diagnostic_categories:
+        first_location = _first_diagnostic_location(diagnostics, category="syntax")
         issues.append(_issue(
             "error",
             ["IC", "FPGA"],
             "syntax",
             "Yosys reported RTL syntax/front-end errors",
             "The CPU RTL cannot pass the Yosys Verilog frontend in its current form.",
+            path=first_location.get("source", ""),
+            line=first_location.get("line", 0),
+            column=first_location.get("column", 0),
             evidence={"diagnostic_errors": sum(1 for item in diagnostics if item.get("severity") == "error")},
             recommendation="Open the Yosys precheck log, fix the first syntax or unsupported construct error, then rerun Review.",
         ))
@@ -549,6 +669,23 @@ def _issues_from_probe(
     return issues
 
 
+def _first_diagnostic_location(
+    diagnostics: list[dict[str, Any]],
+    *,
+    category: str = "",
+) -> dict[str, Any]:
+    for diagnostic in diagnostics:
+        if category and diagnostic.get("category") != category:
+            continue
+        if diagnostic.get("source"):
+            return {
+                "source": diagnostic.get("source", ""),
+                "line": diagnostic.get("line", 0),
+                "column": diagnostic.get("column", 0),
+            }
+    return {"source": "", "line": 0, "column": 0}
+
+
 def _write_probe(paths: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
     report_path = Path(paths["report"])
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -574,6 +711,9 @@ def _issue(
     title: str,
     detail: str,
     *,
+    path: str = "",
+    line: int = 0,
+    column: int = 0,
     evidence: dict[str, Any] | None = None,
     recommendation: str = "",
 ) -> dict[str, Any]:
@@ -583,9 +723,9 @@ def _issue(
         "category": category,
         "title": title,
         "detail": detail,
-        "source": "",
-        "line": 0,
-        "column": 0,
+        "source": path,
+        "line": line,
+        "column": column,
         "evidence": evidence or {},
         "recommendation": recommendation,
     }
