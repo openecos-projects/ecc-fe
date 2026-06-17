@@ -70,14 +70,50 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
             }
             for source in sources
         ],
+        "structural_probe": {},
+        "yosys_precheck": {},
         "next_analyzers": [
-            "Verilator diagnostics",
-            "Yosys logic graph",
+            "Verilator SARIF diagnostics",
+            "Yosys logic depth/fanout probe",
             "OpenSTA constraint/timing checks",
             "CDC/RDC structural checks",
             "VCD toggle and power hints",
         ],
     }
+
+
+def merge_structural_probe(report: dict[str, Any], probe: dict[str, Any]) -> dict[str, Any]:
+    """Return *report* with structural probe data folded into summary/issues."""
+    if not probe:
+        return report
+
+    merged = dict(report)
+    merged["structural_probe"] = probe
+    merged["yosys_precheck"] = probe
+
+    issues = list(merged.get("issues", []))
+    issues.extend(_normalize_probe_issue(issue) for issue in probe.get("issues", []) if isinstance(issue, dict))
+    merged["issues"] = sorted(issues, key=_issue_sort_key)
+
+    metrics = dict(merged.get("metrics", {}))
+    probe_metrics = probe.get("metrics", {})
+    if isinstance(probe_metrics, dict):
+        metrics["structural"] = probe_metrics
+    merged["metrics"] = metrics
+
+    summary = _summary(merged["issues"], metrics)
+    precheck_summary = {
+        "status": probe.get("status", ""),
+        "tool": probe.get("tool", ""),
+        "reason": probe.get("reason", ""),
+        "cells": probe_metrics.get("cells", 0) if isinstance(probe_metrics, dict) else 0,
+        "wires": probe_metrics.get("wires", 0) if isinstance(probe_metrics, dict) else 0,
+        "modules": probe_metrics.get("modules", 0) if isinstance(probe_metrics, dict) else 0,
+    }
+    summary["structural_probe"] = precheck_summary
+    summary["yosys_precheck"] = precheck_summary
+    merged["summary"] = summary
+    return merged
 
 
 def _load_sources(workspace: dict[str, Any]) -> list[SourceFile]:
@@ -467,6 +503,27 @@ def _issue(
         "column": 1 if line else 0,
         "evidence": evidence or {},
         "recommendation": recommendation,
+    }
+
+
+def _normalize_probe_issue(issue: dict[str, Any]) -> dict[str, Any]:
+    severity = str(issue.get("severity", "info"))
+    if severity not in {"error", "warning", "info"}:
+        severity = "info"
+    profiles = issue.get("profiles", ["IC", "FPGA"])
+    if not isinstance(profiles, list) or not profiles:
+        profiles = ["IC", "FPGA"]
+    return {
+        "severity": severity,
+        "profiles": [str(profile) for profile in profiles],
+        "category": str(issue.get("category", "structural")),
+        "title": str(issue.get("title", "Yosys precheck issue")),
+        "detail": str(issue.get("detail", "")),
+        "source": str(issue.get("source", "")),
+        "line": int(issue.get("line", 0) or 0),
+        "column": int(issue.get("column", 0) or 0),
+        "evidence": issue.get("evidence", {}) if isinstance(issue.get("evidence", {}), dict) else {},
+        "recommendation": str(issue.get("recommendation", "")),
     }
 
 

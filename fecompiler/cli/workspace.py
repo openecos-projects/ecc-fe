@@ -1648,6 +1648,7 @@ def _build_frontend_step_logs(step_log_path: str, report_log_path: str) -> list[
     for item in (
         _existing_path_item(step_log_path, "Step log"),
         _existing_path_item(report_log_path, "Tool log"),
+        _existing_path_item(_first_existing(report_dir, ("yosys_precheck.log", "structural_probe.log")) if report_dir else "", "Yosys precheck log"),
         _existing_path_item(report_dir / "build_programs.log.txt" if report_dir else "", "Build programs log"),
     ):
         path = str((item or {}).get("path", ""))
@@ -1663,6 +1664,7 @@ def _build_frontend_step_reports(step: Any) -> list[dict[str, str]]:
     for item in (
         _existing_path_item(_step_section(step, "report").get("step", ""), "Step report"),
         _existing_path_item(report_dir / "rtl_review.json" if report_dir else "", "RTL review"),
+        _existing_path_item(_first_existing(report_dir, ("yosys_precheck.json", "structural_probe.json")) if report_dir else "", "Yosys precheck"),
         _existing_path_item(report_dir / "cases.json" if report_dir else "", "Simulation cases"),
         _existing_path_item(report_dir / "build_programs.log.txt" if report_dir else "", "Build programs log"),
     ):
@@ -1689,6 +1691,8 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
         ("Prepared inputs", output_dir / "prepared_inputs.json" if output_dir else ""),
         ("Merged filelist", output_dir / "merged_rtl.f" if output_dir else ""),
         ("RTL review", _optional_path(_step_section(step, "report").get("dir", "")) / "rtl_review.json" if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
+        ("Yosys precheck", _first_existing(_optional_path(_step_section(step, "report").get("dir", "")), ("yosys_precheck.json", "structural_probe.json")) if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
+        ("Yosys precheck log", _first_existing(_optional_path(_step_section(step, "report").get("dir", "")), ("yosys_precheck.log", "structural_probe.log")) if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
         ("Simulation binary", output_dir / f"{design}_sim" if output_dir and design else ""),
     ):
         append_item(_existing_path_item(path, label))
@@ -1727,6 +1731,8 @@ def _build_frontend_review_payload(step: Any) -> dict[str, Any]:
         "metrics": data.get("metrics", {}),
         "issues": data.get("issues", []),
         "source_files": data.get("source_files", []),
+        "structural_probe": data.get("structural_probe", {}),
+        "yosys_precheck": data.get("yosys_precheck", data.get("structural_probe", {})),
         "profiles": data.get("profiles", []),
         "next_analyzers": data.get("next_analyzers", []),
     }
@@ -1903,6 +1909,16 @@ def _existing_path_item(path: Any, label: str) -> dict[str, str] | None:
     if not resolved.exists():
         return None
     return {"label": label, "path": str(resolved)}
+
+
+def _first_existing(directory: Path | None, names: tuple[str, ...]) -> Path | str:
+    if directory is None:
+        return ""
+    for name in names:
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return directory / names[0] if names else ""
 
 
 def _optional_path(path: Any) -> Path | None:

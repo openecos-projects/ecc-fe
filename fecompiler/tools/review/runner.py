@@ -8,7 +8,8 @@ from typing import Any
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.fe.subflow import update_substep_ok
-from fecompiler.tools.review.analyzer import build_rtl_review
+from fecompiler.tools.review.analyzer import build_rtl_review, merge_structural_probe
+from fecompiler.tools.review.structural_probe import run_structural_probe
 from fecompiler.tools.review.subflow import ReviewSubFlowEnum, init_review_subflow
 from fecompiler.utility.json import json_write
 
@@ -19,6 +20,8 @@ class RtlReviewStep(BaseStep):
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
         init_review_subflow(step)
         report = build_rtl_review(workspace)
+        probe = run_structural_probe(workspace, step)
+        report = merge_structural_probe(report, probe)
         self._write_outputs(step, report)
         update_substep_ok(
             step,
@@ -30,7 +33,10 @@ class RtlReviewStep(BaseStep):
             step,
             ReviewSubFlowEnum.scan_rtl.value,
             True,
-            info={"total_lines": report.get("metrics", {}).get("total_lines", 0)},
+            info={
+                "total_lines": report.get("metrics", {}).get("total_lines", 0),
+                "yosys_precheck": probe.get("status", ""),
+            },
         )
         update_substep_ok(
             step,
