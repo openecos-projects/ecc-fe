@@ -13,11 +13,13 @@ def get_step_registry() -> dict[str, BaseStep]:
     global _STEP_REGISTRY
     if _STEP_REGISTRY is None:
         from fecompiler.tools.prepare.runner import PrepareStep
+        from fecompiler.tools.review.runner import RtlReviewStep
         from fecompiler.tools.slang.runner import SlangElabStep
         from fecompiler.tools.verilator.runner import VerilatorLintStep, VerilatorSimStep
 
         _STEP_REGISTRY = {
             "prepare": PrepareStep(),
+            "review": RtlReviewStep(),
             "elab": SlangElabStep(),
             "lint": VerilatorLintStep(),
             "sim": VerilatorSimStep(),

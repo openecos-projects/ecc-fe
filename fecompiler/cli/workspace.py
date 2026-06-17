@@ -1618,6 +1618,14 @@ def _build_frontend_step_detail(
                 "default_cpu_tests": _default_cpu_test_cases(workspace),
             }
         )
+    elif step_name == "review":
+        review = _build_frontend_review_payload(step)
+        detail["review"] = review
+        if review:
+            detail["summary"].update({
+                "rtl_review": review.get("summary", {}),
+                "review_report": review.get("path", ""),
+            })
 
     return detail
 
@@ -1654,6 +1662,7 @@ def _build_frontend_step_reports(step: Any) -> list[dict[str, str]]:
     report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
     for item in (
         _existing_path_item(_step_section(step, "report").get("step", ""), "Step report"),
+        _existing_path_item(report_dir / "rtl_review.json" if report_dir else "", "RTL review"),
         _existing_path_item(report_dir / "cases.json" if report_dir else "", "Simulation cases"),
         _existing_path_item(report_dir / "build_programs.log.txt" if report_dir else "", "Build programs log"),
     ):
@@ -1679,12 +1688,17 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
         ("Output JSON", _step_section(step, "output").get("json", "")),
         ("Prepared inputs", output_dir / "prepared_inputs.json" if output_dir else ""),
         ("Merged filelist", output_dir / "merged_rtl.f" if output_dir else ""),
+        ("RTL review", _optional_path(_step_section(step, "report").get("dir", "")) / "rtl_review.json" if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
         ("Simulation binary", output_dir / f"{design}_sim" if output_dir and design else ""),
     ):
         append_item(_existing_path_item(path, label))
 
     if str(step.name).strip().lower() == "prepare":
         for item in _build_prepare_cpu_source_artifacts(workspace):
+            append_item(item)
+
+    if str(step.name).strip().lower() == "review":
+        for item in _build_review_source_artifacts(step):
             append_item(item)
 
     if str(step.name).strip().lower() == "sim":
@@ -1695,6 +1709,49 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
                 label = f"{case_name} {suffix}".strip()
                 append_item(_existing_path_item(path, label))
 
+    return artifacts
+
+
+def _build_frontend_review_payload(step: Any) -> dict[str, Any]:
+    report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
+    if not report_dir:
+        return {}
+    review_path = report_dir / "rtl_review.json"
+    data = _json_read(review_path)
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "path": str(review_path),
+        "scope": data.get("scope", ""),
+        "summary": data.get("summary", {}),
+        "metrics": data.get("metrics", {}),
+        "issues": data.get("issues", []),
+        "source_files": data.get("source_files", []),
+        "profiles": data.get("profiles", []),
+        "next_analyzers": data.get("next_analyzers", []),
+    }
+
+
+def _build_review_source_artifacts(step: Any) -> list[dict[str, str]]:
+    report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
+    if not report_dir:
+        return []
+    data = _json_read(report_dir / "rtl_review.json")
+    if not isinstance(data, dict):
+        return []
+    raw_sources = data.get("source_files", [])
+    if not isinstance(raw_sources, list):
+        return []
+
+    artifacts: list[dict[str, str]] = []
+    for source in raw_sources:
+        if not isinstance(source, dict):
+            continue
+        path = str(source.get("path", "")).strip()
+        label = str(source.get("label", "")).strip() or Path(path).name
+        item = _existing_path_item(path, label)
+        if item:
+            artifacts.append(item)
     return artifacts
 
 

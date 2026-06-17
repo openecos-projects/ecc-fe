@@ -7,6 +7,7 @@ from typing import Final
 # (step_name, tool) — production front-end flow
 DEFAULT_FLOW_STEPS: Final[list[tuple[str, str]]] = [
     ("prepare", "fe"),       # merge / normalize CPU+SoC inputs
+    ("review", "fe"),        # static RTL review for IC/FPGA readiness
     ("elab", "slang"),       # SV elaboration / semantic check
     ("lint", "verilator"),   # RTL lint
     ("sim", "verilator"),    # compile + simulation (requires testbench)

@@ -32,6 +32,7 @@ def test_default_flow_steps_all_entries_are_2_tuples():
 def test_default_flow_steps_match_production_flow():
     assert DEFAULT_FLOW_STEPS == [
         ("prepare", "fe"),
+        ("review", "fe"),
         ("elab", "slang"),
         ("lint", "verilator"),
         ("sim", "verilator"),

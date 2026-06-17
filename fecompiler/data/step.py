@@ -12,6 +12,7 @@ class StepEnum(Enum):
     """Generic flow step names used by ecc-fe."""
 
     PREPARE = "prepare"
+    REVIEW = "review"
     ELAB  = "elab"
     LINT  = "lint"
     SIM   = "sim"
