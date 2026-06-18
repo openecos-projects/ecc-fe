@@ -1634,6 +1634,14 @@ def _build_frontend_step_detail(
                 "elab": elab.get("summary", {}),
                 "elab_report": elab.get("path", ""),
             })
+    elif step_name == "lint":
+        lint = _build_frontend_lint_payload(step)
+        detail["lint"] = lint
+        if lint:
+            detail["summary"].update({
+                "lint": lint.get("summary", {}),
+                "lint_report": lint.get("path", ""),
+            })
 
     return detail
 
@@ -1674,6 +1682,7 @@ def _build_frontend_step_reports(step: Any) -> list[dict[str, str]]:
         _existing_path_item(report_dir / "rtl_review_summary.md" if report_dir else "", "Review summary"),
         _existing_path_item(_step_section(step, "report").get("step", ""), "Step report"),
         _existing_path_item(report_dir / "elab_summary.json" if report_dir else "", "Elab summary"),
+        _existing_path_item(report_dir / "lint_summary.json" if report_dir else "", "Lint summary"),
         _existing_path_item(report_dir / "rtl_review.json" if report_dir else "", "RTL review"),
         _existing_path_item(_first_existing(report_dir, ("yosys_precheck.json", "structural_probe.json")) if report_dir else "", "Yosys precheck"),
         _existing_path_item(report_dir / "cases.json" if report_dir else "", "Simulation cases"),
@@ -1748,6 +1757,18 @@ def _build_frontend_elab_payload(step: Any) -> dict[str, Any]:
     if not report_dir:
         return {}
     summary_path = report_dir / "elab_summary.json"
+    data = _json_read(summary_path)
+    if not isinstance(data, dict):
+        return {}
+    data["path"] = str(summary_path)
+    return data
+
+
+def _build_frontend_lint_payload(step: Any) -> dict[str, Any]:
+    report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
+    if not report_dir:
+        return {}
+    summary_path = report_dir / "lint_summary.json"
     data = _json_read(summary_path)
     if not isinstance(data, dict):
         return {}

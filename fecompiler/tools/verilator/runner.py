@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -14,7 +15,9 @@ from typing import Any
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.common.rtl_inputs import (
+    incdirs,
     rtl_files,
+    verilator_lint_defines,
     verilator_define_args,
     verilator_incdir_args,
     verilator_lint_define_args,
@@ -40,6 +43,10 @@ _WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
 _WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
 _WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.py")
+_VERILATOR_DIAGNOSTIC_RE = re.compile(
+    r"^%(?P<severity>Error|Warning)(?:-(?P<code>[A-Za-z0-9_]+))?:\s+"
+    r"(?P<source>.+?):(?P<line>\d+):(?:(?P<column>\d+):)?\s*(?P<message>.*)$"
+)
 _RTTHREAD_REQUIRED_LOG_MARKERS = (
     "Thread Operating System",
     "Hello RISC-V!",
@@ -675,14 +682,19 @@ class VerilatorLintStep(BaseStep):
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
         init_lint_subflow(step)
-        self._run_lint(step, workspace)
-        self._write_report(step)
+        run_info = self._run_lint(step, workspace)
+        self._write_report(step, workspace, run_info)
 
     def check_result(self, step: WorkspaceStep) -> bool:
+        summary_path = Path(step.report["dir"]) / "lint_summary.json"
+        if summary_path.exists():
+            summary = json_read(str(summary_path))
+            if isinstance(summary, dict):
+                return str(summary.get("status", "")).lower() == "pass"
         lint_path = Path(step.report["dir"]) / "log.txt"
         return lint_path.exists() and "%Error" not in lint_path.read_text(encoding="utf-8")
 
-    def _run_lint(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
+    def _run_lint(self, step: WorkspaceStep, workspace: dict[str, Any]) -> dict[str, Any]:
         files = rtl_files(workspace)
         top   = workspace.get("top_module", "top")
         lint_path = Path(step.report["dir"]) / "log.txt"
@@ -690,27 +702,310 @@ class VerilatorLintStep(BaseStep):
         cmd = [
             _verilator_cmd(),
             "--lint-only",
+            "-Wall",
             "-Wno-fatal",
+            "-Wno-DECLFILENAME",
             *_verilator_include_args(),
             *verilator_incdir_args(workspace),
             *verilator_lint_define_args(workspace),
             "--top",
             top,
         ] + files
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        lint_path.write_text(
-            (result.stdout + result.stderr).strip() or "lint OK",
-            encoding="utf-8",
+        lint_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            returncode = int(result.returncode)
+            output = (result.stdout + result.stderr).strip() or "lint OK"
+        except OSError as exc:
+            returncode = 127
+            output = f"%Error: failed to execute verilator: {exc}"
+        lint_path.write_text(output, encoding="utf-8")
+        update_substep_ok(
+            step,
+            LintSubFlowEnum.lint.value,
+            returncode == 0,
+            info={
+                "top_module": top,
+                "rtl_files": len(files),
+                "returncode": returncode,
+            },
         )
-        update_substep_ok(step, LintSubFlowEnum.lint.value, result.returncode == 0)
+        return {
+            "command": cmd,
+            "returncode": returncode,
+            "rtl_files": files,
+            "top_module": top,
+            "log_path": str(lint_path),
+        }
 
-    def _write_report(self, step: WorkspaceStep) -> None:
+    def _write_report(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        run_info: dict[str, Any],
+    ) -> None:
         lint_path = Path(step.report["dir"]) / "log.txt"
-        lint_ok   = lint_path.exists() and "%Error" not in lint_path.read_text()
+        log_content = lint_path.read_text(encoding="utf-8") if lint_path.exists() else ""
+        lint_summary_path = Path(step.report["dir"]) / "lint_summary.json"
+        lint_summary = build_lint_summary(
+            workspace,
+            run_info,
+            log_content,
+            summary_path=lint_summary_path,
+        )
+        json_write(lint_summary_path, lint_summary)
+        lint_ok = lint_summary["summary"]["errors"] == 0 and int(run_info.get("returncode", 1)) == 0
         json_write(step.report["step"], {
             "lint": "pass" if lint_ok else "fail",
+            "report": str(lint_path),
+            "summary": str(lint_summary_path),
+            "errors": lint_summary["summary"]["errors"],
+            "warnings": lint_summary["summary"]["warnings"],
+            "rules": lint_summary["summary"]["rules"],
+            "files": lint_summary["summary"]["files"],
         })
-        update_substep_ok(step, LintSubFlowEnum.report.value, True)
+        update_substep_ok(
+            step,
+            LintSubFlowEnum.report.value,
+            True,
+            info={
+                "summary": str(lint_summary_path),
+                "errors": lint_summary["summary"]["errors"],
+                "warnings": lint_summary["summary"]["warnings"],
+                "rules": lint_summary["summary"]["rules"],
+                "files": lint_summary["summary"]["files"],
+            },
+        )
+
+
+def build_lint_summary(
+    workspace: dict[str, Any],
+    run_info: dict[str, Any],
+    log_content: str,
+    *,
+    summary_path: Path,
+) -> dict[str, Any]:
+    """Build a structured Verilator lint report for GUI consumption."""
+    files = [str(path) for path in run_info.get("rtl_files", [])]
+    diagnostics = parse_verilator_diagnostics(log_content)
+    if int(run_info.get("returncode", 0)) != 0 and not diagnostics:
+        diagnostics.append({
+            "severity": "error",
+            "code": "TOOL",
+            "message": _first_nonempty_log_line(log_content) or "Verilator exited with a non-zero return code.",
+            "source": "",
+            "line": 0,
+            "column": 0,
+            "raw": _first_nonempty_log_line(log_content),
+            "category": "tool",
+        })
+    errors = len([item for item in diagnostics if item.get("severity") == "error"])
+    warnings = len([item for item in diagnostics if item.get("severity") == "warning"])
+    status = "pass" if int(run_info.get("returncode", 1)) == 0 and errors == 0 else "fail"
+    top_module = str(run_info.get("top_module") or workspace.get("top_module") or "top")
+    rules = _lint_rule_breakdown(diagnostics)
+    file_hotspots = _lint_file_hotspots(diagnostics)
+
+    return {
+        "path": str(summary_path),
+        "tool": "verilator",
+        "status": status,
+        "returncode": int(run_info.get("returncode", 1)),
+        "top_module": top_module,
+        "command": [str(part) for part in run_info.get("command", [])],
+        "inputs": {
+            "rtl_files": files,
+            "rtl_file_count": len(files),
+            "incdirs": incdirs(workspace),
+            "defines": verilator_lint_defines(workspace),
+        },
+        "summary": {
+            "status": status,
+            "errors": errors,
+            "warnings": warnings,
+            "diagnostics": len(diagnostics),
+            "rules": len(rules),
+            "files": len(file_hotspots),
+            "rtl_files": len(files),
+            "top_module": top_module,
+        },
+        "diagnostics": diagnostics,
+        "rules": rules,
+        "files": file_hotspots,
+        "reports": {
+            "log": str(run_info.get("log_path", "")),
+            "summary": str(summary_path),
+        },
+    }
+
+
+def parse_verilator_diagnostics(content: str) -> list[dict[str, Any]]:
+    """Parse Verilator lint diagnostics into clickable records."""
+    diagnostics: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, int, int, str]] = set()
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = _VERILATOR_DIAGNOSTIC_RE.match(line)
+        if not match:
+            generic = _parse_generic_verilator_diagnostic(line)
+            if not generic:
+                continue
+            key = (
+                str(generic.get("severity", "")),
+                str(generic.get("code", "")),
+                str(generic.get("source", "")),
+                int(generic.get("line", 0) or 0),
+                int(generic.get("column", 0) or 0),
+                str(generic.get("message", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            diagnostics.append(generic)
+            continue
+        severity = "error" if match.group("severity").lower() == "error" else "warning"
+        code = (match.group("code") or severity.upper()).strip()
+        source = match.group("source").strip()
+        line_number = int(match.group("line") or 0)
+        column = int(match.group("column") or 1)
+        message = match.group("message").strip()
+        key = (severity, code, source, line_number, column, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostics.append({
+            "severity": severity,
+            "code": code,
+            "message": message,
+            "source": source,
+            "line": line_number,
+            "column": column,
+            "raw": line,
+            "category": _lint_category(code, message),
+        })
+
+    return diagnostics
+
+
+def _parse_generic_verilator_diagnostic(line: str) -> dict[str, Any] | None:
+    generic = re.match(r"^%(?P<severity>Error|Warning)(?:-(?P<code>[A-Za-z0-9_]+))?:\s*(?P<message>.*)$", line)
+    if not generic:
+        return None
+    severity = "error" if generic.group("severity").lower() == "error" else "warning"
+    code = (generic.group("code") or severity.upper()).strip()
+    message = generic.group("message").strip()
+    return {
+        "severity": severity,
+        "code": code,
+        "message": message,
+        "source": "",
+        "line": 0,
+        "column": 0,
+        "raw": line,
+        "category": _lint_category(code, message),
+    }
+
+
+def _lint_rule_breakdown(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_code: dict[str, dict[str, Any]] = {}
+    for item in diagnostics:
+        code = str(item.get("code") or item.get("severity") or "UNKNOWN")
+        record = by_code.setdefault(
+            code,
+            {
+                "code": code,
+                "category": _lint_category(code, str(item.get("message", ""))),
+                "errors": 0,
+                "warnings": 0,
+                "total": 0,
+                "example": str(item.get("message", "")),
+            },
+        )
+        if item.get("severity") == "error":
+            record["errors"] += 1
+        elif item.get("severity") == "warning":
+            record["warnings"] += 1
+        record["total"] += 1
+
+    return sorted(
+        by_code.values(),
+        key=lambda item: (-int(item.get("errors", 0)), -int(item.get("warnings", 0)), str(item.get("code", ""))),
+    )
+
+
+def _lint_file_hotspots(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_source: dict[str, dict[str, Any]] = {}
+    for item in diagnostics:
+        source = str(item.get("source", "")).strip()
+        if not source:
+            continue
+        record = by_source.setdefault(
+            source,
+            {
+                "path": source,
+                "errors": 0,
+                "warnings": 0,
+                "total": 0,
+                "rules": set(),
+            },
+        )
+        if item.get("severity") == "error":
+            record["errors"] += 1
+        elif item.get("severity") == "warning":
+            record["warnings"] += 1
+        record["total"] += 1
+        record["rules"].add(str(item.get("code") or item.get("severity") or "UNKNOWN"))
+
+    hotspots: list[dict[str, Any]] = []
+    for source, record in by_source.items():
+        hotspots.append({
+            "path": source,
+            "label": Path(source).name,
+            "errors": int(record["errors"]),
+            "warnings": int(record["warnings"]),
+            "total": int(record["total"]),
+            "rules": sorted(record["rules"]),
+        })
+    return sorted(
+        hotspots,
+        key=lambda item: (-int(item.get("errors", 0)), -int(item.get("warnings", 0)), str(item.get("path", ""))),
+    )
+
+
+def _lint_category(code: str, message: str) -> str:
+    text = f"{code} {message}".lower()
+    if "failed to execute" in text or "non-zero" in text or code.lower() == "tool":
+        return "tool"
+    if "syntax" in text or "unexpected" in text:
+        return "syntax"
+    if "width" in text or "bit" in text or "range" in text:
+        return "width"
+    if "unused" in text or "unuse" in text:
+        return "unused"
+    if "undriven" in text or "unconnected" in text or "pinmissing" in text:
+        return "connectivity"
+    if "multidriven" in text or "driven" in text:
+        return "drivers"
+    if "case" in text:
+        return "case"
+    if "latch" in text:
+        return "latch"
+    if "timing" in text or "delay" in text:
+        return "timing"
+    if "unsupported" in text or "unsup" in text:
+        return "unsupported"
+    return "lint"
+
+
+def _first_nonempty_log_line(content: str) -> str:
+    for line in content.splitlines():
+        text = line.strip()
+        if text:
+            return text
+    return ""
 
 
 # ── VerilatorSimStep ──────────────────────────────────────────────────────────

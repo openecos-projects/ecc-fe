@@ -16,6 +16,8 @@ from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.tools.common.rtl_inputs import slang_defines, verilator_lint_defines
 from fecompiler.tools.slang.runner import SlangElabStep, parse_slang_diagnostics, scan_rtl_structure
 from fecompiler.tools.verilator.runner import (
+    build_lint_summary,
+    parse_verilator_diagnostics,
     _prepare_sim_images,
     _rtthread_build_preflight_errors,
     _rtthread_prepare_helper,
@@ -1463,6 +1465,53 @@ def test_elab_parses_clickable_slang_diagnostics(tmp_path):
             "column": 7,
         }
     ]
+
+
+def test_lint_parses_clickable_verilator_diagnostics(tmp_path):
+    source = tmp_path / "cpu.sv"
+    log = f"%Warning-WIDTH: {source}:12:7: Operator ASSIGN expects 32 bits\n"
+
+    diagnostics = parse_verilator_diagnostics(log)
+
+    assert diagnostics == [
+        {
+            "severity": "warning",
+            "code": "WIDTH",
+            "message": "Operator ASSIGN expects 32 bits",
+            "source": str(source),
+            "line": 12,
+            "column": 7,
+            "raw": log.strip(),
+            "category": "width",
+        }
+    ]
+
+
+def test_lint_summary_groups_rules_and_files(tmp_path):
+    source = tmp_path / "cpu.sv"
+    log = "\n".join([
+        f"%Warning-WIDTH: {source}:12:7: Operator ASSIGN expects 32 bits",
+        f"%Error-UNSUPPORTED: {source}:20:1: Unsupported construct",
+    ])
+    summary = build_lint_summary(
+        {"top_module": "cpu_top", "prepared_manifest": ""},
+        {
+            "returncode": 1,
+            "rtl_files": [str(source)],
+            "top_module": "cpu_top",
+            "command": ["verilator", "--lint-only"],
+            "log_path": str(tmp_path / "log.txt"),
+        },
+        log,
+        summary_path=tmp_path / "lint_summary.json",
+    )
+
+    assert summary["status"] == "fail"
+    assert summary["summary"]["errors"] == 1
+    assert summary["summary"]["warnings"] == 1
+    assert [rule["code"] for rule in summary["rules"]] == ["UNSUPPORTED", "WIDTH"]
+    assert summary["files"][0]["path"] == str(source)
+    assert summary["files"][0]["total"] == 2
 
 
 def test_elab_scans_module_inventory_and_unresolved_modules(tmp_path):
