@@ -269,15 +269,19 @@ module ecos_picorv32_cpu_wrapper (
 `endif
       end
       if (local_halt_write) begin
+`ifndef SYNTHESIS
         if (pico_mem_wdata == 32'b0) begin
           $display("HIT GOOD TRAP");
           $finish;
         end else begin
           $fatal(1, "HIT BAD TRAP, code=%0d", pico_mem_wdata);
         end
+`endif
       end
       if (pico_trap && !local_halt_write) begin
+`ifndef SYNTHESIS
         $fatal(1, "PicoRV32 trap before ECOS halt MMIO");
+`endif
       end
 
       case (state_q)
@@ -303,7 +307,9 @@ module ecos_picorv32_cpu_wrapper (
         ST_READ_DATA: begin
           if (io_master_rvalid) begin
             if (io_master_rresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "PicoRV32 AXI read error: resp=%0d addr=0x%08x", io_master_rresp, axi_addr_q);
+`endif
             end
             state_q <= ST_IDLE;
           end
@@ -318,7 +324,9 @@ module ecos_picorv32_cpu_wrapper (
         ST_WRITE_RESP: begin
           if (io_master_bvalid) begin
             if (io_master_bresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "PicoRV32 AXI write error: resp=%0d addr=0x%08x", io_master_bresp, axi_addr_q);
+`endif
             end
             state_q <= ST_IDLE;
           end

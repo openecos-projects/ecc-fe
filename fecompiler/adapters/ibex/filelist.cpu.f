@@ -5,7 +5,11 @@
 
 ../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_mubi_pkg.sv
 ../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_secded_pkg.sv
+../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_cipher_pkg.sv
 ../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim_generic/rtl/prim_buf.sv
+../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_lfsr.sv
+../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_secded_inv_28_22_dec.sv
+../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_secded_inv_28_22_enc.sv
 ../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_secded_inv_39_32_dec.sv
 ../../thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_secded_inv_39_32_enc.sv
 ../../thirdparty/ibex/rtl/ibex_pkg.sv
@@ -20,6 +24,8 @@
 ../../thirdparty/ibex/rtl/ibex_ex_block.sv
 ../../thirdparty/ibex/rtl/ibex_fetch_fifo.sv
 ../../thirdparty/ibex/rtl/ibex_id_stage.sv
+../../thirdparty/ibex/rtl/ibex_icache.sv
+../../thirdparty/ibex/rtl/ibex_dummy_instr.sv
 ../../thirdparty/ibex/rtl/ibex_if_stage.sv
 ../../thirdparty/ibex/rtl/ibex_load_store_unit.sv
 ../../thirdparty/ibex/rtl/ibex_multdiv_fast.sv

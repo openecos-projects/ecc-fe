@@ -93,6 +93,9 @@ module ecos_ibex_cpu_wrapper (
   localparam [31:0] RESET_PC = 32'h2000_0000;
   localparam [31:0] HALT_ADDR = 32'h1000_000c;
   localparam [31:0] UART_ADDR = 32'h1000_0000;
+  localparam [31:0] BOOT_ALIAS_BASE = 32'h2000_0000;
+  localparam [31:0] BOOT_ALIAS_SIZE = 32'h0010_0000;
+  localparam [31:0] IBEX_BOOT_OFFSET = 32'h0000_0080;
 
   localparam [2:0] ST_IDLE = 3'd0;
   localparam [2:0] ST_READ_ADDR = 3'd1;
@@ -176,6 +179,18 @@ module ecos_ibex_cpu_wrapper (
     end
   endfunction
 
+  function [31:0] ecos_mem_addr;
+    input [31:0] addr;
+    begin
+      if ((addr >= (BOOT_ALIAS_BASE + IBEX_BOOT_OFFSET)) &&
+          (addr < (BOOT_ALIAS_BASE + BOOT_ALIAS_SIZE + IBEX_BOOT_OFFSET))) begin
+        ecos_mem_addr = addr - IBEX_BOOT_OFFSET;
+      end else begin
+        ecos_mem_addr = addr;
+      end
+    end
+  endfunction
+
   ibex_core #(
     .PMPEnable        (1'b0),
     .RV32E            (1'b0),
@@ -191,7 +206,7 @@ module ecos_ibex_cpu_wrapper (
     .DbgTriggerEn     (1'b0),
     .SecureIbex       (1'b0),
     .DummyInstructions(1'b0)
-  ) core (
+  ) u_ibex_core (
     .clk_i                  (clock),
     .rst_ni                 (~reset),
     .hart_id_i              (32'b0),
@@ -344,12 +359,14 @@ module ecos_ibex_cpu_wrapper (
       end
 
       if (local_halt_write) begin
+`ifndef SYNTHESIS
         if (data_wdata == 32'b0) begin
           $display("HIT GOOD TRAP");
           $finish;
         end else begin
           $fatal(1, "HIT BAD TRAP, code=%0d", data_wdata);
         end
+`endif
       end
 
       case (state_q)
@@ -359,13 +376,13 @@ module ecos_ibex_cpu_wrapper (
           if (!local_write) begin
             if (data_req) begin
               serving_data_q <= 1'b1;
-              axi_addr_q <= {data_addr[31:2], 2'b00};
+              axi_addr_q <= {ecos_mem_addr(data_addr)[31:2], 2'b00};
               axi_wdata_q <= data_wdata;
               axi_wstrb_q <= data_be;
               state_q <= data_we ? ST_WRITE_ADDR_DATA : ST_READ_ADDR;
             end else if (instr_req) begin
               serving_data_q <= 1'b0;
-              axi_addr_q <= {instr_addr[31:2], 2'b00};
+              axi_addr_q <= {ecos_mem_addr(instr_addr)[31:2], 2'b00};
               axi_wdata_q <= 32'b0;
               axi_wstrb_q <= 4'b0000;
               state_q <= ST_READ_ADDR;
@@ -380,7 +397,9 @@ module ecos_ibex_cpu_wrapper (
         ST_READ_DATA: begin
           if (io_master_rvalid) begin
             if (io_master_rresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "Ibex AXI read error: resp=%0d addr=0x%08x", io_master_rresp, axi_addr_q);
+`endif
             end
             if (serving_data_q) begin
               data_rdata_q <= io_master_rdata;
@@ -402,7 +421,9 @@ module ecos_ibex_cpu_wrapper (
         ST_WRITE_RESP: begin
           if (io_master_bvalid) begin
             if (io_master_bresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "Ibex AXI write error: resp=%0d addr=0x%08x", io_master_bresp, axi_addr_q);
+`endif
             end
             data_rvalid_q <= 1'b1;
             state_q <= ST_IDLE;

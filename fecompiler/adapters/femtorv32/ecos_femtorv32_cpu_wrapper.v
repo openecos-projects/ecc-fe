@@ -302,12 +302,14 @@ module ecos_femtorv32_cpu_wrapper (
       end
 
       if (local_halt_write) begin
+`ifndef SYNTHESIS
         if (femto_mem_wdata == 32'b0) begin
           $display("HIT GOOD TRAP");
           $finish;
         end else begin
           $fatal(1, "HIT BAD TRAP, code=%0d", femto_mem_wdata);
         end
+`endif
       end
 
       case (state_q)
@@ -336,7 +338,9 @@ module ecos_femtorv32_cpu_wrapper (
         ST_READ_DATA: begin
           if (io_master_rvalid) begin
             if (io_master_rresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "FemtoRV32 AXI read error: resp=%0d addr=0x%08x", io_master_rresp, axi_addr_q);
+`endif
             end
             femto_mem_rdata_q <= io_master_rdata;
             state_q <= ST_IDLE;
@@ -352,7 +356,9 @@ module ecos_femtorv32_cpu_wrapper (
         ST_WRITE_RESP: begin
           if (io_master_bvalid) begin
             if (io_master_bresp != 2'b00) begin
+`ifndef SYNTHESIS
               $fatal(1, "FemtoRV32 AXI write error: resp=%0d addr=0x%08x", io_master_bresp, axi_addr_q);
+`endif
             end
             state_q <= ST_IDLE;
           end
