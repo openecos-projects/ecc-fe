@@ -1626,6 +1626,14 @@ def _build_frontend_step_detail(
                 "rtl_review": review.get("summary", {}),
                 "review_report": review.get("path", ""),
             })
+    elif step_name == "elab":
+        elab = _build_frontend_elab_payload(step)
+        detail["elab"] = elab
+        if elab:
+            detail["summary"].update({
+                "elab": elab.get("summary", {}),
+                "elab_report": elab.get("path", ""),
+            })
 
     return detail
 
@@ -1646,6 +1654,7 @@ def _build_frontend_step_logs(step_log_path: str, report_log_path: str) -> list[
     seen: set[str] = set()
     report_dir = _optional_path(Path(report_log_path).parent if report_log_path else "")
     for item in (
+        _existing_path_item(report_dir / "rtl_review_summary.md" if report_dir else "", "Review summary"),
         _existing_path_item(step_log_path, "Step log"),
         _existing_path_item(report_log_path, "Tool log"),
         _existing_path_item(_first_existing(report_dir, ("yosys_precheck.log", "structural_probe.log")) if report_dir else "", "Yosys precheck log"),
@@ -1662,7 +1671,9 @@ def _build_frontend_step_reports(step: Any) -> list[dict[str, str]]:
     reports: list[dict[str, str]] = []
     report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
     for item in (
+        _existing_path_item(report_dir / "rtl_review_summary.md" if report_dir else "", "Review summary"),
         _existing_path_item(_step_section(step, "report").get("step", ""), "Step report"),
+        _existing_path_item(report_dir / "elab_summary.json" if report_dir else "", "Elab summary"),
         _existing_path_item(report_dir / "rtl_review.json" if report_dir else "", "RTL review"),
         _existing_path_item(_first_existing(report_dir, ("yosys_precheck.json", "structural_probe.json")) if report_dir else "", "Yosys precheck"),
         _existing_path_item(report_dir / "cases.json" if report_dir else "", "Simulation cases"),
@@ -1687,12 +1698,6 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
         artifacts.append(item)
 
     for label, path in (
-        ("Output JSON", _step_section(step, "output").get("json", "")),
-        ("Prepared inputs", output_dir / "prepared_inputs.json" if output_dir else ""),
-        ("Merged filelist", output_dir / "merged_rtl.f" if output_dir else ""),
-        ("RTL review", _optional_path(_step_section(step, "report").get("dir", "")) / "rtl_review.json" if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
-        ("Yosys precheck", _first_existing(_optional_path(_step_section(step, "report").get("dir", "")), ("yosys_precheck.json", "structural_probe.json")) if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
-        ("Yosys precheck log", _first_existing(_optional_path(_step_section(step, "report").get("dir", "")), ("yosys_precheck.log", "structural_probe.log")) if _optional_path(_step_section(step, "report").get("dir", "")) else ""),
         ("Simulation binary", output_dir / f"{design}_sim" if output_dir and design else ""),
     ):
         append_item(_existing_path_item(path, label))
@@ -1736,6 +1741,18 @@ def _build_frontend_review_payload(step: Any) -> dict[str, Any]:
         "profiles": data.get("profiles", []),
         "next_analyzers": data.get("next_analyzers", []),
     }
+
+
+def _build_frontend_elab_payload(step: Any) -> dict[str, Any]:
+    report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
+    if not report_dir:
+        return {}
+    summary_path = report_dir / "elab_summary.json"
+    data = _json_read(summary_path)
+    if not isinstance(data, dict):
+        return {}
+    data["path"] = str(summary_path)
+    return data
 
 
 def _build_review_source_artifacts(step: Any) -> list[dict[str, str]]:

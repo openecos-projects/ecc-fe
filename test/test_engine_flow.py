@@ -13,7 +13,8 @@ from fecompiler.cli import workspace as workspace_cli
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
-from fecompiler.tools.slang.runner import SlangElabStep
+from fecompiler.tools.common.rtl_inputs import slang_defines, verilator_lint_defines
+from fecompiler.tools.slang.runner import SlangElabStep, parse_slang_diagnostics, scan_rtl_structure
 from fecompiler.tools.verilator.runner import (
     _prepare_sim_images,
     _rtthread_build_preflight_errors,
@@ -1445,3 +1446,70 @@ def test_elab_check_result_accepts_zero_errors_log(tmp_path):
         encoding="utf-8",
     )
     assert SlangElabStep().check_result(step) is True
+
+
+def test_elab_parses_clickable_slang_diagnostics(tmp_path):
+    source = tmp_path / "cpu.sv"
+    log = f"{source}:12:7: error: unknown module 'foo'\nBuild failed: 1 error, 0 warnings\n"
+
+    diagnostics = parse_slang_diagnostics(log)
+
+    assert diagnostics == [
+        {
+            "severity": "error",
+            "message": "unknown module 'foo'",
+            "source": str(source),
+            "line": 12,
+            "column": 7,
+        }
+    ]
+
+
+def test_elab_scans_module_inventory_and_unresolved_modules(tmp_path):
+    source = tmp_path / "top.sv"
+    source.write_text(
+        """
+module child(input logic clk);
+endmodule
+
+module top(input logic clk, output logic done);
+  child u_child(.clk(clk));
+  missing u_missing(.clk(clk));
+endmodule
+""",
+        encoding="utf-8",
+    )
+
+    structure = scan_rtl_structure([str(source)])
+
+    assert [item["module"] for item in structure["modules"]] == ["top", "child"]
+    top = structure["modules"][0]
+    assert top["instances"] == 2
+    assert top["instantiates"] == ["child", "missing"]
+    assert structure["unresolved_modules"] == ["missing"]
+
+
+def test_slang_defines_include_synthesis_default_and_preserve_manifest_order(tmp_path):
+    assert slang_defines({"prepared_manifest": ""}) == ["SYNTHESIS"]
+
+    manifest = tmp_path / "prepared_manifest.json"
+    manifest.write_text(json.dumps({
+        "rtl_files": ["/tmp/demo.sv"],
+        "defines": ["FOO=1", "SYNTHESIS", "BAR"],
+    }), encoding="utf-8")
+    assert slang_defines({"prepared_manifest": str(manifest)}) == ["SYNTHESIS", "FOO=1", "BAR"]
+
+
+def test_verilator_lint_defines_include_synthesis_without_changing_manifest_order(tmp_path):
+    assert verilator_lint_defines({"prepared_manifest": ""}) == ["SYNTHESIS"]
+
+    manifest = tmp_path / "prepared_manifest.json"
+    manifest.write_text(json.dumps({
+        "rtl_files": ["/tmp/demo.sv"],
+        "defines": ["FOO=1", "SYNTHESIS", "BAR"],
+    }), encoding="utf-8")
+    assert verilator_lint_defines({"prepared_manifest": str(manifest)}) == [
+        "SYNTHESIS",
+        "FOO=1",
+        "BAR",
+    ]

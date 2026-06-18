@@ -8,6 +8,10 @@ from typing import Any
 from fecompiler.utility.json import json_read
 
 
+_SLANG_ELAB_DEFAULT_DEFINES = ("SYNTHESIS",)
+_VERILATOR_LINT_DEFAULT_DEFINES = ("SYNTHESIS",)
+
+
 def prepared_inputs(workspace: dict[str, Any]) -> dict[str, Any]:
     """Load normalized prepare artifact if available."""
     manifest = str(workspace.get("prepared_manifest", "")).strip()
@@ -66,6 +70,36 @@ def defines(workspace: dict[str, Any]) -> list[str]:
     return [str(define) for define in prepared.get("defines", [])] if prepared else []
 
 
+def _merge_defines(*groups: list[str] | tuple[str, ...]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for group in groups:
+        for define in group:
+            text = str(define).strip()
+            if text and text not in seen:
+                seen.add(text)
+                ordered.append(text)
+    return ordered
+
+
+def slang_defines(workspace: dict[str, Any]) -> list[str]:
+    """Return ordered defines for Slang elaboration checks.
+
+    Slang elab is a pre-sim semantic gate, so we default it to synthesis-like
+    assertion behavior to avoid third-party assertion-only hierarchy breakage.
+    """
+    return _merge_defines(_SLANG_ELAB_DEFAULT_DEFINES, defines(workspace))
+
+
+def verilator_lint_defines(workspace: dict[str, Any]) -> list[str]:
+    """Return ordered defines for Verilator lint.
+
+    Lint is a pre-synthesis quality gate, so keep simulation-only debug blocks
+    behind SYNTHESIS while preserving user / catalog defines.
+    """
+    return _merge_defines(_VERILATOR_LINT_DEFAULT_DEFINES, defines(workspace))
+
+
 def slang_incdir_args(workspace: dict[str, Any]) -> list[str]:
     args: list[str] = []
     for inc in incdirs(workspace):
@@ -75,7 +109,7 @@ def slang_incdir_args(workspace: dict[str, Any]) -> list[str]:
 
 def slang_define_args(workspace: dict[str, Any]) -> list[str]:
     args: list[str] = []
-    for define in defines(workspace):
+    for define in slang_defines(workspace):
         args.extend(["-D", define])
     return args
 
@@ -87,3 +121,6 @@ def verilator_incdir_args(workspace: dict[str, Any]) -> list[str]:
 def verilator_define_args(workspace: dict[str, Any]) -> list[str]:
     return [f"+define+{define}" for define in defines(workspace)]
 
+
+def verilator_lint_define_args(workspace: dict[str, Any]) -> list[str]:
+    return [f"+define+{define}" for define in verilator_lint_defines(workspace)]

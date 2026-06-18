@@ -17,6 +17,7 @@ from fecompiler.tools.common.rtl_inputs import (
     rtl_files,
     verilator_define_args,
     verilator_incdir_args,
+    verilator_lint_define_args,
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 
@@ -692,7 +693,7 @@ class VerilatorLintStep(BaseStep):
             "-Wno-fatal",
             *_verilator_include_args(),
             *verilator_incdir_args(workspace),
-            *verilator_define_args(workspace),
+            *verilator_lint_define_args(workspace),
             "--top",
             top,
         ] + files

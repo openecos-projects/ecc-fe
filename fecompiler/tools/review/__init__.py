@@ -1,2 +1,1 @@
-"""Static RTL review step for IC/FPGA frontend readiness."""
-
+"""Static RTL review step for frontend RTL quality readiness."""

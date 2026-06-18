@@ -15,7 +15,7 @@ from fecompiler.utility.json import json_write
 
 
 class RtlReviewStep(BaseStep):
-    """Generate a structured IC/FPGA static RTL review report."""
+    """Generate a structured static RTL quality review report."""
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
         init_review_subflow(step)
@@ -40,7 +40,7 @@ class RtlReviewStep(BaseStep):
         )
         update_substep_ok(
             step,
-            ReviewSubFlowEnum.analyze_profiles.value,
+            ReviewSubFlowEnum.analyze_quality.value,
             not _review_is_blocked_by_yosys_precheck(report),
             info=report.get("summary", {}),
         )
@@ -60,6 +60,7 @@ class RtlReviewStep(BaseStep):
 
     def _write_outputs(self, step: WorkspaceStep, report: dict[str, Any]) -> None:
         review_path = Path(step.report["dir"]) / "rtl_review.json"
+        summary_md_path = Path(step.report["dir"]) / "rtl_review_summary.md"
         summary_path = Path(step.report["step"])
         metrics_path = Path(step.analysis["metrics"])
         output_path = Path(step.output["json"])
@@ -67,6 +68,7 @@ class RtlReviewStep(BaseStep):
 
         json_write(review_path, report)
         json_write(output_path, report)
+        summary_md_path.write_text(_format_summary_markdown(report), encoding="utf-8")
         status = "Success" if report.get("source_files") and not _review_is_blocked_by_yosys_precheck(report) else "Incomplete"
         json_write(metrics_path, {
             "step": step.name,
@@ -89,13 +91,112 @@ def _format_log(report: dict[str, Any]) -> str:
         f"[rtl-review] source_files={summary.get('source_files', 0)} modules={summary.get('modules', 0)} lines={summary.get('total_lines', 0)}",
         f"[rtl-review] errors={summary.get('errors', 0)} warnings={summary.get('warnings', 0)} infos={summary.get('infos', 0)}",
     ]
+    probe = report.get("yosys_precheck") or report.get("structural_probe") or {}
+    if isinstance(probe, dict) and probe:
+        metrics = probe.get("metrics", {}) if isinstance(probe.get("metrics"), dict) else {}
+        lines.extend([
+            f"[rtl-review] yosys_status={probe.get('status', '')} reason={probe.get('reason', '')}",
+            (
+                "[rtl-review] structural "
+                f"max_fanout={metrics.get('max_fanout', 0)} "
+                f"max_fanin={metrics.get('max_fanin', 0)} "
+                f"max_comb_depth={metrics.get('max_comb_depth', 0)}"
+            ),
+        ])
     for issue in report.get("issues", [])[:40]:
         source = str(issue.get("source", ""))
         line = int(issue.get("line", 0) or 0)
         location = f"{source}:{line}" if source and line else source
         prefix = str(issue.get("severity", "info")).upper()
-        lines.append(f"[rtl-review][{prefix}] {issue.get('category', 'other')} {location} {issue.get('title', '')}")
+        evidence = _issue_evidence_label(issue)
+        parts = [f"[rtl-review][{prefix}]", str(issue.get("category", "other"))]
+        if location:
+            parts.append(location)
+        parts.append(str(issue.get("title", "")))
+        if evidence:
+            parts.append(f"({evidence})")
+        lines.append(" ".join(parts))
     return "\n".join(lines) + "\n"
+
+
+def _format_summary_markdown(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {}) if isinstance(report.get("summary"), dict) else {}
+    issues = [issue for issue in report.get("issues", []) if isinstance(issue, dict)]
+    probe = report.get("yosys_precheck") or report.get("structural_probe") or {}
+    probe = probe if isinstance(probe, dict) else {}
+    metrics = probe.get("metrics", {}) if isinstance(probe.get("metrics"), dict) else {}
+
+    lines = [
+        "# RTL Review Summary",
+        "",
+        "## Result",
+        "",
+        f"- Scope: {report.get('scope', 'cpu')}",
+        f"- Sources: {summary.get('source_files', 0)}",
+        f"- Modules: {summary.get('modules', 0)}",
+        f"- Errors: {summary.get('errors', 0)}",
+        f"- Warnings: {summary.get('warnings', 0)}",
+        f"- Infos: {summary.get('infos', 0)}",
+        "",
+        "## Yosys Precheck",
+        "",
+        f"- Status: {probe.get('status', 'not run')}",
+        f"- Reason: {probe.get('reason', '') or 'OK'}",
+        f"- Cells: {metrics.get('cells', 0)}",
+        f"- Wires: {metrics.get('wires', 0)}",
+        f"- Max fanout: {metrics.get('max_fanout', 0)}",
+        f"- Max fanin: {metrics.get('max_fanin', 0)}",
+        f"- Max combinational depth: {metrics.get('max_comb_depth', 0)}",
+        "",
+        "## Top Problems",
+        "",
+    ]
+
+    if not issues:
+        lines.append("- No issues reported.")
+    for issue in issues[:20]:
+        location = _issue_location_label(issue)
+        evidence = _issue_evidence_label(issue)
+        title = str(issue.get("title", "RTL issue"))
+        severity = str(issue.get("severity", "info")).upper()
+        recommendation = str(issue.get("recommendation", "")).strip()
+        detail = str(issue.get("detail", "")).strip()
+        line = f"- [{severity}] {title}"
+        if location:
+            line += f" @ {location}"
+        if evidence:
+            line += f" ({evidence})"
+        lines.append(line)
+        if detail:
+            lines.append(f"  - Detail: {detail}")
+        if recommendation:
+            lines.append(f"  - Fix: {recommendation}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _issue_location_label(issue: dict[str, Any]) -> str:
+    source = str(issue.get("source", "")).strip()
+    line = int(issue.get("line", 0) or 0)
+    if source and line:
+        return f"{source}:{line}"
+    return source
+
+
+def _issue_evidence_label(issue: dict[str, Any]) -> str:
+    evidence = issue.get("evidence", {})
+    if not isinstance(evidence, dict):
+        return ""
+    parts = [
+        f"module={evidence['module']}" if evidence.get("module") else "",
+        f"net={evidence['net']}" if evidence.get("net") else "",
+        f"cell={evidence['cell']}" if evidence.get("cell") else "",
+        f"endpoint={evidence['endpoint']}" if evidence.get("endpoint") else "",
+        f"fanout={evidence['fanout']}" if evidence.get("fanout") else "",
+        f"fanin={evidence['fanin']}" if evidence.get("fanin") else "",
+        f"depth={evidence['depth']}" if evidence.get("depth") else "",
+    ]
+    return ", ".join(part for part in parts if part)
 
 
 def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:

@@ -12,7 +12,7 @@ from fecompiler.utility.json import json_read, json_write
 class ReviewSubFlowEnum(Enum):
     collect_sources = "collect sources"
     scan_rtl = "scan rtl"
-    analyze_profiles = "analyze profiles"
+    analyze_quality = "analyze quality"
     report = "report"
 
 
