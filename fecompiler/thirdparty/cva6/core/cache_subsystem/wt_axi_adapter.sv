@@ -91,6 +91,37 @@ module wt_axi_adapter import ariane_pkg::*; import wt_cache_pkg::*; #(
   logic dcache_rd_full, dcache_rd_empty;
   logic dcache_wr_full, dcache_wr_empty;
 
+  function automatic logic [(AxiDataWidth/8)-1:0] store_be(
+    input logic [$clog2(AxiDataWidth/8)-1:0] offset,
+    input logic [1:0] size
+  );
+    store_be = '0;
+    unique case (size)
+      2'b00: store_be[offset] = 1'b1;
+      2'b01: begin
+        for (int unsigned lane = 0; lane < 2; lane++) begin
+          if ((offset + lane) < (AxiDataWidth / 8)) begin
+            store_be[offset + lane] = 1'b1;
+          end
+        end
+      end
+      2'b10: begin
+        for (int unsigned lane = 0; lane < 4; lane++) begin
+          if ((offset + lane) < (AxiDataWidth / 8)) begin
+            store_be[offset + lane] = 1'b1;
+          end
+        end
+      end
+      default: begin
+        for (int unsigned lane = 0; lane < 8; lane++) begin
+          if ((offset + lane) < (AxiDataWidth / 8)) begin
+            store_be[offset + lane] = 1'b1;
+          end
+        end
+      end
+    endcase
+  endfunction
+
   assign icache_data_ack_o  = icache_data_req_i & ~icache_data_full;
   assign dcache_data_ack_o  = dcache_data_req_i & ~dcache_data_full;
 
@@ -190,12 +221,7 @@ module wt_axi_adapter import ariane_pkg::*; import wt_cache_pkg::*; #(
           wt_cache_pkg::DCACHE_STORE_REQ: begin
             axi_wr_req   = 1'b1;
             axi_wr_be    = '0;
-            unique case(dcache_data.size[1:0])
-              2'b00:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0]]       = '1;  // byte
-              2'b01:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:2 ]  = '1;  // hword
-              2'b10:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:4 ]  = '1;  // word
-              default: axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:8 ]  = '1; // dword                                                    = '1; // dword
-            endcase
+            axi_wr_be[0] = store_be(dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0], dcache_data.size[1:0]);
           end
           //////////////////////////////////////
           wt_cache_pkg::DCACHE_ATOMIC_REQ: begin
@@ -207,12 +233,7 @@ module wt_axi_adapter import ariane_pkg::*; import wt_cache_pkg::*; #(
             invalidate   = arb_gnt;
             axi_wr_req   = 1'b1;
             axi_wr_be    = '0;
-            unique case(dcache_data.size[1:0])
-              2'b00:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0]]       = '1;  // byte
-              2'b01:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:2 ]  = '1;  // hword
-              2'b10:   axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:4 ]  = '1;  // word
-              default: axi_wr_be[0][dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0] +:8 ]  = '1; // dword
-            endcase
+            axi_wr_be[0] = store_be(dcache_data.paddr[$clog2(AxiDataWidth/8)-1:0], dcache_data.size[1:0]);
             amo_gen_r_d  = 1'b1;
             // need to use a separate ID here, so concat an additional bit
             axi_wr_id_in[1] = 1'b1;

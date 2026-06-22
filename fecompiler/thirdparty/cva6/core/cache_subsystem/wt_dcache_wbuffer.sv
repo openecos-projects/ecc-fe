@@ -482,8 +482,14 @@ module wt_dcache_wbuffer import ariane_pkg::*; import wt_cache_pkg::*; #(
             wbuffer_d[wr_ptr].valid[k]       = 1'b1;
             wbuffer_d[wr_ptr].dirty[k]       = 1'b1;
             wbuffer_d[wr_ptr].data[k*8 +: 8] = req_port_i.data_wdata[k*8 +: 8];
-            if (ariane_pkg::DATA_USER_EN)
-              wbuffer_d[wr_ptr].user[k*8 +: 8] = req_port_i.data_wuser[k*8 +: 8];
+            if (ariane_pkg::DATA_USER_EN) begin
+              for (int unsigned user_bit = 0; user_bit < 8; user_bit++) begin
+                if ((k * 8 + user_bit) < DCACHE_USER_WIDTH) begin
+                  wbuffer_d[wr_ptr].user[k * 8 + user_bit] =
+                      req_port_i.data_wuser[k * 8 + user_bit];
+                end
+              end
+            end
           end
         end
       end

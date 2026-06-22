@@ -800,6 +800,7 @@ module cva6 import ariane_pkg::*; #(
   end
 `endif
 
+`ifndef SYNTHESIS
   //pragma translate_off
 `ifdef PITON_ARIANE
   localparam PC_QUEUE_DEPTH = 16;
@@ -977,6 +978,7 @@ module cva6 import ariane_pkg::*; #(
   end
 `endif // VERILATOR
 //pragma translate_on
+`endif // SYNTHESIS
 
 `ifdef RVFI_TRACE
   always_comb begin
