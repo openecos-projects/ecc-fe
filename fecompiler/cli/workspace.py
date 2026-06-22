@@ -1651,6 +1651,16 @@ def _build_frontend_step_detail(
                 "lint": lint.get("summary", {}),
                 "lint_report": lint.get("path", ""),
             })
+    elif step_name == "prepare":
+        prepare = _build_frontend_prepare_payload(workspace, step)
+        detail["prepare"] = prepare
+        if prepare:
+            detail["summary"].update({
+                "readiness": prepare.get("readiness", {}),
+                "inputs": prepare.get("inputs", {}),
+                "contracts": prepare.get("contracts", []),
+                "runtime_plan": prepare.get("runtime", {}),
+            })
 
     return detail
 
@@ -1783,6 +1793,210 @@ def _build_frontend_lint_payload(step: Any) -> dict[str, Any]:
         return {}
     data["path"] = str(summary_path)
     return data
+
+
+def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dict[str, Any]:
+    report = _json_read(_step_section(step, "report").get("step", ""))
+    manifest = _json_read(workspace.get("prepared_manifest", ""))
+    report = report if isinstance(report, dict) else {}
+    manifest = manifest if isinstance(manifest, dict) else {}
+    inputs = report.get("inputs", {})
+    inputs = inputs if isinstance(inputs, dict) else {}
+    rtl_files = _normalize_str_list(manifest.get("rtl_files", []))
+    incdirs = _normalize_str_list(manifest.get("incdirs", []))
+    defines = _normalize_str_list(manifest.get("defines", []))
+    cpu_sources = _build_prepare_cpu_source_artifacts(workspace)
+
+    contracts = _build_prepare_contracts(workspace, report)
+    failed_contracts = [
+        item for item in contracts
+        if str(item.get("status", "")).lower() in {"missing", "failed", "error"}
+    ]
+    warning_contracts = [
+        item for item in contracts
+        if str(item.get("status", "")).lower() in {"warning", "stub", "disabled"}
+    ]
+    if failed_contracts:
+        readiness_status = "Failed"
+        readiness_message = "Prepare found missing or incompatible runtime inputs."
+    elif warning_contracts:
+        readiness_status = "Warning"
+        readiness_message = "Prepare completed with degraded or optional runtime capabilities."
+    elif rtl_files:
+        readiness_status = "Ready"
+        readiness_message = "Inputs are normalized and ready for ELAB, Lint, Review, and Sim."
+    else:
+        readiness_status = "Pending"
+        readiness_message = "Run Prepare to collect and normalize RTL inputs."
+
+    return {
+        "readiness": {
+            "status": readiness_status,
+            "message": readiness_message,
+            "rtl_files": len(rtl_files),
+            "incdirs": len(incdirs),
+            "defines": len(defines),
+        },
+        "configuration": [
+            {"label": "CPU", "value": _display_workspace_value(workspace, "frontend_core_id", "cpu_wrapper_id", "core_id")},
+            {"label": "SoC Harness", "value": _display_workspace_value(workspace, "soc_harness_id", "soc_wrapper_id", "soc_variant")},
+            {"label": "Toolchain", "value": _display_workspace_value(workspace, "toolchain_id")},
+            {"label": "Test Suite", "value": _display_workspace_value(workspace, "test_suite_id")},
+            {"label": "Top Module", "value": _display_workspace_value(workspace, "top_module")},
+            {"label": "Reset/Link Base", "value": _prepare_reset_link_base(workspace)},
+        ],
+        "inputs": {
+            "cpu_rtl_files": len(cpu_sources),
+            "total_rtl_files": len(rtl_files),
+            "incdirs": len(incdirs),
+            "defines": len(defines),
+            "sources": _prepare_input_sources(inputs),
+            "manifest": str(workspace.get("prepared_manifest", "")),
+            "merged_filelist": str(workspace.get("prepared_filelist", "")),
+        },
+        "contracts": contracts,
+        "runtime": [
+            {"label": "Workdir", "value": str(workspace.get("directory", "")), "mono": True},
+            {"label": "Sim Top", "value": str(workspace.get("top_module", "") or "ecos_sim_top")},
+            {"label": "CPU Tests", "value": _prepare_cpu_tests_label(workspace)},
+            {"label": "Wave Output", "value": "sim_verilator/report/cases/*.vcd", "mono": True},
+            {"label": "Step Logs", "value": "*/report/log.txt", "mono": True},
+        ],
+        "reports": {
+            "path": str(_step_section(step, "report").get("step", "")),
+            "manifest": str(workspace.get("prepared_manifest", "")),
+        },
+    }
+
+
+def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) -> list[dict[str, str]]:
+    inputs = report.get("inputs", {})
+    inputs = inputs if isinstance(inputs, dict) else {}
+    cpu_input = inputs.get("cpu_filelist", {})
+    cpu_adapter_input = inputs.get("cpu_adapter_filelist", {})
+    soc_input = inputs.get("soc_filelist", {})
+    input_filelist = inputs.get("input_filelist", {})
+    origin_verilog = inputs.get("origin_verilog", {})
+    cpu_input = cpu_input if isinstance(cpu_input, dict) else {}
+    cpu_adapter_input = cpu_adapter_input if isinstance(cpu_adapter_input, dict) else {}
+    soc_input = soc_input if isinstance(soc_input, dict) else {}
+    input_filelist = input_filelist if isinstance(input_filelist, dict) else {}
+    origin_verilog = origin_verilog if isinstance(origin_verilog, dict) else {}
+
+    contracts: list[dict[str, str]] = []
+    if input_filelist or origin_verilog:
+        contracts.append({
+            "label": "Custom RTL Input",
+            "status": "OK" if (input_filelist.get("rtl_files") or origin_verilog.get("rtl_files")) else "Missing",
+            "detail": str(input_filelist.get("path") or origin_verilog.get("path") or "No custom input found"),
+        })
+    else:
+        contracts.extend([
+            {
+                "label": "CPU Filelist",
+                "status": "OK" if cpu_input.get("rtl_files") else "Missing",
+                "detail": _prepare_contract_detail(cpu_input, workspace.get("cpu_filelist", "")),
+            },
+            {
+                "label": "CPU Adapter",
+                "status": "OK" if cpu_adapter_input.get("rtl_files") else "Disabled",
+                "detail": _prepare_contract_detail(cpu_adapter_input, workspace.get("cpu_adapter_filelist", ""), empty="Adapter not required"),
+            },
+            {
+                "label": "SoC Harness",
+                "status": "OK" if soc_input.get("rtl_files") else "Missing",
+                "detail": _prepare_contract_detail(soc_input, workspace.get("soc_filelist", "")),
+            },
+        ])
+
+    contracts.extend([
+        {
+            "label": "ecos_sim_top",
+            "status": "OK" if str(workspace.get("top_module", "") or "") == "ecos_sim_top" else "Warning",
+            "detail": str(workspace.get("top_module", "") or "Top module not configured"),
+        },
+        {
+            "label": "Difftest",
+            "status": "OK" if _normalize_bool(workspace.get("cpu_supports_difftest", True)) and _normalize_bool(workspace.get("soc_supports_difftest", True)) else "Stub",
+            "detail": "Enabled" if _normalize_bool(workspace.get("cpu_supports_difftest", True)) and _normalize_bool(workspace.get("soc_supports_difftest", True)) else "Using stub or disabled for this CPU/SoC.",
+        },
+        {
+            "label": "Test Suite",
+            "status": "OK" if str(workspace.get("test_suite_id", "")).strip() else "Warning",
+            "detail": str(workspace.get("test_suite_id", "") or "Default smoke suite"),
+        },
+    ])
+    return contracts
+
+
+def _prepare_contract_detail(data: dict[str, Any], fallback_path: Any, *, empty: str = "No RTL files found") -> str:
+    path = str(data.get("path") or fallback_path or "").strip()
+    files = data.get("rtl_files")
+    try:
+        count = int(files)
+    except (TypeError, ValueError):
+        count = 0
+    if count > 0:
+        return f"{count} RTL file(s) from {path}" if path else f"{count} RTL file(s)"
+    if path:
+        return f"{empty}: {path}"
+    skipped = str(data.get("skipped", "")).strip()
+    return skipped or empty
+
+
+def _prepare_input_sources(inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for key, label in (
+        ("cpu_filelist", "CPU RTL"),
+        ("cpu_adapter_filelist", "CPU Adapter"),
+        ("soc_filelist", "SoC Harness"),
+        ("input_filelist", "Custom Filelist"),
+        ("origin_verilog", "Single RTL"),
+    ):
+        value = inputs.get(key, {})
+        if not isinstance(value, dict):
+            continue
+        path = str(value.get("path", "")).strip()
+        skipped = str(value.get("skipped", "")).strip()
+        if not path and not skipped:
+            continue
+        result.append({
+            "label": label,
+            "path": path,
+            "rtl_files": value.get("rtl_files", 0),
+            "filtered_rtl_files": value.get("filtered_rtl_files", 0),
+            "skipped": skipped,
+        })
+    return result
+
+
+def _display_workspace_value(workspace: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(workspace.get(key, "") or "").strip()
+        if value:
+            return value
+    return "--"
+
+
+def _prepare_reset_link_base(workspace: dict[str, Any]) -> str:
+    for key in ("sim_program_link_base", "reset_pc", "diff_reset_vector"):
+        value = str(workspace.get(key, "") or "").strip()
+        if value:
+            return value
+    args = _normalize_str_list(workspace.get("sim_run_args", []))
+    for index, item in enumerate(args):
+        if item in {"--diff-reset-vector", "--reset-vector"} and index + 1 < len(args):
+            return args[index + 1]
+    return "--"
+
+
+def _prepare_cpu_tests_label(workspace: dict[str, Any]) -> str:
+    if _normalize_bool(workspace.get("sim_build_all_programs", False)):
+        return "All CPU tests"
+    names = _normalize_str_list(workspace.get("sim_program_names", []))
+    if names:
+        return ", ".join(names)
+    return ", ".join(_default_cpu_test_cases(workspace)) or "Default smoke"
 
 
 def _build_review_source_artifacts(step: Any) -> list[dict[str, str]]:

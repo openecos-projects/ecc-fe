@@ -445,6 +445,52 @@ def test_frontend_create_with_catalog_cpu_and_user_filelist_adds_adapter_wrapper
     assert prepare_report["inputs"]["soc_filelist"]["filtered_rtl_files"] == 1
 
 
+def test_prepare_frontend_detail_returns_readiness_payload(tmp_path, capsys):
+    request = tmp_path / "create_prepare_detail.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_prepare_detail"),
+                "core_id": "picorv32",
+                "soc_harness_id": "minimal-riscv-soc",
+                "toolchain_id": "riscv32-unknown-elf",
+                "test_suite_id": "cpu-tests",
+                "parameters": {
+                    "Design": "chip",
+                    "Top module": "ecos_sim_top",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_prepare_detail"))
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+
+    assert workspace_cli_run([
+        "get-info",
+        "--directory",
+        str(tmp_path / "ws_prepare_detail"),
+        "--step",
+        "prepare",
+        "--id",
+        "frontend_detail",
+        "--json",
+    ]) == 0
+    response = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    prepare = response["data"]["info"]["prepare"]
+
+    assert prepare["readiness"]["status"] in {"Ready", "Warning"}
+    assert prepare["inputs"]["total_rtl_files"] > 0
+    assert prepare["inputs"]["cpu_rtl_files"] > 0
+    assert any(item["label"] == "CPU" and item["value"] == "picorv32" for item in prepare["configuration"])
+    assert any(item["label"] == "ecos_sim_top" and item["status"] == "OK" for item in prepare["contracts"])
+    assert any(item["label"] == "Sim Top" and item["value"] == "ecos_sim_top" for item in prepare["runtime"])
+
+
 def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
     soc_root = tmp_path / "SoC"
     soc_root.mkdir()
