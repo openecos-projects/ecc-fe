@@ -154,7 +154,7 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
 
         spec = CreateWorkspaceData(
             directory=str(ws_dir),
-            parameters={"Design": project_name, "Top module": "ysyxSoCTop"},
+            parameters={"Design": project_name, "Top module": "ecos_sim_top"},
             cpu_filelist=str(cpu_root / "filelist.cpu.f"),
             soc_filelist=str(soc_root / "filelist.soc.f"),
             testbench=str(soc_root / "driver/main.cpp"),
