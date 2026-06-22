@@ -66,6 +66,7 @@ class PrepareStep(BaseStep):
 
     def _collect_inputs(self, step: WorkspaceStep, workspace: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, Any]]:
         cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
+        cpu_adapter_filelist = str(workspace.get("cpu_adapter_filelist", "")).strip()
         soc_filelist = str(workspace.get("soc_filelist", "")).strip()
         filelist = str(workspace.get("input_filelist", "")).strip()
         origin_verilog = str(workspace.get("origin_verilog", "")).strip()
@@ -94,6 +95,18 @@ class PrepareStep(BaseStep):
                     data["rtl_files"],
                     COMPATIBILITY_CPU_ALIAS_TOP,
                 )
+            if label == "cpu_adapter_filelist":
+                data = self._filter_cpu_adapter_filelist(
+                    data,
+                    workspace,
+                    existing_rtl_files=merged,
+                    cpu_filelist_defines_alias=cpu_filelist_defines_alias,
+                )
+                if data["rtl_files"]:
+                    cpu_filelist_defines_alias = (
+                        cpu_filelist_defines_alias
+                        or self._filelist_defines_module(data["rtl_files"], COMPATIBILITY_CPU_ALIAS_TOP)
+                    )
             if label == "soc_filelist":
                 data = self._filter_soc_filelist_for_cpu_wrapper(
                     data,
@@ -111,6 +124,9 @@ class PrepareStep(BaseStep):
                 _add_filelist("cpu_filelist", cpu_filelist)
             else:
                 inputs["cpu_filelist"] = {"path": "", "rtl_files": 0, "skipped": "not provided"}
+
+            if cpu_adapter_filelist:
+                _add_filelist("cpu_adapter_filelist", cpu_adapter_filelist)
 
             if soc_filelist:
                 _add_filelist("soc_filelist", soc_filelist)
@@ -234,6 +250,49 @@ class PrepareStep(BaseStep):
                 filtered.append(p)
                 continue
             kept.append(p)
+
+        if not filtered:
+            return data
+        return {
+            "rtl_files": kept,
+            "incdirs": data["incdirs"],
+            "defines": data["defines"],
+            "filtered_rtl_files": filtered,
+        }
+
+    @staticmethod
+    def _filter_cpu_adapter_filelist(
+        data: dict[str, list[Any]],
+        workspace: dict[str, Any],
+        *,
+        existing_rtl_files: list[Any],
+        cpu_filelist_defines_alias: bool = False,
+    ) -> dict[str, list[Any]]:
+        if cpu_filelist_defines_alias:
+            return {
+                "rtl_files": [],
+                "incdirs": [],
+                "defines": [],
+                "filtered_rtl_files": list(data["rtl_files"]),
+            }
+
+        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
+        module_names = {COMPATIBILITY_CPU_ALIAS_TOP}
+        if wrapper_top:
+            module_names.add(wrapper_top)
+
+        existing_paths = {str(Path(path).resolve()) for path in existing_rtl_files}
+        kept: list[Path] = []
+        filtered: list[Path] = []
+        for path in data["rtl_files"]:
+            p = Path(path)
+            if str(p.resolve()) in existing_paths:
+                filtered.append(p)
+                continue
+            if any(PrepareStep._file_defines_module(p, module_name) for module_name in module_names):
+                kept.append(p)
+            else:
+                filtered.append(p)
 
         if not filtered:
             return data

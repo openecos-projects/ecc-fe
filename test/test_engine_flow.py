@@ -124,6 +124,17 @@ def _make_fake_soc_manifest_root(fe_root: Path, directory_name: str, soc_id: str
     return soc_root.resolve()
 
 
+def _is_verilator_compile_cmd(cmd: list[str]) -> bool:
+    return "--cc" in cmd and "--exe" in cmd and "--build" in cmd
+
+
+def _write_fake_sim_binary(cmd: list[str]) -> None:
+    sim_bin = Path(cmd[cmd.index("-o") + 1])
+    sim_bin.parent.mkdir(parents=True, exist_ok=True)
+    sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    sim_bin.chmod(0o755)
+
+
 # ── _format_runtime ────────────────────────────────────────────────────────────
 
 def test_format_runtime_zero():      assert _format_runtime(0) == "00:00:00"
@@ -378,6 +389,60 @@ def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
     assert ws["sim_build_all_programs"] is False
     assert ws["sim_program_names"] == ["add"]
     assert ws["sim_run_args"] == ["--max-cycles", "50000000"]
+
+
+def test_frontend_create_with_catalog_cpu_and_user_filelist_adds_adapter_wrapper(tmp_path):
+    user_cpu_root = tmp_path / "user_cpu"
+    user_cpu_root.mkdir()
+    user_cpu_rtl = user_cpu_root / "picorv32_user.v"
+    user_cpu_filelist = user_cpu_root / "filelist.cpu.f"
+    user_cpu_rtl.write_text(
+        "module picorv32(input clk, input resetn, output trap); assign trap = 1'b0; endmodule\n",
+        encoding="utf-8",
+    )
+    user_cpu_filelist.write_text("picorv32_user.v\n", encoding="utf-8")
+    request = tmp_path / "create_frontend_user_cpu.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_frontend_user_cpu"),
+                "core_id": "picorv32",
+                "soc_harness_id": "minimal-riscv-soc",
+                "toolchain_id": "riscv32-unknown-elf",
+                "test_suite_id": "cpu-tests",
+                "cpu_filelist": str(user_cpu_filelist),
+                "parameters": {
+                    "Design": "chip",
+                    "Top module": "ecos_sim_top",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_frontend_user_cpu"))
+
+    assert ws["cpu_filelist"] == str(user_cpu_filelist.resolve())
+    assert ws["cpu_adapter_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
+    assert ws["cpu_wrapper_top"] == "ecos_picorv32_cpu_wrapper"
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+    prepare_report = json.loads(report.read_text(encoding="utf-8"))
+    rtl_files = {str(Path(item).resolve()) for item in prepared["rtl_files"]}
+
+    assert str(user_cpu_rtl.resolve()) in rtl_files
+    assert any(path.endswith("ecos_picorv32_cpu_wrapper.v") for path in rtl_files)
+    assert not any(path.endswith("/SoC/ysyx_00000000.sv") for path in rtl_files)
+    assert prepare_report["inputs"]["cpu_filelist"]["path"] == str(user_cpu_filelist.resolve())
+    assert prepare_report["inputs"]["cpu_adapter_filelist"]["path"] == ws["cpu_adapter_filelist"]
+    assert prepare_report["inputs"]["soc_filelist"]["filtered_rtl_files"] == 1
 
 
 def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
@@ -691,7 +756,8 @@ def test_run_all_stops_at_sim_without_testbench(tmp_path):
     ok, reports = engine.run_all()
     assert ok is False
     assert len(reports) == len(DEFAULT_FLOW_STEPS)
-    assert [report["state"] for report in reports[:-1]] == ["Success", "Success", "Success"]
+    assert [report["step"] for report in reports] == [name for name, _ in DEFAULT_FLOW_STEPS]
+    assert all(report["state"] == "Success" for report in reports[:-1])
     assert reports[-1]["step"] == "sim"
     assert reports[-1]["state"] == "Incomplete"
 
@@ -997,11 +1063,8 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
@@ -1010,12 +1073,13 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
     engine.create_step_workspaces()
     state = engine.run_step("sim", rerun=True)
 
-    compile_cmd = next(c for c in run_calls if "--binary" in c)
-    simulate_cmd = next(c for c in run_calls if "--binary" not in c)
+    compile_cmd = next(c for c in run_calls if _is_verilator_compile_cmd(c))
+    simulate_cmd = next(c for c in run_calls if not _is_verilator_compile_cmd(c))
 
     assert state == StateEnum.Success
     assert str(tb.resolve()) in compile_cmd
     assert str(helper.resolve()) in compile_cmd
+    assert "--timing" in compile_cmd
     assert "-CFLAGS" in compile_cmd
     assert f"-I{inc}" in compile_cmd[compile_cmd.index("-CFLAGS") + 1]
     assert "-LDFLAGS" in compile_cmd
@@ -1056,11 +1120,8 @@ def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkey
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path))
@@ -1070,7 +1131,7 @@ def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkey
     engine.create_step_workspaces()
     state = engine.run_step("sim", rerun=True)
 
-    compile_cmd = next(c for c in run_calls if "--binary" in c)
+    compile_cmd = next(c for c in run_calls if _is_verilator_compile_cmd(c))
     cflags = compile_cmd[compile_cmd.index("-CFLAGS") + 1]
 
     assert state == StateEnum.Success
@@ -1106,11 +1167,8 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         image = ""
@@ -1125,7 +1183,7 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
     state = engine.run_step("sim", rerun=True)
 
     assert state == StateEnum.Success
-    sim_calls = [c for c in run_calls if "--binary" not in c]
+    sim_calls = [c for c in run_calls if not _is_verilator_compile_cmd(c)]
     assert len(sim_calls) == 2
     out_cases_dir = Path(ws["directory"]) / "sim_verilator" / "output" / "cases"
     for call in sim_calls:
@@ -1162,11 +1220,8 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="ok-single\n", stderr="")
 
@@ -1184,7 +1239,7 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     assert run_dirs
     latest_run = run_dirs[-1]
     assert (latest_run / "cases" / "single.soc" / "log.txt").exists()
-    simulate_cmd = next(c for c in run_calls if "--binary" not in c)
+    simulate_cmd = next(c for c in run_calls if not _is_verilator_compile_cmd(c))
     assert "--wave" in simulate_cmd
     expected_wave = (
         Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / "single.soc" / "wave.vcd"
@@ -1220,11 +1275,8 @@ def test_rtthread_run_does_not_reuse_previous_cpu_tests_cases(tmp_path, monkeypa
     ws = load_workspace(str(tmp_path / "ws_rtthread_no_reuse"))
 
     def _fake_run(cmd, capture_output=True, text=True, env=None):
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if "--name" in cmd:
             name = cmd[cmd.index("--name") + 1]
@@ -1298,11 +1350,8 @@ def test_rtthread_terminal_markers_are_required_for_success(tmp_path, monkeypatc
     ws = load_workspace(str(tmp_path / "ws_rtthread_markers"))
 
     def _fake_run(cmd, capture_output=True, text=True, env=None):
-        if "--binary" in cmd:
-            sim_bin = Path(cmd[cmd.index("-o") + 1])
-            sim_bin.parent.mkdir(parents=True, exist_ok=True)
-            sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            sim_bin.chmod(0o755)
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if "--name" in cmd:
             name = cmd[cmd.index("--name") + 1]
@@ -1377,7 +1426,7 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
     state = engine.run_step("sim", rerun=True)
 
     assert state == StateEnum.Success
-    assert all("--binary" not in call for call in run_calls)
+    assert all(not _is_verilator_compile_cmd(call) for call in run_calls)
 
 
 def test_rtthread_program_enables_default_difftest_args(tmp_path):

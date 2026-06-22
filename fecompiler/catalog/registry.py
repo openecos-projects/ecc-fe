@@ -73,12 +73,17 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         if entry is None:
             issues.append(ValidationIssue("error", "unknown_catalog_id", f"Unknown {field}: {entry_id}", field))
 
-    effective_cpu_filelist = _effective_cpu_filelist(config, core)
+    user_cpu_filelist = str(config.get("cpu_filelist", "")).strip()
+    core_cpu_filelist = _core_cpu_filelist(core)
+    effective_cpu_filelist = user_cpu_filelist or core_cpu_filelist
+    adapter_cpu_filelist = _adapter_cpu_filelist(config, core, user_cpu_filelist, core_cpu_filelist)
+    if user_cpu_filelist and not Path(user_cpu_filelist).expanduser().exists():
+        issues.append(ValidationIssue("error", "cpu_filelist_not_found", f"CPU filelist not found: {user_cpu_filelist}", "cpu_filelist"))
     if core is not None and bool(core.data.get("requires_filelist")):
         filelist = effective_cpu_filelist
         if not filelist:
             issues.append(ValidationIssue("error", "missing_cpu_filelist", "CPU filelist is required.", "cpu_filelist"))
-        elif not Path(filelist).expanduser().exists():
+        elif not user_cpu_filelist and not Path(filelist).expanduser().exists():
             issues.append(ValidationIssue("error", "cpu_filelist_not_found", f"CPU filelist not found: {filelist}", "cpu_filelist"))
 
     entries = [entry for entry in (core, soc, toolchain, test_suite) if entry is not None]
@@ -193,7 +198,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "toolchain_id": toolchain_id,
         "test_suite_id": test_suite_id,
         "cpu_filelist": effective_cpu_filelist,
-        "core_cpu_filelist": str(core.data.get("cpu_filelist", "")) if core is not None else "",
+        "core_cpu_filelist": core_cpu_filelist,
+        "cpu_adapter_filelist": adapter_cpu_filelist,
         "core_capability": core.integration_level if core is not None else "",
         "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
@@ -316,10 +322,7 @@ def _find(entries: list[CatalogEntry], entry_id: str) -> CatalogEntry | None:
     return next((entry for entry in entries if entry.id == entry_id), None)
 
 
-def _effective_cpu_filelist(config: dict[str, Any], core: CatalogEntry | None) -> str:
-    filelist = str(config.get("cpu_filelist", "")).strip()
-    if filelist:
-        return filelist
+def _core_cpu_filelist(core: CatalogEntry | None) -> str:
     if core is None or bool(core.data.get("requires_filelist")):
         return ""
     builtin = str(core.data.get("cpu_filelist", "")).strip()
@@ -329,6 +332,20 @@ def _effective_cpu_filelist(config: dict[str, Any], core: CatalogEntry | None) -
     if path.is_absolute():
         return str(path)
     return str((Path(__file__).resolve().parents[2] / path).resolve())
+
+
+def _adapter_cpu_filelist(
+    config: dict[str, Any],
+    core: CatalogEntry | None,
+    user_cpu_filelist: str,
+    core_cpu_filelist: str,
+) -> str:
+    if not user_cpu_filelist or not core_cpu_filelist:
+        return ""
+    core_id = _read_id(config, "core_id", DEFAULT_CORE_ID)
+    if core_id == DEFAULT_CORE_ID or (core is not None and bool(core.data.get("requires_filelist"))):
+        return ""
+    return core_cpu_filelist
 
 
 def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:

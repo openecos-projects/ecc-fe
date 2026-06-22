@@ -3,7 +3,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from fecompiler.catalog.registry import catalog_payload, validate_frontend_config
+from fecompiler.cli.workspace import (
+    WorkspaceCliError,
+    _validate_workspace_test_suite_supported,
+    _workspace_supported_test_suites,
+)
+from fecompiler.cpu.registry import get_cpu_wrapper
 
 
 def _compatibility_by_pair() -> dict[tuple[str, str], dict]:
@@ -38,12 +46,45 @@ def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
     assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
 
 
-def test_darkriscv_adapter_can_create_basic_cpu_test_workspace():
+def test_selected_catalog_cpu_keeps_user_filelist_and_adds_adapter_filelist(tmp_path):
+    user_filelist = tmp_path / "filelist.cpu.f"
+    user_filelist.write_text("picorv32_user.v\n", encoding="utf-8")
+
+    result = validate_frontend_config({
+        "core_id": "picorv32",
+        "soc_harness_id": "minimal-riscv-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+    })
+
+    assert result.ok is True
+    assert result.normalized["cpu_filelist"] == str(user_filelist)
+    assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
+    assert result.normalized["cpu_adapter_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
+
+
+def test_selected_catalog_cpu_rejects_missing_user_filelist(tmp_path):
+    missing = tmp_path / "missing.f"
+
+    result = validate_frontend_config({
+        "core_id": "picorv32",
+        "soc_harness_id": "minimal-riscv-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(missing),
+    })
+
+    assert result.ok is False
+    assert any(issue.code == "cpu_filelist_not_found" for issue in result.issues)
+
+
+def test_darkriscv_adapter_is_not_marked_cpu_test_ready_until_sim_handshake_is_fixed():
     item = _compatibility_by_pair()[("darkriscv", "minimal-riscv-soc")]
-    assert item["can_create_workspace"] is True
-    assert item["support_level"] == "experimental"
-    assert item["status"] == "experimental"
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
+    assert item["can_create_workspace"] is False
+    assert item["support_level"] == "unsupported"
+    assert item["status"] == "needs_cpu_adapter"
+    assert item["supported_test_suites"] == []
 
     result = validate_frontend_config({
         "core_id": "darkriscv",
@@ -51,10 +92,24 @@ def test_darkriscv_adapter_can_create_basic_cpu_test_workspace():
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
     })
-    assert result.ok is True
-    assert result.support_level == "experimental"
+    assert result.ok is False
+    assert result.support_level == "unsupported"
+    assert any(issue.code == "core_sim_adapter_not_implemented" for issue in result.issues)
+    assert any(issue.code == "combination_test_suite_not_supported" for issue in result.issues)
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/darkriscv/filelist.cpu.f")
     assert result.normalized["core_sim_program_link_base"] == "0x0"
+    assert get_cpu_wrapper("darkriscv").sim_ready is False
+
+
+def test_darkriscv_legacy_workspace_does_not_inherit_soc_cpu_tests():
+    workspace = {
+        "cpu_wrapper_id": "darkriscv",
+        "soc_wrapper_id": "minimal-riscv-soc",
+    }
+
+    assert _workspace_supported_test_suites(workspace) == []
+    with pytest.raises(WorkspaceCliError):
+        _validate_workspace_test_suite_supported(workspace, "cpu-tests")
 
 
 def test_cva6_adapter_can_create_basic_cpu_test_workspace():

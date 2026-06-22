@@ -49,6 +49,7 @@ _PATH_FIELDS = {
     "origin_verilog",
     "filelist",
     "cpu_filelist",
+    "cpu_adapter_filelist",
     "soc_filelist",
     "testbench",
     "sim_tests_dir",
@@ -98,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--origin-verilog", default="")
     create.add_argument("--filelist", default="")
     create.add_argument("--cpu-filelist", default="")
+    create.add_argument("--cpu-adapter-filelist", default="")
     create.add_argument("--soc-filelist", default="")
     create.add_argument("--testbench", default="")
     create.add_argument("--sim-cpp", action="append", default=[])
@@ -115,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--sim-soc-root", default="")
     create.add_argument("--sim-build-test-script", default="")
     create.add_argument("--rtl", action="append", default=[], help="RTL source path; repeatable")
+    create.add_argument("--core-id", default="")
     create.add_argument("--soc-variant", default="")
     create.add_argument("--soc-harness-id", default="")
 
@@ -256,6 +259,7 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
         origin_verilog: Annotated[str | None, typer.Option("--origin-verilog")] = None,
         filelist: Annotated[str | None, typer.Option("--filelist")] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        cpu_adapter_filelist: Annotated[str | None, typer.Option("--cpu-adapter-filelist")] = None,
         soc_filelist: Annotated[str | None, typer.Option("--soc-filelist")] = None,
         testbench: Annotated[str | None, typer.Option("--testbench")] = None,
         sim_cpp: Annotated[list[str] | None, typer.Option("--sim-cpp")] = None,
@@ -273,7 +277,9 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
         sim_soc_root: Annotated[str | None, typer.Option("--sim-soc-root")] = None,
         sim_build_test_script: Annotated[str | None, typer.Option("--sim-build-test-script")] = None,
         rtl: Annotated[list[str] | None, typer.Option("--rtl", help="RTL source path; repeatable")] = None,
+        core_id: Annotated[str | None, typer.Option("--core-id")] = None,
         soc_variant: Annotated[str | None, typer.Option("--soc-variant")] = None,
+        soc_harness_id: Annotated[str | None, typer.Option("--soc-harness-id")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
         args = argparse.Namespace(
@@ -287,6 +293,7 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
             origin_verilog=origin_verilog or "",
             filelist=filelist or "",
             cpu_filelist=cpu_filelist or "",
+            cpu_adapter_filelist=cpu_adapter_filelist or "",
             soc_filelist=soc_filelist or "",
             testbench=testbench or "",
             sim_cpp=list(sim_cpp or []),
@@ -304,7 +311,9 @@ def build_typer_app(typer_module: Any | None = None) -> Any:
             sim_soc_root=sim_soc_root or "",
             sim_build_test_script=sim_build_test_script or "",
             rtl=list(rtl or []),
+            core_id=core_id or "",
             soc_variant=soc_variant or "",
+            soc_harness_id=soc_harness_id or "",
         )
         finish("create", json_output, lambda: _create(args))
 
@@ -487,6 +496,8 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
     parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
+    if validation.normalized.get("cpu_adapter_filelist"):
+        parameters["cpu_adapter_filelist"] = validation.normalized["cpu_adapter_filelist"]
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
     if validation.normalized.get("core_sim_program_link_base"):
@@ -509,6 +520,7 @@ def _create(args: argparse.Namespace) -> CliResult:
         origin_verilog=str(normalized.get("origin_verilog", "")),
         filelist=str(normalized.get("filelist", "")),
         cpu_filelist=str(normalized.get("cpu_filelist", "")),
+        cpu_adapter_filelist=str(normalized.get("cpu_adapter_filelist", "")),
         soc_filelist=str(normalized.get("soc_filelist", "")),
         testbench=str(normalized.get("testbench", "")),
         sim_cpp_sources=_normalize_str_list(normalized.get("sim_cpp_sources", [])),
@@ -817,6 +829,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("origin_verilog", "origin_verilog"),
         ("filelist", "filelist"),
         ("cpu_filelist", "cpu_filelist"),
+        ("cpu_adapter_filelist", "cpu_adapter_filelist"),
         ("soc_filelist", "soc_filelist"),
         ("testbench", "testbench"),
         ("sim_tests_dir", "sim_tests_dir"),
@@ -824,6 +837,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("sim_tests_out_dir", "sim_tests_out_dir"),
         ("sim_soc_root", "sim_soc_root"),
         ("sim_build_test_script", "sim_build_test_script"),
+        ("core_id", "core_id"),
         ("soc_variant", "soc_variant"),
         ("soc_harness_id", "soc_harness_id"),
     ):
@@ -966,6 +980,8 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
         request["top_module"] = normalized["soc_wrapper_top"]
     if normalized.get("cpu_filelist"):
         request["cpu_filelist"] = normalized["cpu_filelist"]
+    if normalized.get("cpu_adapter_filelist"):
+        request["cpu_adapter_filelist"] = normalized["cpu_adapter_filelist"]
     request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
     request["soc_supports_difftest"] = bool(normalized.get("soc_supports_difftest", True))
     request["core_supported_test_suites"] = normalized.get("core_supported_test_suites", [])
@@ -998,6 +1014,7 @@ def _validate_create_request_paths(normalized: dict[str, Any]) -> None:
     missing: list[str] = []
     file_fields = (
         "cpu_filelist",
+        "cpu_adapter_filelist",
         "soc_filelist",
         "filelist",
         "origin_verilog",
@@ -1439,8 +1456,8 @@ def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id: str) -> None:
-    supported = _workspace_supported_test_suites(workspace)
-    if supported and suite_id not in supported:
+    known, supported = _workspace_test_suite_contract(workspace)
+    if known and suite_id not in supported:
         raise WorkspaceCliError(
             "run_step",
             "failed",
@@ -1455,27 +1472,65 @@ def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id
 
 
 def _workspace_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
+    return _workspace_test_suite_contract(workspace)[1]
+
+
+def _workspace_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
     core_supported = _normalize_str_list(workspace.get("core_supported_test_suites", []))
     soc_supported = _normalize_str_list(workspace.get("soc_supported_test_suites", []))
+    has_core_contract = "core_supported_test_suites" in workspace
+    has_soc_contract = "soc_supported_test_suites" in workspace
     if core_supported and soc_supported:
-        return [suite for suite in core_supported if suite in soc_supported]
-    if core_supported:
-        return [suite for suite in core_supported if suite in _fallback_soc_supported_test_suites(workspace)]
-    if soc_supported:
-        return [suite for suite in _fallback_core_supported_test_suites(workspace) if suite in soc_supported]
+        return True, [suite for suite in core_supported if suite in soc_supported]
+    if has_core_contract or has_soc_contract:
+        if has_core_contract and not core_supported:
+            return True, []
+        if has_soc_contract and not soc_supported:
+            return True, []
+        soc_known, soc_fallback = _fallback_soc_test_suite_contract(workspace)
+        core_known, core_fallback = _fallback_core_test_suite_contract(workspace)
+        if core_supported:
+            return True, [suite for suite in core_supported if not soc_known or suite in soc_fallback]
+        if soc_supported:
+            return True, [suite for suite in soc_supported if not core_known or suite in core_fallback]
 
-    core_fallback = _fallback_core_supported_test_suites(workspace)
-    soc_fallback = _fallback_soc_supported_test_suites(workspace)
+    core_known, core_fallback = _fallback_core_test_suite_contract(workspace)
+    soc_known, soc_fallback = _fallback_soc_test_suite_contract(workspace)
     if core_fallback and soc_fallback:
-        return [suite for suite in core_fallback if suite in soc_fallback]
+        return True, [suite for suite in core_fallback if suite in soc_fallback]
     if core_fallback:
-        return core_fallback
-    return soc_fallback
+        return core_known, core_fallback
+    if soc_fallback:
+        if core_known:
+            return True, []
+        return soc_known, soc_fallback
+    return core_known or soc_known, []
+
+
+def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
+    core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
+    if core_id == "darkriscv":
+        return True, []
+    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "custom-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
+
+
+def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
+    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
+    return bool(
+        soc_id in {
+            "ysyx-am-soc",
+            "ysyx-am-soc-alt",
+            "ysyx-am-soc-extended",
+            "minimal-riscv-soc",
+            "corev-mini-soc",
+            "femtorv-mini-soc",
+        }
+    ), _fallback_soc_supported_test_suites(workspace)
 
 
 def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "darkriscv"}:
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32"}:
         return ["cpu-tests", "smoke"]
     if core_id in {"custom-filelist", "ysyx_00000000", ""}:
         return ["smoke", "cpu-tests", "rtthread"]

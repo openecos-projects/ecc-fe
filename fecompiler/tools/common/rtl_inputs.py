@@ -12,6 +12,7 @@ _SLANG_ELAB_DEFAULT_DEFINES = ("SYNTHESIS",)
 _VERILATOR_LINT_DEFAULT_DEFINES = ("SYNTHESIS",)
 _FINGERPRINT_PATH_FIELDS = (
     "cpu_filelist",
+    "cpu_adapter_filelist",
     "soc_filelist",
     "filelist",
     "origin_verilog",
@@ -167,7 +168,10 @@ def verilator_lint_define_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _uses_explicit_frontend_inputs(workspace: dict[str, Any]) -> bool:
-    return any(str(workspace.get(field, "") or "").strip() for field in ("cpu_filelist", "soc_filelist"))
+    return any(
+        str(workspace.get(field, "") or "").strip()
+        for field in ("cpu_filelist", "cpu_adapter_filelist", "soc_filelist")
+    )
 
 
 def _normalized_path_text(value: Any) -> str:
