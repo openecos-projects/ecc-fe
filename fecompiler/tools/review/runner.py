@@ -216,7 +216,9 @@ def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:
     if status in {"failed", "timeout"}:
         diagnostics = probe.get("diagnostics", [])
         return any(
-            isinstance(item, dict) and str(item.get("severity", "")).lower() == "error"
+            isinstance(item, dict)
+            and str(item.get("severity", "")).lower() == "error"
+            and str(item.get("category", "")).lower() != "tool-limit"
             for item in diagnostics if isinstance(diagnostics, list)
         ) or gate == "failed"
 

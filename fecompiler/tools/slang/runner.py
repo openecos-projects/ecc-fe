@@ -151,6 +151,7 @@ class SlangElabStep(BaseStep):
         cmd = [
             _slang_cmd(),
             "--lint-only",
+            "--allow-use-before-declare",
             "--timescale", "1ns/1ps",
             "--top", top,
             "--diag-column",

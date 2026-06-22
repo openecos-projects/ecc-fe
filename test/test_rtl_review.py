@@ -124,6 +124,105 @@ def test_rtl_review_structural_probe_is_optional(tmp_path: Path, monkeypatch):
     assert '"status": "unavailable"' in content
 
 
+def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp_path: Path, monkeypatch):
+    leaf = tmp_path / "leaf.v"
+    cpu_top = tmp_path / "CpuTop.v"
+    soc_wrapper = tmp_path / "ysyx_00000000.v"
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    soc_filelist = tmp_path / "filelist.soc.f"
+    leaf.write_text("module Leaf(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
+    cpu_top.write_text("module CpuTop(input clk, output y); Leaf u_leaf(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
+    soc_wrapper.write_text("module ysyx_00000000(input clk, output y); CpuTop u_cpu(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
+    cpu_filelist.write_text(f"{leaf}\n{cpu_top}\n", encoding="utf-8")
+    soc_filelist.write_text(f"{soc_wrapper}\n", encoding="utf-8")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+
+    def fake_run(cmd, cwd, capture_output, text, env, timeout):
+        script = Path(cmd[cmd.index("-s") + 1])
+        script_text = script.read_text(encoding="utf-8")
+        assert "hierarchy -top CpuTop -check" in script_text
+        assert "hierarchy -top ysyx_00000000 -check" not in script_text
+        assert str(cpu_top) in script_text
+        assert str(soc_wrapper) not in script_text
+        stat_path = _stat_path_from_script(script_text)
+        netlist_path = _netlist_path_from_script(script_text)
+        stat_path.write_text(json.dumps({"modules": {"\\CpuTop": {"num_cells": 1}}, "design": {"num_cells": 1}}), encoding="utf-8")
+        netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_cpu_wrapper_outside_filelist"),
+        parameters={"Design": "demo", "Top module": "ecos_sim_top"},
+        cpu_filelist=str(cpu_filelist),
+        soc_filelist=str(soc_filelist),
+    )
+    workspace = create_workspace(spec)
+    assert workspace is not None
+
+    loaded = load_workspace(str(tmp_path / "ws_cpu_wrapper_outside_filelist"))
+    assert loaded is not None
+    loaded["cpu_wrapper_top"] = "ysyx_00000000"
+    loaded["top_module"] = "ecos_sim_top"
+    engine = EngineFlow(workspace=loaded)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("review", rerun=True) == StateEnum.Success
+
+    report = tmp_path / "ws_cpu_wrapper_outside_filelist" / "review_fe" / "report" / "rtl_review.json"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["structural_probe"]["top_module"] == "CpuTop"
+
+
+def test_yosys_precheck_autodiscovers_same_name_local_helper_sources(tmp_path: Path, monkeypatch):
+    cpu_top = tmp_path / "CpuTop.sv"
+    helper = tmp_path / "difftest_wrapper.sv"
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    cpu_top.write_text(
+        "module CpuTop(input logic clk, output logic y); difftest_wrapper difftest(.clk(clk), .y(y)); endmodule\n",
+        encoding="utf-8",
+    )
+    helper.write_text("module difftest_wrapper(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
+    cpu_filelist.write_text(f"{cpu_top}\n", encoding="utf-8")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+
+    def fake_run(cmd, cwd, capture_output, text, env, timeout):
+        script = Path(cmd[cmd.index("-s") + 1])
+        script_text = script.read_text(encoding="utf-8")
+        assert str(cpu_top) in script_text
+        assert str(helper) in script_text
+        assert "--top CpuTop" in script_text
+        stat_path = _stat_path_from_script(script_text)
+        netlist_path = _netlist_path_from_script(script_text)
+        stat_path.write_text(json.dumps({"modules": {"\\CpuTop": {"num_cells": 1}}, "design": {"num_cells": 1}}), encoding="utf-8")
+        netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_autodiscover_helper"),
+        parameters={"Design": "demo", "Top module": "CpuTop"},
+        cpu_filelist=str(cpu_filelist),
+    )
+    workspace = create_workspace(spec)
+    assert workspace is not None
+
+    loaded = load_workspace(str(tmp_path / "ws_autodiscover_helper"))
+    assert loaded is not None
+    engine = EngineFlow(workspace=loaded)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("review", rerun=True) == StateEnum.Success
+
+    report = tmp_path / "ws_autodiscover_helper" / "review_fe" / "report" / "rtl_review.json"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert str(helper) in data["structural_probe"]["inputs"]["auto_discovered_rtl_files"]
+
+
 def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
     rtl = tmp_path / "cpu.v"
     filelist = tmp_path / "filelist.cpu.f"
@@ -317,6 +416,54 @@ def test_yosys_precheck_error_blocks_review_step(tmp_path: Path, monkeypatch):
     assert probe["quality"]["gate"] == "failed"
     assert probe["diagnostics"][0]["severity"] == "error"
     assert any(issue["category"] == "syntax" for issue in data["issues"])
+
+
+def test_yosys_precheck_tool_limit_does_not_block_review_step(tmp_path: Path, monkeypatch):
+    rtl = tmp_path / "cpu.sv"
+    filelist = tmp_path / "filelist.cpu.f"
+    rtl.write_text("module cpu(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
+    filelist.write_text(f"{rtl}\n", encoding="utf-8")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+
+    def fake_run(cmd, cwd, capture_output, text, env, timeout):
+        script = Path(cmd[cmd.index("-s") + 1])
+        script_text = script.read_text(encoding="utf-8")
+        stat_path = _stat_path_from_script(script_text)
+        netlist_path = _netlist_path_from_script(script_text)
+        stat_path.write_text(json.dumps({"modules": {}, "design": {}}), encoding="utf-8")
+        netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout='ERROR: Feature unimplemented at slang_frontend.cc:1306 (failed condition "ret.size()")\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_yosys_tool_limit"),
+        parameters={"Design": "demo", "Top module": "cpu"},
+        cpu_filelist=str(filelist),
+    )
+    workspace = create_workspace(spec)
+    assert workspace is not None
+
+    loaded = load_workspace(str(tmp_path / "ws_yosys_tool_limit"))
+    assert loaded is not None
+    engine = EngineFlow(workspace=loaded)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("review", rerun=True) == StateEnum.Success
+
+    report = tmp_path / "ws_yosys_tool_limit" / "review_fe" / "report" / "rtl_review.json"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    probe = data["yosys_precheck"]
+    assert probe["status"] == "failed"
+    assert probe["quality"]["gate"] == "warnings"
+    assert probe["diagnostics"][0]["category"] == "tool-limit"
+    assert any(issue["category"] == "tooling" for issue in data["issues"])
 
 
 def test_yosys_precheck_script_stays_frontend_only(tmp_path: Path, monkeypatch):

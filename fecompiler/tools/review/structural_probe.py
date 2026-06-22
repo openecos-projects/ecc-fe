@@ -27,6 +27,14 @@ _TIMEOUT_SECONDS = 45
 _HIGH_FANOUT_THRESHOLD = 64
 _HIGH_FANIN_THRESHOLD = 32
 _DEEP_COMB_DEPTH_THRESHOLD = 16
+_AUTODISCOVER_SOURCE_LIMIT = 32
+_AUTODISCOVER_EXTENSIONS = (".sv", ".v")
+_SV_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_$]*"
+_MODULE_DECL_RE = re.compile(rf"\bmodule\s+({_SV_IDENTIFIER})\b")
+_SIMPLE_INSTANCE_RE = re.compile(rf"(?m)(?:^|[;\n])\s*({_SV_IDENTIFIER})\s+({_SV_IDENTIFIER})\s*\(")
+_PARAM_INSTANCE_RE = re.compile(rf"(?ms)(?:^|[;\n])\s*({_SV_IDENTIFIER})\s*#\s*\(.*?\)\s*({_SV_IDENTIFIER})\s*\(")
+_LINE_COMMENT_RE = re.compile(r"//.*?$", re.MULTILINE)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
 def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]:
@@ -225,11 +233,131 @@ def _parse_filelist(filelist: str) -> dict[str, Any]:
     except Exception:
         return {"rtl_files": [], "incdirs": [], "defines": []}
 
-    return {
-        "rtl_files": [str(Path(path).expanduser().resolve()) for path in parsed.get("rtl_files", [])],
-        "incdirs": [str(Path(path).expanduser().resolve()) for path in parsed.get("incdirs", [])],
+    rtl_files = [
+        str(path)
+        for path in _filter_review_rtl_files(
+            Path(path).expanduser().resolve() for path in parsed.get("rtl_files", [])
+        )
+    ]
+    incdirs = _unique_paths([
+        *(Path(path).expanduser().resolve() for path in parsed.get("incdirs", [])),
+        *(Path(path).parent for path in rtl_files),
+    ])
+    return _complete_missing_module_sources({
+        "rtl_files": rtl_files,
+        "incdirs": incdirs,
         "defines": [str(define) for define in parsed.get("defines", [])],
-    }
+        "auto_discovered_rtl_files": [],
+    })
+
+
+def _filter_review_rtl_files(paths: Any) -> list[Path]:
+    return [path for path in paths if not _is_review_excluded_rtl(path)]
+
+
+def _is_review_excluded_rtl(path: Path) -> bool:
+    """Skip simulation-only sources that should not participate in synthesis precheck."""
+    name = path.name
+    if name in {"instr_tracer.sv", "instr_tracer_if.sv"} and "/thirdparty/cva6/" in str(path):
+        return True
+    return False
+
+
+def _unique_paths(paths: list[Path]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        text = str(path.expanduser().resolve())
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _complete_missing_module_sources(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Add local same-name sources for modules omitted by compact filelists.
+
+    Some RTL generators and simulators accept a filelist that names the main
+    sources and relies on the source/include directories to locate same-name
+    helper modules.  Yosys read_slang does not reliably do that, so Review fills
+    in only nearby CPU-local `ModuleName.sv` / `ModuleName.v` files.
+    """
+    completed = dict(inputs)
+    rtl_files = [str(path) for path in completed.get("rtl_files", [])]
+    seen = set(rtl_files)
+    discovered: list[str] = []
+
+    for _ in range(4):
+        declared = {item["name"] for item in _module_declarations_from_inputs({"rtl_files": rtl_files})}
+        missing = [
+            name
+            for name in sorted(_instantiated_module_candidates_from_inputs({"rtl_files": rtl_files}) - declared)
+            if _should_autodiscover_module(name)
+        ]
+        added = False
+        for module_name in missing:
+            path = _find_local_module_source(module_name, rtl_files, completed.get("incdirs", []))
+            if not path or str(path) in seen:
+                continue
+            text = str(path)
+            rtl_files.append(text)
+            seen.add(text)
+            discovered.append(text)
+            added = True
+            if len(discovered) >= _AUTODISCOVER_SOURCE_LIMIT:
+                break
+        if not added or len(discovered) >= _AUTODISCOVER_SOURCE_LIMIT:
+            break
+
+    completed["rtl_files"] = rtl_files
+    completed["incdirs"] = _unique_paths([
+        *(Path(path) for path in completed.get("incdirs", [])),
+        *(Path(path).parent for path in rtl_files),
+    ])
+    completed["auto_discovered_rtl_files"] = discovered
+    return completed
+
+
+def _instantiated_module_candidates_from_inputs(inputs: dict[str, Any]) -> set[str]:
+    candidates: set[str] = set()
+    for raw_path in inputs.get("rtl_files", []):
+        text = _strip_sv_comments(_read_rtl_for_scan(Path(str(raw_path))))
+        if not text:
+            continue
+        for pattern in (_SIMPLE_INSTANCE_RE, _PARAM_INSTANCE_RE):
+            for match in pattern.finditer(text):
+                module_name = match.group(1)
+                instance_name = match.group(2)
+                if _is_sv_keyword(module_name) or _is_sv_keyword(instance_name):
+                    continue
+                candidates.add(module_name)
+    return candidates
+
+
+def _should_autodiscover_module(module_name: str) -> bool:
+    return bool(module_name) and not _is_sv_keyword(module_name) and not _is_sv_primitive(module_name)
+
+
+def _find_local_module_source(module_name: str, rtl_files: list[str], incdirs: list[str]) -> Path | None:
+    roots = _unique_paths([
+        *(Path(path).parent for path in rtl_files),
+        *(Path(path) for path in incdirs),
+    ])
+    for root_text in roots:
+        root = Path(root_text)
+        for suffix in _AUTODISCOVER_EXTENSIONS:
+            candidate = root / f"{module_name}{suffix}"
+            if _is_review_excluded_rtl(candidate):
+                continue
+            if candidate.is_file() and _file_declares_module(candidate, module_name):
+                return candidate.resolve()
+    return None
+
+
+def _file_declares_module(path: Path, module_name: str) -> bool:
+    text = _strip_sv_comments(_read_rtl_for_scan(path))
+    return any(match.group(1) == module_name for match in _MODULE_DECL_RE.finditer(text))
 
 
 def _resolve_yosys() -> str:
@@ -490,29 +618,158 @@ def _review_defines(inputs: dict[str, Any]) -> list[str]:
 
 
 def _cpu_top(workspace: dict[str, Any], inputs: dict[str, Any] | None = None) -> str:
+    inputs = inputs or {}
     for field in ("cpu_wrapper_top", "cpu_top_module"):
         text = str(workspace.get(field, "")).strip()
-        if text:
+        if text and _top_is_declared_or_unscanned(text, inputs):
             return text
     top = str(workspace.get("top_module", "")).strip()
-    if str(workspace.get("cpu_filelist", "")).strip() and top and not _module_declared_in_inputs(top, inputs or {}):
-        return ""
-    return "" if top == "ecos_sim_top" else top
+    if top and top != "ecos_sim_top" and _top_is_declared_or_unscanned(top, inputs):
+        return top
+    return _infer_top_from_inputs(inputs)
+
+
+def _top_is_declared_or_unscanned(top: str, inputs: dict[str, Any]) -> bool:
+    rtl_files = inputs.get("rtl_files", [])
+    if not rtl_files:
+        return True
+    return _module_declared_in_inputs(top, inputs)
 
 
 def _module_declared_in_inputs(top: str, inputs: dict[str, Any]) -> bool:
     if not top:
         return False
-    pattern = re.compile(rf"\bmodule\s+{re.escape(top)}\b")
+    return any(item["name"] == top for item in _module_declarations_from_inputs(inputs))
+
+
+def _infer_top_from_inputs(inputs: dict[str, Any]) -> str:
+    declarations = _module_declarations_from_inputs(inputs)
+    if not declarations:
+        return ""
+    declared = [item["name"] for item in declarations]
+    instantiated = _instantiated_modules_from_inputs(inputs, declared)
+    candidates = [item for item in declarations if item["name"] not in instantiated]
+    if not candidates:
+        candidates = declarations
+    return max(candidates, key=_top_candidate_score)["name"]
+
+
+def _module_declarations_from_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    declarations: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for raw_path in inputs.get("rtl_files", []):
         path = Path(str(raw_path))
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        text = _read_rtl_for_scan(path)
+        if not text:
             continue
-        if pattern.search(text):
-            return True
-    return False
+        text = _strip_sv_comments(text)
+        for match in _MODULE_DECL_RE.finditer(text):
+            name = match.group(1)
+            if name in seen:
+                continue
+            seen.add(name)
+            declarations.append({
+                "name": name,
+                "path": str(path),
+                "order": len(declarations),
+            })
+    return declarations
+
+
+def _instantiated_modules_from_inputs(inputs: dict[str, Any], declared: list[str]) -> set[str]:
+    declared_set = set(declared)
+    instantiated: set[str] = set()
+    for raw_path in inputs.get("rtl_files", []):
+        text = _strip_sv_comments(_read_rtl_for_scan(Path(str(raw_path))))
+        if not text:
+            continue
+        for pattern in (_SIMPLE_INSTANCE_RE, _PARAM_INSTANCE_RE):
+            for match in pattern.finditer(text):
+                module_name = match.group(1)
+                instance_name = match.group(2)
+                if module_name in declared_set and not _is_sv_keyword(instance_name):
+                    instantiated.add(module_name)
+    return instantiated
+
+
+def _top_candidate_score(candidate: dict[str, Any]) -> tuple[int, int]:
+    name = str(candidate.get("name", ""))
+    lower = name.lower()
+    score = 0
+    if lower.endswith("top"):
+        score += 60
+    if "top" in lower:
+        score += 30
+    if "cpu" in lower:
+        score += 20
+    if "core" in lower:
+        score += 10
+    return score, int(candidate.get("order", 0))
+
+
+def _read_rtl_for_scan(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def _strip_sv_comments(text: str) -> str:
+    return _LINE_COMMENT_RE.sub("", _BLOCK_COMMENT_RE.sub("", text))
+
+
+def _is_sv_keyword(text: str) -> bool:
+    return text in {
+        "always",
+        "assign",
+        "begin",
+        "case",
+        "else",
+        "end",
+        "for",
+        "foreach",
+        "forever",
+        "function",
+        "generate",
+        "if",
+        "initial",
+        "module",
+        "package",
+        "program",
+        "task",
+        "while",
+    }
+
+
+def _is_sv_primitive(text: str) -> bool:
+    return text in {
+        "and",
+        "buf",
+        "bufif0",
+        "bufif1",
+        "cmos",
+        "nand",
+        "nmos",
+        "nor",
+        "not",
+        "notif0",
+        "notif1",
+        "or",
+        "pmos",
+        "pulldown",
+        "pullup",
+        "rcmos",
+        "rnmos",
+        "rpmos",
+        "rtran",
+        "rtranif0",
+        "rtranif1",
+        "tran",
+        "tranif0",
+        "tranif1",
+        "xnor",
+        "xor",
+    }
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -1027,6 +1284,8 @@ def _diagnostic_location(message: str) -> dict[str, Any]:
 
 def _diagnostic_category(message: str) -> str:
     text = message.lower()
+    if _is_yosys_tool_limit_message(text):
+        return "tool-limit"
     if "syntax" in text or "parse" in text:
         return "syntax"
     if "module" in text and ("not found" in text or "missing" in text):
@@ -1040,6 +1299,21 @@ def _diagnostic_category(message: str) -> str:
     return "tooling"
 
 
+def _is_yosys_tool_limit_message(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "feature unimplemented",
+            "failed condition",
+            "slang_frontend.cc",
+            "yosys-slang-plugin",
+            "unsupported",
+            "not supported",
+        )
+    )
+
+
 def _quality_from_run(
     returncode: int,
     diagnostics: list[dict[str, Any]],
@@ -1047,13 +1321,16 @@ def _quality_from_run(
 ) -> dict[str, Any]:
     errors = sum(1 for item in diagnostics if item.get("severity") == "error")
     warnings = sum(1 for item in diagnostics if item.get("severity") == "warning")
+    blocking_errors = sum(1 for item in diagnostics if _diagnostic_blocks_review(item))
     complexity_score = (
         _int_or_zero(metrics.get("cells"))
         + _int_or_zero(metrics.get("mux_cells")) * 2
         + _int_or_zero(metrics.get("arithmetic_cells")) * 3
         + _int_or_zero(metrics.get("memory_cells")) * 4
     )
-    if returncode != 0 or errors:
+    if returncode != 0 and not blocking_errors:
+        gate = "warnings"
+    elif blocking_errors:
         gate = "failed"
     elif warnings:
         gate = "warnings"
@@ -1061,14 +1338,27 @@ def _quality_from_run(
         gate = "clean"
     return {
         "gate": gate,
-        "frontend_parse": "pass" if returncode == 0 or not errors else "fail",
-        "hierarchy": "pass" if returncode == 0 else "fail",
-        "structural_check": "warnings" if warnings else ("fail" if errors else "pass"),
+        "frontend_parse": "pass" if not blocking_errors else "fail",
+        "hierarchy": "pass" if not blocking_errors else "fail",
+        "structural_check": "warnings" if warnings or errors else "pass",
         "diagnostic_errors": errors,
         "diagnostic_warnings": warnings,
         "complexity": _complexity_bucket(complexity_score),
         "complexity_score": complexity_score,
     }
+
+
+def _diagnostic_blocks_review(diagnostic: dict[str, Any]) -> bool:
+    if str(diagnostic.get("severity", "")).lower() != "error":
+        return False
+    if str(diagnostic.get("category", "")).lower() == "tool-limit":
+        return False
+    return True
+
+
+def _only_tool_limit_errors(diagnostics: list[dict[str, Any]]) -> bool:
+    errors = [item for item in diagnostics if str(item.get("severity", "")).lower() == "error"]
+    return bool(errors) and all(str(item.get("category", "")).lower() == "tool-limit" for item in errors)
 
 
 def _quality(status: str) -> dict[str, Any]:
@@ -1121,18 +1411,27 @@ def _issues_from_probe(
     text = log.lower()
 
     if returncode != 0:
-        has_error = any(item.get("severity") == "error" for item in diagnostics)
+        blocking_error = any(_diagnostic_blocks_review(item) for item in diagnostics)
+        tool_limited = _only_tool_limit_errors(diagnostics)
         first_location = _first_diagnostic_location(diagnostics)
         issues.append(_issue(
-            "error" if has_error else "warning",
-            "structural",
-            "Yosys precheck failed before completion",
-            "Yosys could not complete the CPU RTL precheck.",
+            "error" if blocking_error else "warning",
+            "tooling" if tool_limited else "structural",
+            "Yosys precheck hit a tool frontend limitation" if tool_limited else "Yosys precheck failed before completion",
+            (
+                "Yosys could not complete the optional structural probe because the selected frontend does not support one RTL construct."
+                if tool_limited
+                else "Yosys could not complete the CPU RTL precheck."
+            ),
             path=first_location.get("source", ""),
             line=first_location.get("line", 0),
             column=first_location.get("column", 0),
             evidence={"returncode": returncode},
-            recommendation="Check the Yosys precheck log, then run Elab/Lint for source-level diagnostics.",
+            recommendation=(
+                "Use Elab/Lint as the source-level gate and treat Yosys structural metrics as unavailable for this run."
+                if tool_limited
+                else "Check the Yosys precheck log, then run Elab/Lint for source-level diagnostics."
+            ),
         ))
 
     diagnostic_categories = {str(item.get("category", "")) for item in diagnostics}
