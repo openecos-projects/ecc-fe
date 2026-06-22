@@ -8,6 +8,7 @@ from typing import Any
 
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
+from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
 from fecompiler.utility.json import json_read, json_write
 
@@ -149,6 +150,7 @@ class PrepareStep(BaseStep):
             "rtl_files": [str(p) for p in merged],
             "incdirs": [str(p) for p in incdirs],
             "defines": defines,
+            "source_fingerprint": workspace_input_fingerprint(workspace),
         }
         return prepared, inputs
 

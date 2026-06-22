@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.cli import workspace as workspace_cli
+from fecompiler.catalog import registry as catalog_registry
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
@@ -66,6 +67,60 @@ def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:
     (driver_dir / "dpi_mem.cpp").write_text("int dpi_mem(){return 0;}\n", encoding="utf-8")
     (driver_dir / "difftest.cpp").write_text("int difftest(){return 0;}\n", encoding="utf-8")
     (scripts_dir / "build_test.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    return soc_root.resolve()
+
+
+def _make_fake_soc_manifest_root(fe_root: Path, directory_name: str, soc_id: str, variant: str) -> Path:
+    soc_root = _make_fake_soc_root(fe_root, directory_name)
+    (soc_root / "catalog.json").write_text(
+        json.dumps(
+            {
+                "id": soc_id,
+                "name": soc_id,
+                "description": "Fake catalog SoC for tests.",
+                "variant": variant,
+                "source": "local",
+                "isa": ["rv32"],
+                "integration_level": "sim_ready",
+                "status": "experimental",
+                "wrapper_contract": "ecos-sim-wrapper-v1",
+                "wrapper_top": "ecos_sim_top",
+                "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+                "supports_difftest": False,
+                "supported_test_suites": ["smoke", "cpu-tests"],
+                "directory": f"fecompiler/thirdparty/{directory_name}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (soc_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": soc_id,
+                "name": soc_id,
+                "variant": variant,
+                "top_module": "ecos_sim_top",
+                "sim_ready": True,
+                "contract": "ecos-sim-wrapper-v1",
+                "soc_filelist": "filelist.soc.f",
+                "testbench": "../SoC/driver/main.cpp",
+                "sim_cpp_sources": [
+                    "../SoC/driver/dpi_mem.cpp",
+                    "../SoC/driver/difftest_stub.cpp",
+                ],
+                "sim_cflags": [
+                    "-I{soc_root}/../SoC",
+                ],
+                "sim_ldflags": [],
+                "sim_programs_dir": "../SoC/tests/programs",
+                "sim_tests_dir": "../SoC/tests/out",
+                "sim_build_test_script": "../SoC/scripts/build_test.sh",
+                "supports_difftest": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (soc_root / "driver" / "difftest_stub.cpp").write_text("int difftest_stub(){return 0;}\n", encoding="utf-8")
     return soc_root.resolve()
 
 
@@ -381,6 +436,7 @@ def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, m
     )
 
     monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+    catalog_registry._catalog.cache_clear()
 
     assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
     ws = load_workspace(str(tmp_path / "ws_soc_defaults"))
@@ -397,6 +453,113 @@ def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, m
     assert ws["sim_ldflags"] == ["-ldl"]
     assert ws["sim_programs_dir"] == str(soc_root / "tests" / "programs")
     assert ws["sim_build_test_script"] == str(soc_root / "scripts" / "build_test.sh")
+
+
+def test_workspace_create_repairs_stale_soc_defaults_for_catalog_harness(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe"
+    old_soc_root = _make_fake_soc_root(fe_root, "SoC")
+    (old_soc_root / "driver" / "difftest_stub.cpp").write_text("int difftest_stub(){return 0;}\n", encoding="utf-8")
+    catalog_soc_root = _make_fake_soc_manifest_root(
+        fe_root,
+        "litex-vexriscv-soc",
+        "litex-vexriscv-soc",
+        "litex-vexriscv",
+    )
+    cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
+    cpu_filelist.parent.mkdir()
+    cpu_filelist.write_text("", encoding="utf-8")
+    request = tmp_path / "create_catalog_soc.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_catalog_soc"),
+                "cpu_filelist": str(cpu_filelist),
+                "soc_harness_id": "litex-vexriscv-soc",
+                "soc_variant": "litex-vexriscv",
+                "soc_filelist": str(old_soc_root / "filelist.soc.f"),
+                "sim_soc_root": str(old_soc_root),
+                "testbench": str(old_soc_root / "driver" / "main.cpp"),
+                "sim_cpp_sources": [
+                    str(old_soc_root / "driver" / "dpi_mem.cpp"),
+                    str(old_soc_root / "driver" / "difftest.cpp"),
+                ],
+                "sim_cflags": [f"-I{old_soc_root}"],
+                "parameters": {"Design": "chip", "Top module": "ecos_sim_top"},
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+    catalog_registry._catalog.cache_clear()
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_catalog_soc"))
+
+    assert ws["soc_wrapper_id"] == "litex-vexriscv-soc"
+    assert ws["soc_variant"] == "litex-vexriscv"
+    assert ws["sim_soc_root"] == str(catalog_soc_root)
+    assert ws["soc_filelist"] == str(catalog_soc_root / "filelist.soc.f")
+    assert ws["testbench"] == str((catalog_soc_root / "../SoC/driver/main.cpp").resolve())
+    assert ws["sim_cpp_sources"] == [
+        str((catalog_soc_root / "../SoC/driver/dpi_mem.cpp").resolve()),
+        str((catalog_soc_root / "../SoC/driver/difftest_stub.cpp").resolve()),
+    ]
+    assert ws["sim_cflags"] == [f"-I{(catalog_soc_root / '../SoC').resolve()}"]
+
+
+def test_run_step_refreshes_stale_prepare_manifest(tmp_path):
+    old_soc = tmp_path / "old_soc.f"
+    new_soc = tmp_path / "new_soc.f"
+    cpu = tmp_path / "cpu.f"
+    old_rtl = tmp_path / "old_soc.v"
+    new_rtl = tmp_path / "new_soc.v"
+    cpu_rtl = tmp_path / "cpu.v"
+    old_rtl.write_text("module old_soc(); endmodule\n", encoding="utf-8")
+    new_rtl.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
+    cpu_rtl.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    old_soc.write_text(str(old_rtl) + "\n", encoding="utf-8")
+    new_soc.write_text(str(new_rtl) + "\n", encoding="utf-8")
+    cpu.write_text(str(cpu_rtl) + "\n", encoding="utf-8")
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_stale_prepare"),
+        parameters={
+            "Design": "chip",
+            "Top module": "ecos_sim_top",
+            "cpu_wrapper_top": "ysyx_00000000",
+            "soc_wrapper_id": "minimal-riscv-soc",
+        },
+        cpu_filelist=str(cpu),
+        soc_filelist=str(old_soc),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_stale_prepare"))
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    manifest = Path(ws["prepared_manifest"])
+    assert str(old_rtl) in manifest.read_text(encoding="utf-8")
+
+    params_path = Path(ws["parameters_path"])
+    params = json.loads(params_path.read_text(encoding="utf-8"))
+    params["soc_filelist"] = str(new_soc)
+    params_path.write_text(json.dumps(params), encoding="utf-8")
+    ws = load_workspace(str(tmp_path / "ws_stale_prepare"))
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+
+    assert workspace_cli_run([
+        "run-step",
+        "--directory",
+        str(tmp_path / "ws_stale_prepare"),
+        "--step",
+        "lint",
+        "--json",
+    ]) == 0
+    refreshed = json.loads(manifest.read_text(encoding="utf-8"))
+    assert str(new_rtl) in refreshed["rtl_files"]
+    assert str(old_rtl) not in refreshed["rtl_files"]
 
 
 def test_workspace_load_repairs_old_frontend_soc_workspace_defaults(tmp_path, monkeypatch):

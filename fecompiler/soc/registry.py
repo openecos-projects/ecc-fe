@@ -66,14 +66,14 @@ class SocWrapper:
             "soc_variant": self.variant,
             "top_module": self.top_module,
             "sim_soc_root": str(root),
-            "soc_filelist": str(root / self.soc_filelist),
-            "testbench": str(root / self.testbench),
-            "sim_cpp_sources": [str(root / source) for source in self.sim_cpp_sources],
-            "sim_cflags": [flag.format(soc_root=root) for flag in self.sim_cflags],
+            "soc_filelist": _manifest_path(root, self.soc_filelist),
+            "testbench": _manifest_path(root, self.testbench),
+            "sim_cpp_sources": [_manifest_path(root, source) for source in self.sim_cpp_sources],
+            "sim_cflags": [_format_manifest_cflag(flag, root) for flag in self.sim_cflags],
             "sim_ldflags": list(self.sim_ldflags),
-            "sim_programs_dir": str(root / self.sim_programs_dir),
-            "sim_tests_dir": str(root / self.sim_tests_dir),
-            "sim_build_test_script": str(root / self.sim_build_test_script),
+            "sim_programs_dir": _manifest_path(root, self.sim_programs_dir),
+            "sim_tests_dir": _manifest_path(root, self.sim_tests_dir),
+            "sim_build_test_script": _manifest_path(root, self.sim_build_test_script),
             "soc_supports_difftest": self.supports_difftest,
         }
 
@@ -199,3 +199,19 @@ def _str_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return []
+
+
+def _manifest_path(root: Path, value: str) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    return str(path.resolve())
+
+
+def _format_manifest_cflag(flag: str, root: Path) -> str:
+    formatted = flag.format(soc_root=root)
+    if formatted.startswith("-I") and len(formatted) > 2:
+        include = Path(formatted[2:]).expanduser()
+        if include.is_absolute():
+            return f"-I{include.resolve()}"
+    return formatted

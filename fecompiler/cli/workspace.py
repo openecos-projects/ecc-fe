@@ -27,6 +27,7 @@ from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.soc import soc_runtime_options
+from fecompiler.tools.common.rtl_inputs import prepared_inputs_current
 from fecompiler.utility.json import json_read, json_write
 
 try:
@@ -586,7 +587,11 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
     reports: list[dict[str, Any]] = []
     failed_step = ""
     failed_state = StateEnum.Incomplete
+    prepare_refreshed = False
     for workspace_step in engine.workspace_steps:
+        if not prepare_refreshed and workspace_step.name != "prepare":
+            prepare_refreshed = _refresh_prepare_if_stale(workspace, engine, workspace_step.name)
+
         if workspace_step.name == "sim":
             _apply_default_sim_smoke_suite(workspace)
 
@@ -656,6 +661,7 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         )
 
     force_rerun = False
+    _refresh_prepare_if_stale(workspace, engine, step)
     if step == "sim":
         suite_name = str(args.sim_test_suite or "").strip()
         if suite_name and suite_name.lower() != "default":
@@ -693,6 +699,29 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         data=data,
         message=[message] if state == StateEnum.Success else _failure_messages(message, data.get("failure")),
     )
+
+
+def _refresh_prepare_if_stale(workspace: dict[str, Any], engine: EngineFlow, target_step: str) -> bool:
+    if target_step == "prepare" or prepared_inputs_current(workspace):
+        return False
+
+    prepare_step = engine.get_workspace_step("prepare")
+    if prepare_step is None:
+        return False
+
+    state = engine.run_step("prepare", rerun=True)
+    if state != StateEnum.Success:
+        raise WorkspaceCliError(
+            "run_step",
+            "failed",
+            "prepare inputs are stale and automatic prepare refresh failed",
+            data={
+                "directory": workspace["directory"],
+                "step": target_step,
+                "prepare_state": state.value,
+            },
+        )
+    return True
 
 
 def _get_info(args: argparse.Namespace) -> CliResult:
@@ -1014,7 +1043,7 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
         return False
 
     changed = False
-    for field in (
+    scalar_fields = (
         "soc_variant",
         "soc_wrapper_id",
         "soc_wrapper_contract",
@@ -1026,19 +1055,25 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
         "sim_programs_dir",
         "sim_tests_dir",
         "soc_supports_difftest",
-    ):
-        if str(data.get(field, "")).strip():
-            continue
+    )
+    for field in scalar_fields:
         value = defaults.get(field, "")
         if value:
+            if str(data.get(field, "")).strip() and not _should_replace_soc_runtime_value(data, defaults, field):
+                continue
+            if data.get(field) == value:
+                continue
             data[field] = value
             changed = True
 
     for field in ("sim_cpp_sources", "sim_cflags", "sim_ldflags"):
-        if _normalize_str_list(data.get(field, [])):
-            continue
         values = _normalize_str_list(defaults.get(field, []))
-        if values:
+        if values and (
+            not _normalize_str_list(data.get(field, []))
+            or _should_replace_soc_runtime_list(data, defaults, field)
+        ):
+            if _normalize_str_list(data.get(field, [])) == values:
+                continue
             data[field] = values
             changed = True
 
@@ -1056,7 +1091,7 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
         return False
 
     updates: dict[str, Any] = {}
-    for field in (
+    scalar_fields = (
         "soc_variant",
         "soc_wrapper_id",
         "soc_wrapper_contract",
@@ -1068,24 +1103,35 @@ def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
         "sim_programs_dir",
         "sim_tests_dir",
         "soc_supports_difftest",
-    ):
-        if str(workspace.get(field, "")).strip():
-            continue
+    )
+    for field in scalar_fields:
         value = defaults.get(field, "")
         if value:
+            if str(workspace.get(field, "")).strip() and not _should_replace_soc_runtime_value(workspace, defaults, field):
+                continue
+            if workspace.get(field) == value:
+                continue
             updates[field] = value
 
     for field in ("sim_cflags", "sim_ldflags"):
-        if _normalize_str_list(workspace.get(field, [])):
-            continue
         values = _normalize_str_list(defaults.get(field, []))
-        if values:
+        if values and (
+            not _normalize_str_list(workspace.get(field, []))
+            or _should_replace_soc_runtime_list(workspace, defaults, field)
+        ):
+            if _normalize_str_list(workspace.get(field, [])) == values:
+                continue
             updates[field] = values
 
     existing_sources = _normalize_str_list(workspace.get("sim_cpp_sources", []))
     default_sources = _normalize_str_list(defaults.get("sim_cpp_sources", []))
     source_base = existing_sources or default_sources
     adapted_sources = _adapt_sim_cpp_sources_for_cpu(workspace, source_base)
+    if (
+        default_sources
+        and _should_replace_soc_runtime_list(workspace, defaults, "sim_cpp_sources")
+    ):
+        adapted_sources = _adapt_sim_cpp_sources_for_cpu(workspace, default_sources)
     if adapted_sources and adapted_sources != existing_sources:
         updates["sim_cpp_sources"] = adapted_sources
 
@@ -1122,6 +1168,67 @@ def _with_cpu_runtime_options(data: dict[str, Any], defaults: dict[str, Any]) ->
     out = dict(defaults)
     out["sim_cpp_sources"] = _adapt_sim_cpp_sources_for_cpu(data, _normalize_str_list(out.get("sim_cpp_sources", [])))
     return out
+
+
+def _should_replace_soc_runtime_value(data: dict[str, Any], defaults: dict[str, Any], field: str) -> bool:
+    current = str(data.get(field, "")).strip()
+    expected = str(defaults.get(field, "")).strip()
+    if not current or not expected or current == expected:
+        return False
+    if field in {"soc_wrapper_id", "soc_wrapper_contract", "soc_variant", "top_module", "soc_supports_difftest"}:
+        return True
+    return _is_builtin_soc_runtime_path(current) and _is_builtin_soc_runtime_path(expected)
+
+
+def _should_replace_soc_runtime_list(data: dict[str, Any], defaults: dict[str, Any], field: str) -> bool:
+    current = _normalize_str_list(data.get(field, []))
+    expected = _normalize_str_list(defaults.get(field, []))
+    if not current or not expected or current == expected:
+        return False
+    if field in {"sim_cflags", "sim_ldflags"}:
+        return _list_uses_builtin_soc_runtime_path(current) and _list_uses_builtin_soc_runtime_path(expected)
+    return all(_is_builtin_soc_runtime_path(item) for item in current) and all(
+        _is_builtin_soc_runtime_path(item) for item in expected
+    )
+
+
+def _list_uses_builtin_soc_runtime_path(values: list[str]) -> bool:
+    return any(_is_builtin_soc_runtime_path(_strip_cflag_path(value)) for value in values)
+
+
+def _strip_cflag_path(value: str) -> str:
+    text = str(value).strip()
+    if text.startswith("-I") and len(text) > 2:
+        return text[2:]
+    return text
+
+
+def _is_builtin_soc_runtime_path(value: str) -> bool:
+    text = _strip_cflag_path(value)
+    if not text:
+        return False
+    try:
+        path = Path(text).expanduser().resolve()
+        return any(_path_is_relative_to(path, root) for root in _builtin_soc_runtime_roots())
+    except (OSError, ValueError):
+        return False
+
+
+def _builtin_soc_runtime_roots() -> list[Path]:
+    roots: list[Path] = []
+    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
+    if env_root:
+        roots.append(Path(env_root).expanduser().resolve() / "fecompiler" / "thirdparty")
+    roots.append(Path(__file__).resolve().parents[2] / "fecompiler" / "thirdparty")
+    return roots
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def _adapt_sim_cpp_sources_for_cpu(data: dict[str, Any], sources: list[str]) -> list[str]:
