@@ -218,10 +218,11 @@ module ecos_vexriscv_cpu_wrapper (
   wire [31:0] dbus_addr = {dbus_adr, 2'b00};
   wire        dbus_req = dbus_cyc && dbus_stb;
   wire        ibus_req = ibus_cyc && ibus_stb;
+  wire        ready_for_new_req = !dbus_ack_q && !ibus_ack_q;
   wire        local_uart_write =
-      (state_q == ST_IDLE) && dbus_req && dbus_we && (dbus_addr == UART_ADDR);
+      ready_for_new_req && (state_q == ST_IDLE) && dbus_req && dbus_we && (dbus_addr == UART_ADDR);
   wire        local_halt_write =
-      (state_q == ST_IDLE) && dbus_req && dbus_we && (dbus_addr == HALT_ADDR);
+      ready_for_new_req && (state_q == ST_IDLE) && dbus_req && dbus_we && (dbus_addr == HALT_ADDR);
   wire        local_write = local_uart_write || local_halt_write;
   wire        aw_fire = io_master_awvalid && io_master_awready;
   wire        w_fire = io_master_wvalid && io_master_wready;
@@ -357,7 +358,7 @@ module ecos_vexriscv_cpu_wrapper (
         ST_IDLE: begin
           aw_done_q <= 1'b0;
           w_done_q <= 1'b0;
-          if (!local_write) begin
+          if (ready_for_new_req && !local_write) begin
             if (dbus_req) begin
               serving_dbus_q <= 1'b1;
               axi_addr_q <= dbus_addr;

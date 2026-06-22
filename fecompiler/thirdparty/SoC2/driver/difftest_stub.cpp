@@ -1,5 +1,7 @@
 #include "driver/difftest.h"
 
+#include <svdpi.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,4 +22,35 @@ void difftest_configure(const Vecos_sim_top *top,
 
 bool difftest_enabled() {
   return false;
+}
+
+void difftest_dump_progress() {}
+
+extern "C" int difftest_step(int n,
+                             const svOpenArrayHandle pc_h,
+                             const svOpenArrayHandle npc_h,
+                             const svOpenArrayHandle inst_h,
+                             const svOpenArrayHandle rdidx_h,
+                             const svOpenArrayHandle wen_h,
+                             const svOpenArrayHandle wdata_h,
+                             const svOpenArrayHandle commit_h,
+                             const svOpenArrayHandle skip_h,
+                             const svOpenArrayHandle csr_wen_h,
+                             const svOpenArrayHandle csr_wdata_h,
+                             const svOpenArrayHandle csr_waddr_h,
+                             const svOpenArrayHandle irq_en_h) {
+  (void)n;
+  (void)pc_h;
+  (void)npc_h;
+  (void)inst_h;
+  (void)rdidx_h;
+  (void)wen_h;
+  (void)wdata_h;
+  (void)commit_h;
+  (void)skip_h;
+  (void)csr_wen_h;
+  (void)csr_wdata_h;
+  (void)csr_waddr_h;
+  (void)irq_en_h;
+  return 0;
 }

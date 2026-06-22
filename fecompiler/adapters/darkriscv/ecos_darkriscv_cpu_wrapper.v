@@ -215,10 +215,11 @@ module ecos_darkriscv_cpu_wrapper (
   wire [31:0] data_bus_addr = ecos_bus_addr(data_addr);
   wire        data_write_req = data_req && data_wr;
   wire        data_read_req = data_req && data_rd;
+  wire        ready_for_new_req = !data_ack_q && !instr_ack_q;
   wire        local_uart_write =
-      (state_q == ST_IDLE) && data_write_req && (data_addr == UART_ADDR);
+      ready_for_new_req && (state_q == ST_IDLE) && data_write_req && (data_addr == UART_ADDR);
   wire        local_halt_write =
-      (state_q == ST_IDLE) && data_write_req && (data_addr == HALT_ADDR);
+      ready_for_new_req && (state_q == ST_IDLE) && data_write_req && (data_addr == HALT_ADDR);
   wire        local_write = local_uart_write || local_halt_write;
   wire        aw_fire = io_master_awvalid && io_master_awready;
   wire        w_fire = io_master_wvalid && io_master_wready;
@@ -366,7 +367,7 @@ module ecos_darkriscv_cpu_wrapper (
         ST_IDLE: begin
           aw_done_q <= 1'b0;
           w_done_q <= 1'b0;
-          if (!local_write) begin
+          if (ready_for_new_req && !local_write) begin
             if (data_req) begin
               serving_data_q <= 1'b1;
               axi_addr_q <= {data_bus_addr[31:2], 2'b00};

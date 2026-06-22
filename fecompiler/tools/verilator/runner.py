@@ -1087,10 +1087,13 @@ class VerilatorSimStep(BaseStep):
         files   = rtl_files(workspace)
         top     = workspace.get("top_module", "top")
         obj_dir = Path(step.directory) / "obj_dir"
+        if obj_dir.exists():
+            shutil.rmtree(obj_dir)
 
         cmd = [
-            _verilator_cmd(), "--binary", "-j", "8",
+            _verilator_cmd(), "--cc", "--exe", "--build", "-j", "8",
             "-Wno-fatal",
+            "--timing",
             "--trace",
             *_verilator_include_args(),
             *verilator_incdir_args(workspace),

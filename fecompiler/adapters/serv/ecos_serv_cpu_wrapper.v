@@ -121,8 +121,10 @@ module ecos_serv_cpu_wrapper (
   wire [31:0] active_addr = serving_dbus_q ? dbus_addr : ibus_addr;
   wire [31:0] active_wdata = dbus_wdata;
   wire [3:0]  active_wstrb = dbus_sel;
-  wire        local_uart_write = (state_q == ST_IDLE) && dbus_cyc && dbus_we && (dbus_addr == UART_ADDR);
-  wire        local_halt_write = (state_q == ST_IDLE) && dbus_cyc && dbus_we && (dbus_addr == HALT_ADDR);
+  wire        serv_ack_visible = ibus_ack_q || dbus_ack_q;
+  wire        serv_can_accept = (state_q == ST_IDLE) && !serv_ack_visible;
+  wire        local_uart_write = serv_can_accept && dbus_cyc && dbus_we && (dbus_addr == UART_ADDR);
+  wire        local_halt_write = serv_can_accept && dbus_cyc && dbus_we && (dbus_addr == HALT_ADDR);
   wire        local_write = local_uart_write || local_halt_write;
   wire        aw_fire = io_master_awvalid && io_master_awready;
   wire        w_fire = io_master_wvalid && io_master_wready;
@@ -257,7 +259,7 @@ module ecos_serv_cpu_wrapper (
         ST_IDLE: begin
           aw_done_q <= 1'b0;
           w_done_q <= 1'b0;
-          if (!local_write) begin
+          if (serv_can_accept && !local_write) begin
             if (dbus_cyc) begin
               serving_dbus_q <= 1'b1;
               axi_addr_q <= {dbus_addr[31:2], 2'b00};

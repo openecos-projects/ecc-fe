@@ -60,6 +60,11 @@ uint32_t g_reset_vector = kDefaultResetVector;
 bool g_enabled = false;
 bool g_started = false;
 bool g_waiting_printed = false;
+bool g_seen_commit = false;
+uint64_t g_commit_count = 0;
+uint32_t g_last_pc = 0;
+uint32_t g_last_npc = 0;
+uint32_t g_last_inst = 0;
 std::vector<uint8_t> g_ref_image;
 
 #define SOC_ROOT_FIELD(name) \
@@ -283,6 +288,14 @@ bool should_skip_mmio_store(uint32_t instruction) {
   return addr == kSocUartData || addr == kNemuSerialData;
 }
 
+void record_commit(uint32_t pc, uint32_t npc, uint32_t inst) {
+  g_seen_commit = true;
+  ++g_commit_count;
+  g_last_pc = pc;
+  g_last_npc = npc;
+  g_last_inst = inst;
+}
+
 }  // namespace
 
 void difftest_configure(const Vecos_sim_top *top,
@@ -332,11 +345,33 @@ void difftest_configure(const Vecos_sim_top *top,
   g_enabled = true;
   g_started = false;
   g_waiting_printed = false;
+  g_seen_commit = false;
+  g_commit_count = 0;
+  g_last_pc = 0;
+  g_last_npc = 0;
+  g_last_inst = 0;
   std::fprintf(stderr, "[soc-sim][difftest] enabled\n");
 }
 
 bool difftest_enabled() {
   return g_enabled;
+}
+
+void difftest_dump_progress() {
+  if (!g_enabled) {
+    return;
+  }
+  if (!g_seen_commit) {
+    std::fprintf(stderr, "[soc-sim][difftest] progress: no committed instruction observed\n");
+    return;
+  }
+  std::fprintf(stderr,
+               "[soc-sim][difftest] progress: commits=%llu started=%u last_pc=0x%08x last_npc=0x%08x last_inst=0x%08x\n",
+               static_cast<unsigned long long>(g_commit_count),
+               static_cast<unsigned>(g_started),
+               g_last_pc,
+               g_last_npc,
+               g_last_inst);
 }
 
 extern "C" int difftest_step(int n,
@@ -382,6 +417,7 @@ extern "C" int difftest_step(int n,
       continue;
     }
     saw_commit = true;
+    record_commit(pc[i], npc[i], inst[i]);
 
     if (is_boot_or_mrom_pc(pc[i])) {
       if (!g_waiting_printed) {
