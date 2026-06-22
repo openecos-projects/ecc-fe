@@ -24,9 +24,9 @@ def test_sim_ready_catalog_entries_have_adapter_collateral():
     assert result.ok is True
     assert result.counts["cpu_total"] == 10
     assert result.counts["soc_total"] == 12
-    assert result.counts["sim_ready_cpu"] == 10
+    assert result.counts["sim_ready_cpu"] == 9
     assert result.counts["sim_ready_soc"] == 12
-    assert result.counts["creatable_pairs"] == 120
+    assert result.counts["creatable_pairs"] == 108
     assert result.issues == []
 
 
@@ -37,7 +37,7 @@ def test_workspace_catalog_check_cli_returns_contract_summary(capsys):
     assert response["cmd"] == "catalog_check"
     assert response["response"] == "success"
     assert response["data"]["ok"] is True
-    assert response["data"]["counts"]["sim_ready_cpu"] == 10
+    assert response["data"]["counts"]["sim_ready_cpu"] == 9
     assert response["data"]["counts"]["sim_ready_soc"] == 12
 
 
@@ -49,7 +49,7 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
         if item.get("can_create_workspace") and "cpu-tests" in item.get("supported_test_suites", [])
     ]
 
-    assert len(creatable) == 120
+    assert len(creatable) == 108
 
     failures: list[str] = []
     for item in creatable:
