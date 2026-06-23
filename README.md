@@ -7,7 +7,7 @@ aligned with [ecos-studio/ecc](https://github.com/ecos-studio/ecc)
 The default flow is:
 
 ```text
-prepare -> elab -> lint -> sim
+prepare -> review -> elab -> lint -> sim
 ```
 
 ## Repository Layout
@@ -28,6 +28,7 @@ ecc-fe/
 │   ├── engine/                 # EngineFlow orchestration
 │   ├── tools/
 │   │   ├── prepare/            # merge CPU/SoC/filelist inputs
+│   │   ├── review/             # CPU-only RTL quality and Yosys precheck
 │   │   ├── slang/              # slang elaboration step
 │   │   ├── verilator/          # lint + simulation step
 │   │   ├── common/             # shared RTL parsing helpers
@@ -47,11 +48,38 @@ ecc-fe/
 ## Flow Steps
 
 ```text
-prepare (fe)        merge RTL/filelist inputs
-elab   (slang)      slang --lint-only
-lint   (verilator)  verilator --lint-only
-sim    (verilator)  compile simulator, build/run simulation cases
+prepare (fe)        normalize CPU/SoC/filelist inputs
+review  (fe)        CPU-only RTL quality review and optional Yosys precheck
+elab    (slang)     SystemVerilog elaboration and hierarchy/semantic check
+lint    (verilator) Verilator lint diagnostics
+sim     (verilator) compile simulator, build images, run simulation cases
 ```
+
+### Step Responsibilities
+
+Each step answers a different question.  The separation is intentional: a
+design can pass one step and still fail a later step because later steps use
+stronger tools or require more runtime context.
+
+| Step | Main question | What it does | Key outputs | Failure meaning |
+| --- | --- | --- | --- | --- |
+| `prepare` | Are the selected CPU, SoC harness, wrappers, include paths, defines, and filelists normalized into one usable RTL input set? | Parses CPU filelists, SoC filelists, adapter filelists, nested `.f` files, `+incdir+` entries, and `+define+` entries.  It also records source metadata and writes the merged RTL view consumed by later steps. | `prepare_fe/output/merged_rtl.f`, `prepare_fe/output/prepared_inputs.json`, `prepare_fe/report/prepare.rpt` | The project inputs are structurally incomplete: missing RTL, missing wrapper/socket expectations, bad filelist paths, or incompatible catalog metadata. |
+| `review` | Is the user CPU RTL healthy enough to inspect before running compiler-grade checks? | Reviews CPU RTL only and intentionally ignores the SoC harness.  It scans source text for RTL quality risks such as clock/reset usage, always-block style, case/default patterns, assignment style, hot signal references, and other static review hints.  If Yosys is available, it also runs a bounded CPU-only structural precheck to estimate module risk, fanin/fanout candidates, combinational depth candidates, inferred cells, and structural diagnostics. | `review_fe/report/rtl_review.json`, `review_fe/report/rtl_review_summary.md`, `review_fe/report/yosys_precheck.json`, `review_fe/report/yosys_precheck.log` | A blocking CPU RTL quality issue was found, or Yosys produced a real parse/hierarchy/structural error.  If Yosys is unavailable, review can still succeed with the source-scan portion and reports Yosys as unavailable. |
+| `elab` | Can a SystemVerilog frontend understand the complete design hierarchy? | Runs Slang in lint-only/elaboration mode on the prepared RTL.  It checks syntax, package/include/define handling, module resolution, top selection, parameter/port structure, and basic semantic consistency.  It also builds a readable module inventory from the RTL inputs. | `elab_slang/report/log.txt`, `elab_slang/report/elab_summary.json`, `elab_slang/report/elab.rpt` | The RTL cannot be elaborated as a complete SystemVerilog design: syntax errors, unresolved modules, bad hierarchical references, bad packages/includes, or incompatible language constructs. |
+| `lint` | Does Verilator accept the RTL for simulation-oriented lint rules? | Runs `verilator --lint-only` with the prepared files, include directories, defines, and top module.  It parses Verilator diagnostics into structured errors, warnings, rule groups, and per-file hotspots for GUI display. | `lint_verilator/report/log.txt`, `lint_verilator/report/lint_summary.json`, `lint_verilator/report/lint.rpt` | Verilator found errors or returned a non-zero status.  Typical causes include unsupported constructs, width/range problems, undriven or multidriven signals, missing pins, latch/case warnings promoted by policy, or tool invocation problems. |
+| `sim` | Can the selected CPU and SoC harness build and run real software images? | Compiles the prepared RTL plus the configured C++ simulator testbench with Verilator.  It builds requested test programs when needed, runs each simulation case, captures logs, preserves per-run history, and emits VCD waveforms.  RT-Thread is treated as a special terminal-style case with required log markers. | `sim_verilator/output/<design>_sim`, `sim_verilator/output/cases/<case>/`, `sim_verilator/report/cases.json`, `sim_verilator/report/log.txt`, `sim_verilator/report/runs/<run_id>/` | The simulator failed to compile, a test image could not be built, a case returned failure, required RT-Thread markers were missing, timeout policy failed, or the runtime/testbench configuration is incomplete. |
+
+### How To Read The Steps
+
+- `prepare` is an input-contract step.  It does not prove RTL correctness.
+- `review` is a CPU-quality step.  It is deliberately CPU-only so SoC harness
+  glue does not hide user RTL issues.
+- `elab` is a frontend semantic gate.  It answers whether the design can be
+  understood as a SystemVerilog hierarchy.
+- `lint` is a Verilator compatibility and coding-diagnostics gate.  It is not
+  a replacement for `review` or `elab`.
+- `sim` is the executable behavior gate.  Passing earlier steps does not
+  guarantee software-visible behavior is correct.
 
 ## Frontend Catalog Adapter Contract
 
@@ -96,8 +124,15 @@ workspace_projects/<design>/
 ├── prepare_fe/output/
 │   ├── merged_rtl.f
 │   └── prepared_inputs.json
+├── review_fe/report/
+│   ├── rtl_review.json
+│   ├── rtl_review_summary.md
+│   ├── yosys_precheck.json
+│   └── yosys_precheck.log
 ├── elab_slang/report/log.txt
+├── elab_slang/report/elab_summary.json
 ├── lint_verilator/report/log.txt
+├── lint_verilator/report/lint_summary.json
 └── sim_verilator/
     ├── output/<design>_sim         # compiled simulator
     ├── output/cases/<case>/
@@ -168,6 +203,7 @@ Useful step calls:
 
 ```python
 engine.run_step("prepare", rerun=True)
+engine.run_step("review", rerun=True)
 engine.run_step("elab", rerun=True)
 engine.run_step("lint", rerun=True)
 engine.run_step("sim", rerun=True)
