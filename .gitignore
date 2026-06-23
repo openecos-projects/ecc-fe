@@ -99,3 +99,6 @@ fecompiler/thirdparty/SoC*/tests/out/*.disasm.txt
 fecompiler/thirdparty/SoC*/tests/out/*.run.log
 fecompiler/thirdparty/SoC*/tests/out/logs/
 !fecompiler/thirdparty/SoC*/tests/out/*.soc.bin
+
+# Simulator disassembly traces
+trace_hart_*.dasm
