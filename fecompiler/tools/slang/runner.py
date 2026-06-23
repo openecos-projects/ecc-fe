@@ -28,8 +28,12 @@ _SLANG_BIN = Path(__file__).parent / "bin" / "slang"
 _WORKSPACE_REL_SLANG_BIN = Path("fecompiler/tools/slang/bin/slang")
 
 _MODULE_BLOCK_RE = re.compile(
-    r"\bmodule\s+(?P<name>[A-Za-z_][\w$]*)\b(?P<body>.*?)(?:\bendmodule\b|$)",
+    r"\bmodule\s+(?P<name>[A-Za-z_][\w$]*)\b(?P<body>.*?)(?:\bendmodule\b|\Z)",
     re.DOTALL | re.MULTILINE,
+)
+_MODULE_HEADER_RE = re.compile(
+    r"^\s*(?:#\s*\((?P<params>.*?)\)\s*)?(?P<ports>\(.*?\))?\s*;",
+    re.DOTALL,
 )
 _INSTANCE_RE = re.compile(
     r"(?:^|[;\n])\s*(?P<type>[A-Za-z_][\w$]*)\s*"
@@ -305,14 +309,15 @@ def scan_rtl_structure(files: list[str]) -> dict[str, Any]:
         for block in _MODULE_BLOCK_RE.finditer(stripped):
             name = block.group("name")
             body = block.group("body") or ""
+            header_info = _split_module_header(body)
             module = module_by_name.setdefault(
                 name,
                 {
                     "module": name,
                     "path": str(path),
                     "line": _line_number(stripped, block.start()),
-                    "ports": _count_ports(body),
-                    "parameters": _count_parameters(body),
+                    "ports": _count_ports(header_info, body),
+                    "parameters": _count_parameters(header_info, body),
                     "instances": 0,
                     "instantiates": [],
                 },
@@ -421,23 +426,103 @@ def _line_number(content: str, offset: int) -> int:
     return content.count("\n", 0, offset) + 1
 
 
-def _count_parameters(module_body: str) -> int:
-    return len(re.findall(r"\bparameter\b|\blocalparam\b", module_body))
-
-
-def _count_ports(module_body: str) -> int:
-    header = module_body.split(";", 1)[0]
-    match = re.search(r"\((?P<ports>.*)\)", header, flags=re.DOTALL)
+def _split_module_header(module_body: str) -> dict[str, str]:
+    match = _MODULE_HEADER_RE.search(module_body)
     if not match:
-        return 0
-    ports = match.group("ports")
-    names = re.findall(
-        r"(?:input|output|inout|ref)?\s*(?:wire|reg|logic|signed|unsigned|\[[^\]]+\]\s*)*"
-        r"(?P<name>[A-Za-z_][\w$]*)\s*(?:,|$)",
-        ports,
-        flags=re.MULTILINE,
+        return {"header": "", "params": "", "ports": "", "body": module_body}
+    return {
+        "header": match.group(0) or "",
+        "params": match.group("params") or "",
+        "ports": match.group("ports") or "",
+        "body": module_body[match.end():],
+    }
+
+
+def _count_parameters(header_info: dict[str, str], module_body: str) -> int:
+    header_params = _split_declaration_items(header_info.get("params", ""))
+    body = header_info.get("body", module_body)
+    body_params = re.findall(r"\b(?:parameter|localparam)\b\s+([^;]+);", body, flags=re.DOTALL)
+    count = len(header_params)
+    for declaration in body_params:
+        count += len(_split_declaration_items(declaration))
+    return count
+
+
+def _count_ports(header_info: dict[str, str], module_body: str) -> int:
+    header_ports = _split_declaration_items(_strip_wrapping_parens(header_info.get("ports", "")))
+    if header_ports:
+        return len(header_ports)
+    body = header_info.get("body", module_body)
+    declarations = re.findall(
+        r"\b(?:input|output|inout|ref)\b\s+([^;]+);",
+        body,
+        flags=re.DOTALL,
     )
-    return len([name for name in names if name not in {"input", "output", "inout", "wire", "reg", "logic"}])
+    count = 0
+    for declaration in declarations:
+        count += len(_split_declaration_items(declaration))
+    return count
+
+
+def _strip_wrapping_parens(value: str) -> str:
+    text = value.strip()
+    if text.startswith("(") and text.endswith(")"):
+        return text[1:-1]
+    return text
+
+
+def _split_declaration_items(text: str) -> list[str]:
+    if not text.strip():
+        return []
+    items: list[str] = []
+    for chunk in _split_top_level_commas(text):
+        name = _declaration_name(chunk)
+        if name:
+            items.append(name)
+    return items
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    items: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(text):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}" and depth > 0:
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return items
+
+
+def _declaration_name(chunk: str) -> str:
+    text = re.sub(r"=.*$", "", chunk.strip(), flags=re.DOTALL).strip()
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    tokens = re.findall(r"[A-Za-z_][\w$]*", text)
+    keywords = {
+        "input",
+        "output",
+        "inout",
+        "ref",
+        "wire",
+        "reg",
+        "logic",
+        "signed",
+        "unsigned",
+        "tri",
+        "parameter",
+        "localparam",
+        "integer",
+        "int",
+        "longint",
+        "shortint",
+        "bit",
+    }
+    names = [token for token in tokens if token not in keywords]
+    return names[-1] if names else ""
 
 
 def _module_instantiates(module_body: str) -> list[str]:

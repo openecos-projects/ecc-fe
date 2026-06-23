@@ -491,6 +491,52 @@ def test_prepare_frontend_detail_returns_readiness_payload(tmp_path, capsys):
     assert any(item["label"] == "Sim Top" and item["value"] == "ecos_sim_top" for item in prepare["runtime"])
 
 
+def test_elab_frontend_detail_returns_readiness_and_hierarchy(tmp_path, capsys):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text(
+        """
+module leaf(input logic clk);
+endmodule
+
+module chip_top(input logic clk);
+  leaf u_leaf(.clk(clk));
+endmodule
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_elab_detail"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_elab_detail"))
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    assert engine.run_step("elab", rerun=True) == StateEnum.Success
+
+    assert workspace_cli_run([
+        "get-info",
+        "--directory",
+        str(tmp_path / "ws_elab_detail"),
+        "--step",
+        "elab",
+        "--id",
+        "frontend_detail",
+        "--json",
+    ]) == 0
+    response = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    elab = response["data"]["info"]["elab"]
+
+    assert elab["readiness"]["status"] == "Ready"
+    assert elab["readiness"]["top_module"] == "chip_top"
+    assert elab["readiness"]["top_found"] is True
+    assert elab["hierarchy"]["top_module"] == "chip_top"
+    assert "leaf" in elab["hierarchy"]["top_children"]
+    assert elab["next_action"]["target"] == "next"
+
+
 def test_sim_cflags_auto_include_soc_root_when_missing(tmp_path):
     soc_root = tmp_path / "SoC"
     soc_root.mkdir()
@@ -1794,6 +1840,47 @@ endmodule
     assert top["instances"] == 2
     assert top["instantiates"] == ["child", "missing"]
     assert structure["unresolved_modules"] == ["missing"]
+
+
+def test_elab_scans_module_ports_params_and_refs(tmp_path):
+    source = tmp_path / "inventory.sv"
+    source.write_text(
+        """
+module child #(
+  parameter WIDTH = 32,
+  parameter DEPTH = 4
+) (
+  input logic clk,
+  input logic [WIDTH-1:0] data_i,
+  output logic done_o
+);
+endmodule
+
+module legacy(a, b, y);
+  input a;
+  input b;
+  output y;
+  localparam LEGACY_CFG = 1;
+endmodule
+
+module top(input logic clk, output logic done);
+  child #(.WIDTH(8)) u_child(.clk(clk), .data_i('0), .done_o(done));
+  legacy u_legacy(.a(clk), .b(done), .y());
+endmodule
+""",
+        encoding="utf-8",
+    )
+
+    structure = scan_rtl_structure([str(source)])
+    modules = {item["module"]: item for item in structure["modules"]}
+
+    assert modules["child"]["ports"] == 3
+    assert modules["child"]["parameters"] == 2
+    assert modules["legacy"]["ports"] == 3
+    assert modules["legacy"]["parameters"] == 1
+    assert modules["top"]["ports"] == 2
+    assert modules["top"]["instances"] == 2
+    assert modules["top"]["instantiates"] == ["child", "legacy"]
 
 
 def test_slang_defines_include_synthesis_default_and_preserve_manifest_order(tmp_path):

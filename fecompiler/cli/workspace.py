@@ -1780,7 +1780,121 @@ def _build_frontend_elab_payload(step: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     data["path"] = str(summary_path)
+    data["readiness"] = _build_elab_readiness(data)
+    data["hierarchy"] = _build_elab_hierarchy(data)
+    data["next_action"] = _build_elab_next_action(data["readiness"], data["hierarchy"])
     return data
+
+
+def _build_elab_readiness(data: dict[str, Any]) -> dict[str, Any]:
+    summary = data.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    diagnostics = data.get("diagnostics", [])
+    diagnostics = diagnostics if isinstance(diagnostics, list) else []
+    unresolved = data.get("unresolved_modules", [])
+    unresolved = unresolved if isinstance(unresolved, list) else []
+    top_module = str(summary.get("top_module") or data.get("top_module") or "").strip()
+    top_found = bool(summary.get("top_found", False))
+    status = str(summary.get("status") or data.get("status") or "not run").strip().lower()
+    errors = int(summary.get("errors") or 0)
+    warnings = int(summary.get("warnings") or 0)
+
+    if status == "fail" or errors:
+        state = "Failed"
+        message = "Slang reported parse or elaboration errors. Fix diagnostics before running later steps."
+    elif not top_found:
+        state = "Incomplete"
+        message = f"Top module {top_module or '<unset>'} was not found in the current RTL universe."
+    elif unresolved:
+        state = "Warning"
+        message = "Some instantiated modules are not defined in the current file universe."
+    else:
+        state = "Ready"
+        message = "Top exists and the module universe is structurally complete."
+
+    return {
+        "status": state,
+        "message": message,
+        "top_module": top_module or "--",
+        "top_found": top_found,
+        "errors": errors,
+        "warnings": warnings,
+        "diagnostics": len(diagnostics),
+        "unresolved_modules": len(unresolved),
+        "rtl_files": int(summary.get("rtl_files") or data.get("inputs", {}).get("rtl_file_count") or 0),
+        "modules": int(summary.get("modules") or 0),
+        "referenced_modules": int(summary.get("referenced_modules") or 0),
+    }
+
+
+def _build_elab_hierarchy(data: dict[str, Any]) -> dict[str, Any]:
+    summary = data.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    top_module = str(summary.get("top_module") or data.get("top_module") or "").strip()
+    modules = data.get("modules", [])
+    modules = modules if isinstance(modules, list) else []
+    module_records = [item for item in modules if isinstance(item, dict)]
+    module_by_name = {str(item.get("module", "")): item for item in module_records}
+    top_record = module_by_name.get(top_module, {})
+    top_children = [
+        str(item)
+        for item in (top_record.get("instantiates", []) if isinstance(top_record, dict) else [])
+        if str(item).strip()
+    ]
+    hotspots = sorted(
+        module_records,
+        key=lambda item: int(item.get("instances") or 0),
+        reverse=True,
+    )[:8]
+    unresolved = data.get("unresolved_modules", [])
+    unresolved = [str(item) for item in unresolved] if isinstance(unresolved, list) else []
+    referenced = data.get("referenced_modules", [])
+    referenced = [str(item) for item in referenced] if isinstance(referenced, list) else []
+    return {
+        "top_module": top_module or "--",
+        "top_children": top_children,
+        "module_count": len(module_records),
+        "referenced_count": len(referenced),
+        "unresolved": unresolved,
+        "largest_modules": [
+            {
+                "module": str(item.get("module", "")),
+                "path": str(item.get("path", "")),
+                "line": int(item.get("line") or 1),
+                "instances": int(item.get("instances") or 0),
+                "ports": int(item.get("ports") or 0),
+                "parameters": int(item.get("parameters") or 0),
+            }
+            for item in hotspots
+        ],
+    }
+
+
+def _build_elab_next_action(readiness: dict[str, Any], hierarchy: dict[str, Any]) -> dict[str, str]:
+    status = str(readiness.get("status", "")).lower()
+    if status == "failed":
+        return {
+            "title": "Fix Slang Diagnostics",
+            "detail": "Open Diagnostics and jump to the reported source locations.",
+            "target": "diagnostics",
+        }
+    if status == "incomplete":
+        return {
+            "title": "Fix Top Module",
+            "detail": "Check the configured top module and the prepared filelist.",
+            "target": "top",
+        }
+    if hierarchy.get("unresolved"):
+        return {
+            "title": "Resolve Missing Modules",
+            "detail": "Add missing RTL files or fix module names before continuing.",
+            "target": "unresolved",
+        }
+    return {
+        "title": "Continue",
+        "detail": "The design universe is complete. Continue to RTL Review or Lint.",
+        "target": "next",
+    }
 
 
 def _build_frontend_lint_payload(step: Any) -> dict[str, Any]:
