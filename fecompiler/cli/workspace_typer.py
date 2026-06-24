@@ -187,6 +187,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         sim_compile_extra_cflag: Annotated[list[str] | None, typer.Option("--sim-compile-extra-cflag")] = None,
         sim_coremark_iterations: Annotated[int | None, typer.Option("--sim-coremark-iterations")] = None,
         sim_coremark_total_data_size: Annotated[int | None, typer.Option("--sim-coremark-total-data-size")] = None,
+        sim_coremark_max_cycles: Annotated[int | None, typer.Option("--sim-coremark-max-cycles")] = None,
         sim_coremark_has_float: Annotated[str | None, typer.Option("--sim-coremark-has-float")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
@@ -204,6 +205,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             sim_compile_extra_cflag=list(sim_compile_extra_cflag or []),
             sim_coremark_iterations=sim_coremark_iterations,
             sim_coremark_total_data_size=sim_coremark_total_data_size,
+            sim_coremark_max_cycles=sim_coremark_max_cycles,
             sim_coremark_has_float=sim_coremark_has_float or "",
         )
         finish("run-step", json_output, lambda: handlers.run_step(args))

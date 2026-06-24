@@ -1,5 +1,6 @@
 cl3_verilog/difftest_info_pkg.sv
 cl3_verilog/difftest.sv
+cl3_verilog/difftest_wrapper.sv
 cl3_verilog/MaxPeriodGaloisLFSR.sv
 cl3_verilog/CL3BTB.sv
 cl3_verilog/CL3NPC.sv

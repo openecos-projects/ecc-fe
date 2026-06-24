@@ -303,8 +303,29 @@ def test_coremark_suite_selects_benchmark_program(tmp_path):
     assert workspace["sim_compile_opt_level"] == "-O2"
     assert workspace["sim_compile_march"] == "rv32im_zicsr"
     assert workspace["sim_compile_mabi"] == "ilp32"
-    assert workspace["sim_coremark_iterations"] == 128
+    assert workspace["sim_coremark_iterations"] == 1
     assert workspace["sim_coremark_total_data_size"] == 2000
+
+
+def test_coremark_suite_uses_workspace_runtime_profile(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    (programs_dir / "coremark.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    workspace = {
+        "sim_programs_dir": str(programs_dir),
+        "core_supported_test_suites": ["smoke", "cpu-tests", "coremark"],
+        "soc_supported_test_suites": ["smoke", "cpu-tests", "coremark"],
+        "sim_compile_march": "rv32i_zicsr",
+        "sim_coremark_has_float": False,
+        "sim_coremark_max_cycles": "12345",
+        "sim_coremark_use_difftest": False,
+    }
+
+    _apply_sim_test_suite(workspace, "coremark")
+
+    assert workspace["sim_run_args"] == ["--max-cycles", "12345"]
+    assert workspace["sim_compile_march"] == "rv32i_zicsr"
+    assert workspace["sim_coremark_has_float"] is False
 
 
 def test_frontend_create_uses_soc_wrapper_top_even_with_legacy_top_param(tmp_path):
@@ -413,6 +434,38 @@ def test_frontend_create_with_catalog_cpu_and_user_filelist_adds_adapter_wrapper
     assert prepare_report["inputs"]["cpu_filelist"]["path"] == str(user_cpu_filelist.resolve())
     assert prepare_report["inputs"]["cpu_adapter_filelist"]["path"] == ws["cpu_adapter_filelist"]
     assert prepare_report["inputs"]["soc_filelist"]["filtered_rtl_files"] == 1
+
+
+def test_frontend_create_applies_catalog_coremark_profile(tmp_path, monkeypatch):
+    monkeypatch.delenv("ECOS_FE_COMPILER_ROOT", raising=False)
+    catalog_registry._catalog.cache_clear()
+
+    request = tmp_path / "create_vexriscv_coremark.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_vexriscv_coremark"),
+                "core_id": "vexriscv",
+                "soc_harness_id": "ysyx-am-soc",
+                "toolchain_id": "riscv32-unknown-elf",
+                "test_suite_id": "coremark",
+                "parameters": {
+                    "Design": "chip",
+                    "Top module": "ecos_sim_top",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_vexriscv_coremark"))
+
+    assert ws["sim_program_names"] == ["coremark"]
+    assert ws["sim_compile_march"] == "rv32i_zicsr"
+    assert ws["sim_coremark_has_float"] is False
+    assert ws["sim_coremark_use_difftest"] is False
+    assert ws["sim_run_args"] == ["--max-cycles", "200000000"]
 
 
 def test_prepare_frontend_detail_returns_readiness_payload(tmp_path, capsys):
@@ -785,7 +838,7 @@ def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
     _apply_sim_test_suite(workspace, "coremark")
     assert workspace["sim_program_names"] == ["coremark"]
     assert workspace["sim_build_all_programs"] is False
-    assert "--diff" in workspace["sim_run_args"]
+    assert "--diff" not in workspace["sim_run_args"]
     assert "--timeout-ok" not in workspace["sim_run_args"]
     assert workspace["sim_compile_opt_level"] == "-O2"
 
@@ -1697,7 +1750,7 @@ def test_coremark_sim_log_includes_readable_result_summary(tmp_path, monkeypatch
             returncode=0,
             stdout="\n".join([
                 "2K performance run parameters for coremark.",
-                "Iterations       : 128",
+                "Iterations       : 1",
                 "Correct operation validated. See README.md for run and reporting rules.",
                 "CoreMark 1.0 : 1234.5 / GCC -O3",
                 "CoreMark/MHz: 12.345",
@@ -1724,17 +1777,17 @@ def test_coremark_sim_log_includes_readable_result_summary(tmp_path, monkeypatch
     assert payload["suite"] == "coremark"
     assert case["name"] == "coremark.soc"
     assert case["wave"] == ""
-    assert case["metrics"]["cycles_per_iteration"] == 500
+    assert case["metrics"]["cycles_per_iteration"] == 64000
     assert case["metrics"]["coremark_per_mhz"] == 12.345
     assert case["metrics"]["coremark_per_second"] == 1234.5
     assert "ECOS Simulation Result" in log_text
     assert "Suite       : CoreMark" in log_text
     assert "Status      : PASS" in log_text
     assert "Benchmark   : EEMBC CoreMark" in log_text
-    assert "Iterations  : 128" in log_text
+    assert "Iterations  : 1" in log_text
     assert "Cycles      : 64000" in log_text
     assert "Clock       : 100 MHz" in log_text
-    assert "Cycles/iter : 500" in log_text
+    assert "Cycles/iter : 64000" in log_text
     assert "CoreMark/MHz: 12.345" in log_text
     assert "CoreMark/s  : 1234.5" in log_text
     assert "Correct operation validated" in log_text

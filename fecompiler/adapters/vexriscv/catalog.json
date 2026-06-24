@@ -1,12 +1,10 @@
 {
   "id": "vexriscv",
   "name": "VexRiscv",
-  "description": "LiteX Hub generated VexRiscv Min RTL snapshot with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU smoke tests are supported without difftest.",
+  "description": "LiteX Hub generated VexRiscv Min RTL snapshot with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU and CoreMark smoke tests are supported without difftest.",
   "source": "opensource",
   "isa": [
-    "rv32i",
-    "rv32im",
-    "rv32imc"
+    "rv32i"
   ],
   "rtl_language": [
     "verilog",
@@ -24,6 +22,10 @@
     "smoke",
     "coremark"
   ],
+  "sim_compile_march": "rv32i_zicsr",
+  "sim_compile_mabi": "ilp32",
+  "sim_coremark_has_float": false,
+  "sim_coremark_use_difftest": false,
   "license": "MIT",
   "repository": "https://github.com/SpinalHDL/VexRiscv",
   "directory": "fecompiler/thirdparty/vexriscv",

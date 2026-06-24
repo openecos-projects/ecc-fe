@@ -207,6 +207,16 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_supports_difftest": _core_supports_difftest(core),
         "core_supported_test_suites": _core_supported_test_suites(core),
         "core_sim_program_link_base": str(core.data.get("sim_program_link_base", "")) if core is not None else "",
+        "core_sim_compile_preset": str(core.data.get("sim_compile_preset", "")) if core is not None else "",
+        "core_sim_compile_opt_level": str(core.data.get("sim_compile_opt_level", "")) if core is not None else "",
+        "core_sim_compile_march": str(core.data.get("sim_compile_march", "")) if core is not None else "",
+        "core_sim_compile_mabi": str(core.data.get("sim_compile_mabi", "")) if core is not None else "",
+        "core_sim_compile_extra_cflags": _core_sim_compile_extra_cflags(core),
+        "core_sim_coremark_iterations": str(core.data.get("sim_coremark_iterations", "")) if core is not None else "",
+        "core_sim_coremark_total_data_size": str(core.data.get("sim_coremark_total_data_size", "")) if core is not None else "",
+        "core_sim_coremark_max_cycles": str(core.data.get("sim_coremark_max_cycles", "")) if core is not None else "",
+        "core_sim_coremark_has_float": core.data.get("sim_coremark_has_float", "") if core is not None else "",
+        "core_sim_coremark_use_difftest": core.data.get("sim_coremark_use_difftest", "") if core is not None else "",
         "soc_harness_capability": soc.integration_level if soc is not None else "",
         "soc_wrapper_contract": str(soc.data.get("wrapper_contract", "")) if soc is not None else "",
         "soc_wrapper_top": str(soc.data.get("wrapper_top", "")) if soc is not None else "",
@@ -421,6 +431,12 @@ def _core_supported_test_suites(core: CatalogEntry | None) -> list[str]:
     if core is None:
         return []
     return [str(item).strip() for item in core.data.get("supported_test_suites", []) if str(item).strip()]
+
+
+def _core_sim_compile_extra_cflags(core: CatalogEntry | None) -> list[str]:
+    if core is None:
+        return []
+    return [str(item).strip() for item in core.data.get("sim_compile_extra_cflags", []) if str(item).strip()]
 
 
 def _core_supports_difftest(core: CatalogEntry | None) -> bool:

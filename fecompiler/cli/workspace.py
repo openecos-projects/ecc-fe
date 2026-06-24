@@ -46,8 +46,9 @@ DEFAULT_COREMARK_COMPILE_PRESET = "balanced"
 DEFAULT_COREMARK_OPT_LEVEL = "-O2"
 DEFAULT_COREMARK_MARCH = "rv32im_zicsr"
 DEFAULT_COREMARK_MABI = "ilp32"
-DEFAULT_COREMARK_ITERATIONS = 128
+DEFAULT_COREMARK_ITERATIONS = 1
 DEFAULT_COREMARK_TOTAL_DATA_SIZE = 2000
+DEFAULT_COREMARK_MAX_CYCLES = 200000000
 DEFAULT_COREMARK_HAS_FLOAT = True
 CLI_LOG_TAIL_BYTES = 24 * 1024
 DIFFTEST_SOURCE_NAME = "difftest.cpp"
@@ -170,6 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_step.add_argument("--sim-compile-extra-cflag", action="append", default=[])
     run_step.add_argument("--sim-coremark-iterations", type=int, default=None)
     run_step.add_argument("--sim-coremark-total-data-size", type=int, default=None)
+    run_step.add_argument("--sim-coremark-max-cycles", type=int, default=None)
     run_step.add_argument("--sim-coremark-has-float", default="")
 
     get_info = subparsers.add_parser("get-info", help="Get step information")
@@ -365,6 +367,7 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
     if validation.normalized.get("core_sim_program_link_base"):
         parameters["sim_program_link_base"] = validation.normalized["core_sim_program_link_base"]
+    _apply_core_sim_defaults_to(parameters, validation.normalized)
     parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_contract"] = validation.normalized.get("soc_wrapper_contract", "")
@@ -412,7 +415,9 @@ def _create(args: argparse.Namespace) -> CliResult:
         sim_compile_extra_cflags=_normalize_str_list(normalized.get("sim_compile_extra_cflags", [])),
         sim_coremark_iterations=str(normalized.get("sim_coremark_iterations", "")),
         sim_coremark_total_data_size=str(normalized.get("sim_coremark_total_data_size", "")),
+        sim_coremark_max_cycles=str(normalized.get("sim_coremark_max_cycles", "")),
         sim_coremark_has_float=_normalize_bool(normalized.get("sim_coremark_has_float", False)),
+        sim_coremark_use_difftest=_normalize_bool(normalized.get("sim_coremark_use_difftest", False)),
         rtl_list=_normalize_str_list(normalized.get("rtl_list", [])),
     )
     workspace = create_workspace(spec)
@@ -548,14 +553,14 @@ def _run_step(args: argparse.Namespace) -> CliResult:
     if step == "sim":
         suite_name = str(args.sim_test_suite or "").strip()
         if suite_name and suite_name.lower() != "default":
+            if suite_name.lower() == "coremark":
+                _apply_coremark_compile_options(workspace, args)
             _apply_sim_test_suite(
                 workspace,
                 suite_name,
                 args.sim_cpu_test_mode,
                 args.sim_cpu_test_case,
             )
-            if suite_name.lower() == "coremark":
-                _apply_coremark_compile_options(workspace, args)
             force_rerun = True
         else:
             _apply_default_sim_smoke_suite(workspace)
@@ -716,6 +721,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("sim_compile_mabi", "sim_compile_mabi"),
         ("sim_coremark_iterations", "sim_coremark_iterations"),
         ("sim_coremark_total_data_size", "sim_coremark_total_data_size"),
+        ("sim_coremark_max_cycles", "sim_coremark_max_cycles"),
         ("core_id", "core_id"),
         ("soc_variant", "soc_variant"),
         ("soc_harness_id", "soc_harness_id"),
@@ -870,6 +876,34 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
         request["soc_variant"] = normalized["soc_variant"]
     if normalized.get("core_sim_program_link_base"):
         request["sim_program_link_base"] = normalized["core_sim_program_link_base"]
+    _apply_core_sim_defaults_to(request, normalized)
+
+
+def _apply_core_sim_defaults_to(target: dict[str, Any], normalized: dict[str, Any]) -> None:
+    for source, field in (
+        ("core_sim_compile_preset", "sim_compile_preset"),
+        ("core_sim_compile_opt_level", "sim_compile_opt_level"),
+        ("core_sim_compile_march", "sim_compile_march"),
+        ("core_sim_compile_mabi", "sim_compile_mabi"),
+        ("core_sim_coremark_iterations", "sim_coremark_iterations"),
+        ("core_sim_coremark_total_data_size", "sim_coremark_total_data_size"),
+        ("core_sim_coremark_max_cycles", "sim_coremark_max_cycles"),
+    ):
+        value = normalized.get(source)
+        if str(value or "").strip():
+            target[field] = str(value).strip()
+
+    extra = _normalize_str_list(normalized.get("core_sim_compile_extra_cflags", []))
+    if extra:
+        target["sim_compile_extra_cflags"] = extra
+
+    for source, field in (
+        ("core_sim_coremark_has_float", "sim_coremark_has_float"),
+        ("core_sim_coremark_use_difftest", "sim_coremark_use_difftest"),
+    ):
+        value = normalized.get(source)
+        if value != "":
+            target[field] = _normalize_bool(value)
 
 
 def _normalize_parameters(raw: Any) -> dict[str, Any]:
@@ -1268,6 +1302,11 @@ def _default_coremark_compile_settings(workspace: dict[str, Any] | None = None) 
         "sim_coremark_has_float": _normalize_bool(
             source.get("sim_coremark_has_float", DEFAULT_COREMARK_HAS_FLOAT),
         ),
+        "sim_coremark_max_cycles": _positive_int(
+            source.get("sim_coremark_max_cycles"),
+            DEFAULT_COREMARK_MAX_CYCLES,
+        ),
+        "sim_coremark_use_difftest": _normalize_bool(source.get("sim_coremark_use_difftest", False)),
     }
 
 
@@ -1294,6 +1333,10 @@ def _apply_coremark_compile_options(workspace: dict[str, Any], args: argparse.Na
     data_size = getattr(args, "sim_coremark_total_data_size", None)
     if data_size is not None:
         updates["sim_coremark_total_data_size"] = _positive_int(data_size, DEFAULT_COREMARK_TOTAL_DATA_SIZE)
+
+    max_cycles = getattr(args, "sim_coremark_max_cycles", None)
+    if max_cycles is not None:
+        updates["sim_coremark_max_cycles"] = _positive_int(max_cycles, DEFAULT_COREMARK_MAX_CYCLES)
 
     has_float = str(getattr(args, "sim_coremark_has_float", "") or "").strip()
     if has_float:
@@ -1427,14 +1470,17 @@ def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
 
 
 def _default_coremark_run_args(workspace: dict[str, Any]) -> list[str]:
+    max_cycles = str(_positive_int(workspace.get("sim_coremark_max_cycles"), DEFAULT_COREMARK_MAX_CYCLES))
+    args = ["--max-cycles", max_cycles]
+    if not _normalize_bool(workspace.get("sim_coremark_use_difftest", False)):
+        return args
     if not _supports_difftest(workspace):
-        return ["--max-cycles", "200000000"]
+        return args
     soc_root = _workspace_soc_root(workspace)
     if not soc_root:
-        return ["--max-cycles", "200000000"]
+        return args
     return [
-        "--max-cycles",
-        "200000000",
+        *args,
         "--diff",
         "--ref",
         str(soc_root / "tools" / "riscv32-spike-so"),
@@ -1502,17 +1548,14 @@ def _workspace_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, lis
 
 
 def _expand_frontend_supported_test_suites(suites: list[str]) -> list[str]:
-    expanded = list(suites)
-    if "cpu-tests" in expanded and "coremark" not in expanded:
-        expanded.append("coremark")
-    return expanded
+    return list(suites)
 
 
 def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id == "darkriscv":
         return True, []
-    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "custom-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
+    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "custom-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
 
 
 def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -1522,8 +1565,10 @@ def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, 
 
 def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32"}:
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "vexriscv"}:
         return ["cpu-tests", "smoke", "coremark"]
+    if core_id == "cva6":
+        return ["cpu-tests", "smoke"]
     if core_id in {"custom-filelist", "ysyx_00000000", ""}:
         return ["smoke", "cpu-tests", "rtthread", "coremark"]
     return []
@@ -1541,7 +1586,7 @@ def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     if raw is not None:
         return _normalize_bool(raw)
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32", "darkriscv"}:
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv"}:
         return False
     return True
 

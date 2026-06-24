@@ -29,13 +29,25 @@ def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
     assert len(payload["compatibility"]) == len(payload["cores"]) * len(payload["soc_harnesses"])
 
 
-def test_stable_custom_filelist_combination_supports_rtthread():
+def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     item = _compatibility_by_pair()[("custom-filelist", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "supported"
     assert item["status"] == "requires_filelist"
     assert item["requires_cpu_filelist"] is True
     assert item["supported_test_suites"] == ["smoke", "cpu-tests", "rtthread", "coremark"]
+
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("CL3Top.sv\n", encoding="utf-8")
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "coremark",
+        "cpu_filelist": str(user_filelist),
+    })
+    assert result.ok is True
+    assert result.normalized["core_sim_coremark_use_difftest"] is False
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
@@ -118,7 +130,7 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
 
     result = validate_frontend_config({
         "core_id": "cva6",
@@ -130,6 +142,15 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
     assert result.support_level == "experimental"
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/cva6/filelist.cpu.f")
     assert result.normalized["cpu_wrapper_top"] == "ecos_cva6_cpu_wrapper"
+
+    coremark = validate_frontend_config({
+        "core_id": "cva6",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "coremark",
+    })
+    assert coremark.ok is False
+    assert any(issue.code == "combination_test_suite_not_supported" for issue in coremark.issues)
 
 
 def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
@@ -149,6 +170,8 @@ def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
     assert result.support_level == "experimental"
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/vexriscv/filelist.cpu.f")
     assert result.normalized["cpu_wrapper_top"] == "ecos_vexriscv_cpu_wrapper"
+    assert result.normalized["core_sim_compile_march"] == "rv32i_zicsr"
+    assert result.normalized["core_sim_coremark_has_float"] is False
 
 
 def test_removed_placeholder_soc_profiles_are_not_exposed():

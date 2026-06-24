@@ -1,7 +1,7 @@
 {
   "id": "cva6",
   "name": "CVA6",
-  "description": "OpenHW application-class RISC-V core with an experimental ECOS RV32/AXI CPU wrapper. CPU smoke tests are supported without difftest.",
+  "description": "OpenHW application-class RISC-V core with an experimental ECOS RV32/AXI CPU wrapper. CPU smoke tests are supported without difftest; CoreMark is not exposed until the CVA6 benchmark profile is fast enough for default GUI use.",
   "source": "opensource",
   "isa": [
     "rv32",
@@ -19,8 +19,7 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "cpu-tests",
-    "smoke",
-    "coremark"
+    "smoke"
   ],
   "license": "Solderpad-2.0",
   "repository": "https://github.com/openhwgroup/cva6",

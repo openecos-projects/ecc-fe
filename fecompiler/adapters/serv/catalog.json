@@ -4,7 +4,6 @@
   "description": "Very small bit-serial RISC-V core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests are supported without difftest.",
   "source": "opensource",
   "isa": [
-    "rv32i",
     "rv32i"
   ],
   "rtl_language": [
@@ -22,6 +21,10 @@
     "smoke",
     "coremark"
   ],
+  "sim_compile_march": "rv32i_zicsr",
+  "sim_compile_mabi": "ilp32",
+  "sim_coremark_has_float": false,
+  "sim_coremark_use_difftest": false,
   "license": "ISC",
   "repository": "https://github.com/olofk/serv",
   "directory": "fecompiler/thirdparty/serv",

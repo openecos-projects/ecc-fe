@@ -31,6 +31,7 @@ _BOOL_PARAMETER_FIELDS = (
     "cpu_supports_difftest",
     "soc_supports_difftest",
     "sim_coremark_has_float",
+    "sim_coremark_use_difftest",
 )
 _STR_PARAMETER_FIELDS = (
     "cpu_filelist",
@@ -50,6 +51,7 @@ _STR_PARAMETER_FIELDS = (
     "sim_compile_mabi",
     "sim_coremark_iterations",
     "sim_coremark_total_data_size",
+    "sim_coremark_max_cycles",
     "soc_variant",
     "soc_wrapper_id",
     "soc_wrapper_contract",
@@ -78,6 +80,7 @@ _PARAMETER_OVERRIDE_FIELDS = (
     "sim_compile_mabi",
     "sim_coremark_iterations",
     "sim_coremark_total_data_size",
+    "sim_coremark_max_cycles",
 )
 
 
@@ -159,7 +162,9 @@ class CreateWorkspaceData:
     sim_compile_extra_cflags: list[str] = field(default_factory=list)
     sim_coremark_iterations: str = ""
     sim_coremark_total_data_size: str = ""
+    sim_coremark_max_cycles: str = ""
     sim_coremark_has_float: bool = False
+    sim_coremark_use_difftest: bool = False
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -288,7 +293,9 @@ def build_parameter_overrides(
     sim_compile_extra_cflags: list[str] | None = None,
     sim_coremark_iterations: str = "",
     sim_coremark_total_data_size: str = "",
+    sim_coremark_max_cycles: str = "",
     sim_coremark_has_float: bool = False,
+    sim_coremark_use_difftest: bool = False,
 ) -> dict[str, Any]:
     """Normalize runtime option fields into parameters/home schema."""
     updates: dict[str, Any] = {}
@@ -317,6 +324,7 @@ def build_parameter_overrides(
         "sim_compile_mabi",
         "sim_coremark_iterations",
         "sim_coremark_total_data_size",
+        "sim_coremark_max_cycles",
     ):
         if values[field]:
             updates[field] = str(values[field]).strip()
