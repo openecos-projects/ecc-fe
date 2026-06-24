@@ -16,12 +16,14 @@
   "supported_test_suites": [
     "smoke",
     "cpu-tests",
-    "rtthread"
+    "rtthread",
+    "coremark"
   ],
   "directory": "fecompiler/thirdparty/SoC",
   "tags": [
     "default",
     "cpu-tests",
-    "rtthread"
+    "rtthread",
+    "coremark"
   ]
 }

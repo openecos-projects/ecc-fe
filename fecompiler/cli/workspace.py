@@ -41,6 +41,7 @@ except ImportError:
 
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add"]
+DEFAULT_FRONTEND_COREMARK_CASES = ["coremark"]
 CLI_LOG_TAIL_BYTES = 24 * 1024
 DIFFTEST_SOURCE_NAME = "difftest.cpp"
 DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
@@ -1160,6 +1161,14 @@ def _apply_sim_test_suite(
             raise WorkspaceCliError("run_step", "failed", f"unknown CPU Tests mode: {mode}")
         if mode == "selected" and not cases:
             cases = _default_cpu_test_cases(workspace)
+        benchmark_cases = [name for name in cases if name in DEFAULT_FRONTEND_COREMARK_CASES]
+        if benchmark_cases:
+            raise WorkspaceCliError(
+                "run_step",
+                "failed",
+                f"use CoreMark suite for benchmark case: {', '.join(benchmark_cases)}",
+                data={"test_suite_id": "coremark", "cases": benchmark_cases},
+            )
         if mode == "selected":
             _validate_cpu_test_cases(workspace, cases)
         updates = {
@@ -1178,6 +1187,16 @@ def _apply_sim_test_suite(
             "sim_program_names": ["rtthread"],
             "sim_run_args": _default_rtthread_run_args(workspace),
         }
+    elif suite_name == "coremark":
+        _validate_workspace_test_suite_supported(workspace, "coremark")
+        _validate_cpu_test_cases(workspace, DEFAULT_FRONTEND_COREMARK_CASES)
+        updates = {
+            "sim_all_tests": False,
+            "sim_images": [],
+            "sim_build_all_programs": False,
+            "sim_program_names": list(DEFAULT_FRONTEND_COREMARK_CASES),
+            "sim_run_args": _default_coremark_run_args(workspace),
+        }
     else:
         raise WorkspaceCliError("run_step", "failed", f"unknown frontend sim test suite: {suite_name}")
 
@@ -1195,6 +1214,8 @@ def _apply_workspace_create_test_suite_defaults(workspace: dict[str, Any], test_
         return
     if suite == "rtthread":
         _apply_sim_test_suite(workspace, "rtthread")
+    if suite == "coremark":
+        _apply_sim_test_suite(workspace, "coremark")
 
 
 def _apply_default_sim_smoke_suite(workspace: dict[str, Any]) -> None:
@@ -1225,7 +1246,11 @@ def _default_cpu_test_cases(workspace: dict[str, Any]) -> list[str]:
     if not path.is_dir():
         return preferred
 
-    available = [source.stem for source in sorted(path.glob("*.c"))]
+    available = [
+        source.stem
+        for source in sorted(path.glob("*.c"))
+        if source.stem not in DEFAULT_FRONTEND_COREMARK_CASES
+    ]
     if not available:
         return []
 
@@ -1302,6 +1327,25 @@ def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
     ]
 
 
+def _default_coremark_run_args(workspace: dict[str, Any]) -> list[str]:
+    if not _supports_difftest(workspace):
+        return ["--max-cycles", "200000000"]
+    soc_root = _workspace_soc_root(workspace)
+    if not soc_root:
+        return ["--max-cycles", "200000000"]
+    return [
+        "--max-cycles",
+        "200000000",
+        "--diff",
+        "--ref",
+        str(soc_root / "tools" / "riscv32-spike-so"),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+    ]
+
+
 def _validate_workspace_test_suite_supported(workspace: dict[str, Any], suite_id: str) -> None:
     known, supported = _workspace_test_suite_contract(workspace)
     if known and suite_id not in supported:
@@ -1323,8 +1367,12 @@ def _workspace_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
 
 
 def _workspace_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
-    core_supported = _normalize_str_list(workspace.get("core_supported_test_suites", []))
-    soc_supported = _normalize_str_list(workspace.get("soc_supported_test_suites", []))
+    core_supported = _expand_frontend_supported_test_suites(
+        _normalize_str_list(workspace.get("core_supported_test_suites", [])),
+    )
+    soc_supported = _expand_frontend_supported_test_suites(
+        _normalize_str_list(workspace.get("soc_supported_test_suites", [])),
+    )
     has_core_contract = "core_supported_test_suites" in workspace
     has_soc_contract = "soc_supported_test_suites" in workspace
     if core_supported and soc_supported:
@@ -1354,6 +1402,13 @@ def _workspace_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, lis
     return core_known or soc_known, []
 
 
+def _expand_frontend_supported_test_suites(suites: list[str]) -> list[str]:
+    expanded = list(suites)
+    if "cpu-tests" in expanded and "coremark" not in expanded:
+        expanded.append("coremark")
+    return expanded
+
+
 def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id == "darkriscv":
@@ -1378,16 +1433,16 @@ def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, 
 def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "serv", "femtorv32"}:
-        return ["cpu-tests", "smoke"]
+        return ["cpu-tests", "smoke", "coremark"]
     if core_id in {"custom-filelist", "ysyx_00000000", ""}:
-        return ["smoke", "cpu-tests", "rtthread"]
+        return ["smoke", "cpu-tests", "rtthread", "coremark"]
     return []
 
 
 def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
     soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
     if soc_id == "ysyx-am-soc":
-        return ["smoke", "cpu-tests", "rtthread"]
+        return ["smoke", "cpu-tests", "rtthread", "coremark"]
     if soc_id in {
         "ysyx-am-soc-alt",
         "ysyx-am-soc-extended",
@@ -1395,7 +1450,7 @@ def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
         "corev-mini-soc",
         "femtorv-mini-soc",
     }:
-        return ["smoke", "cpu-tests"]
+        return ["smoke", "cpu-tests", "coremark"]
     return []
 
 
@@ -1622,6 +1677,7 @@ def _build_frontend_step_detail(
                 "failed_cases": failed,
                 "run_id": _sim_run_id(step),
                 "test_suite": _sim_suite_label(workspace, cases),
+                "suite_id": _sim_suite_id(workspace, cases),
                 "cpu_test_mode": _sim_cpu_test_mode(workspace, cases),
                 "available_cpu_tests": _available_cpu_test_cases(workspace),
                 "default_cpu_tests": _default_cpu_test_cases(workspace),
@@ -2241,19 +2297,39 @@ def _sim_run_id(step: Any) -> str:
 def _sim_suite_label(workspace: dict[str, Any], cases: list[dict[str, Any]] | None = None) -> str:
     case_names = [str(case.get("name", "")) for case in (cases or [])]
     if case_names:
+        if case_names == ["coremark.soc"]:
+            return "CoreMark"
         return "RT-Thread" if case_names == ["rtthread.soc"] else "CPU Tests"
     names = _normalize_str_list(workspace.get("sim_program_names", []))
     if names == ["rtthread"]:
         return "RT-Thread"
+    if names == ["coremark"]:
+        return "CoreMark"
     if workspace.get("sim_build_all_programs") or names:
         return "CPU Tests"
     return "Default"
 
 
+def _sim_suite_id(workspace: dict[str, Any], cases: list[dict[str, Any]] | None = None) -> str:
+    case_names = [str(case.get("name", "")) for case in (cases or [])]
+    if case_names == ["rtthread.soc"]:
+        return "rtthread"
+    if case_names == ["coremark.soc"]:
+        return "coremark"
+    names = _normalize_str_list(workspace.get("sim_program_names", []))
+    if names == ["rtthread"]:
+        return "rtthread"
+    if names == ["coremark"]:
+        return "coremark"
+    if workspace.get("sim_build_all_programs") or names:
+        return "cpu_tests"
+    return "default"
+
+
 def _sim_cpu_test_mode(workspace: dict[str, Any], cases: list[dict[str, Any]] | None = None) -> str:
     case_names = [str(case.get("name", "")) for case in (cases or [])]
     if case_names:
-        if case_names == ["rtthread.soc"]:
+        if case_names in (["rtthread.soc"], ["coremark.soc"]):
             return ""
         return "all" if len(case_names) >= len(_available_cpu_test_cases(workspace)) else "selected"
     if workspace.get("sim_build_all_programs"):
@@ -2270,7 +2346,11 @@ def _available_cpu_test_cases(workspace: dict[str, Any]) -> list[str]:
     path = Path(programs_dir)
     if not path.is_dir():
         return []
-    return [source.stem for source in sorted(path.glob("*.c"))]
+    return [
+        source.stem
+        for source in sorted(path.glob("*.c"))
+        if source.stem not in DEFAULT_FRONTEND_COREMARK_CASES
+    ]
 
 
 def _existing_path_item(path: Any, label: str) -> dict[str, str] | None:

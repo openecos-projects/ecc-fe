@@ -16,7 +16,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "license": "BSD-2-Clause",
   "repository": "https://github.com/enjoy-digital/litex",
@@ -27,6 +28,7 @@
     "vexriscv",
     "profile",
     "sim-ready",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ]
 }

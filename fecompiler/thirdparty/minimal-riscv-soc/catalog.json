@@ -15,13 +15,15 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "directory": "fecompiler/thirdparty/minimal-riscv-soc",
   "tags": [
     "test-harness",
     "minimal",
     "cpu-tests",
-    "local"
+    "local",
+    "coremark"
   ]
 }

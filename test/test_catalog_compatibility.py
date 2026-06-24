@@ -35,7 +35,7 @@ def test_stable_custom_filelist_combination_supports_rtthread():
     assert item["support_level"] == "supported"
     assert item["status"] == "requires_filelist"
     assert item["requires_cpu_filelist"] is True
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "rtthread"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "rtthread", "coremark"]
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
@@ -43,7 +43,7 @@ def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
 
 def test_selected_catalog_cpu_keeps_user_filelist_and_adds_adapter_filelist(tmp_path):
@@ -118,7 +118,7 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
     result = validate_frontend_config({
         "core_id": "cva6",
@@ -137,7 +137,7 @@ def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
     result = validate_frontend_config({
         "core_id": "vexriscv",
@@ -172,11 +172,11 @@ def test_open_soc_profiles_are_cpu_test_ready_without_rtthread():
         assert item["integration_level"] == "sim_ready"
         assert item["status"] == "experimental"
         assert item["supports_difftest"] is False
-        assert item["supported_test_suites"] == ["smoke", "cpu-tests"]
+        assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
         pair = _compatibility_by_pair()[("picorv32", str(item["id"]))]
         assert pair["can_create_workspace"] is True
-        assert pair["supported_test_suites"] == ["smoke", "cpu-tests"]
+        assert pair["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
 
 def test_validate_rejects_rtthread_for_non_difftest_experimental_core():

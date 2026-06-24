@@ -27,6 +27,15 @@
     "default_cases": ["rtthread"]
   },
   {
+    "id": "coremark",
+    "name": "CoreMark",
+    "description": "Deterministic CoreMark-style benchmark smoke run for frontend simulation.",
+    "isa": ["rv32"],
+    "requires": ["sim_ready_harness", "riscv-gcc"],
+    "status": "experimental",
+    "default_cases": ["coremark"]
+  },
+  {
     "id": "riscv-arch-test",
     "name": "RISC-V Architecture Tests",
     "description": "Planned official RISC-V architectural compliance style tests.",

@@ -16,7 +16,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "license": "Apache-2.0",
   "repository": "https://github.com/lowRISC/ibex-demo-system",
@@ -27,6 +28,7 @@
     "demo",
     "profile",
     "sim-ready",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ]
 }

@@ -337,6 +337,24 @@ def test_cpu_tests_empty_mode_defaults_to_selected_smoke_case(tmp_path):
     assert workspace["sim_program_names"] == ["add"]
 
 
+def test_coremark_suite_selects_benchmark_program(tmp_path):
+    programs_dir = tmp_path / "programs"
+    programs_dir.mkdir()
+    (programs_dir / "add.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (programs_dir / "coremark.c").write_text("int main() { return 0; }\n", encoding="utf-8")
+    workspace = {
+        "sim_programs_dir": str(programs_dir),
+        "core_supported_test_suites": ["smoke", "cpu-tests", "coremark"],
+        "soc_supported_test_suites": ["smoke", "cpu-tests", "coremark"],
+    }
+
+    _apply_sim_test_suite(workspace, "coremark")
+
+    assert workspace["sim_build_all_programs"] is False
+    assert workspace["sim_program_names"] == ["coremark"]
+    assert workspace["sim_run_args"] == ["--max-cycles", "200000000"]
+
+
 def test_frontend_create_uses_soc_wrapper_top_even_with_legacy_top_param(tmp_path):
     request = tmp_path / "create_frontend.json"
     request.write_text(
@@ -791,7 +809,7 @@ def test_workspace_cli_falls_back_to_argparse_when_typer_is_missing(
 def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
     programs_dir = tmp_path / "programs"
     programs_dir.mkdir()
-    for name in ("add", "load-store", "fib"):
+    for name in ("add", "load-store", "fib", "coremark"):
         (programs_dir / f"{name}.c").write_text("int main() { return 0; }\n", encoding="utf-8")
     soc_root = tmp_path / "SoC"
     soc_root.mkdir()
@@ -826,6 +844,50 @@ def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
         "0x80000000",
         "--timeout-ok",
     ]
+
+    _apply_sim_test_suite(workspace, "coremark")
+    assert workspace["sim_program_names"] == ["coremark"]
+    assert workspace["sim_build_all_programs"] is False
+    assert "--diff" in workspace["sim_run_args"]
+    assert "--timeout-ok" not in workspace["sim_run_args"]
+
+
+def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    (programs_dir / "add.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    (programs_dir / "coremark.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    build_script.chmod(0o755)
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        run_calls.append(list(cmd))
+        name = cmd[cmd.index("--name") + 1]
+        out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    images, ok = _prepare_sim_images(
+        {
+            "soc_filelist": str(soc_root / "filelist.soc.f"),
+            "sim_build_all_programs": True,
+            "sim_programs_dir": str(programs_dir),
+        },
+        case_output_root=tmp_path / "cases",
+    )
+
+    assert ok is True
+    assert [call[call.index("--name") + 1] for call in run_calls] == ["add"]
+    assert {Path(image).name for image in images} == {"add.soc.bin"}
 
 
 def test_default_sim_smoke_suite_uses_one_case_not_all(tmp_path):
@@ -1519,6 +1581,141 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
 
     assert state == StateEnum.Success
     assert all(not _is_verilator_compile_cmd(call) for call in run_calls)
+
+
+def test_coremark_sim_log_includes_readable_result_summary(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    tb = tmp_path / "tb_main.cpp"
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    (programs_dir / "coremark.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_coremark_summary"),
+        parameters={"Design": "chip", "Top module": "chip_top", "Frequency max [MHz]": 100},
+        origin_verilog=str(rtl),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+        testbench=str(tb),
+        sim_programs_dir=str(programs_dir),
+        sim_build_test_script=str(build_script),
+        sim_program_names=["coremark"],
+        sim_run_args=["--max-cycles", "200000000"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_coremark_summary"))
+    run_calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        run_calls.append(list(cmd))
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "--name" in cmd:
+            name = cmd[cmd.index("--name") + 1]
+            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="coremark: iterations=128 items=64 crc=0x3df51153 expected=0x3df51153\n",
+            stderr="[soc-sim] finish after 64000 cycles\n",
+        )
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    case = payload["cases"][0]
+    log_text = Path(case["log"]).read_text(encoding="utf-8")
+    summary_text = (report_dir / "log.txt").read_text(encoding="utf-8")
+
+    assert state == StateEnum.Success
+    simulate_cmd = next(c for c in run_calls if not _is_verilator_compile_cmd(c) and "--name" not in c)
+    assert "--wave" not in simulate_cmd
+    assert payload["suite"] == "coremark"
+    assert case["name"] == "coremark.soc"
+    assert case["wave"] == ""
+    assert "ECOS Simulation Result" in log_text
+    assert "Suite       : CoreMark" in log_text
+    assert "Status      : PASS" in log_text
+    assert "Expected CRC: 0x3df51153" in log_text
+    assert "Iterations  : 128" in log_text
+    assert "Cycles      : 64000" in log_text
+    assert "Clock       : 100 MHz" in log_text
+    assert "Cycles/iter : 500" in log_text
+    assert "CoreMark/MHz: 0.002" in log_text
+    assert "CoreMark/s  : 200000" in log_text
+    assert "coremark: iterations=128 items=64 crc=0x3df51153 expected=0x3df51153" in log_text
+    assert "[coremark.soc] status=PASS rc=0 suite=coremark" in summary_text
+
+
+def test_coremark_sim_log_explains_missing_score_when_cycles_absent(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    tb = tmp_path / "tb_main.cpp"
+    soc_root = tmp_path / "SoC"
+    programs_dir = soc_root / "tests" / "programs"
+    build_script = soc_root / "scripts" / "build_test.sh"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+    programs_dir.mkdir(parents=True)
+    build_script.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    (programs_dir / "coremark.c").write_text("int main(){return 0;}\n", encoding="utf-8")
+    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_coremark_no_cycles"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        soc_filelist=str(soc_root / "filelist.soc.f"),
+        testbench=str(tb),
+        sim_programs_dir=str(programs_dir),
+        sim_build_test_script=str(build_script),
+        sim_program_names=["coremark"],
+        sim_run_args=["--max-cycles", "200000000"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_coremark_no_cycles"))
+
+    def _fake_run(cmd, capture_output=True, text=True, env=None):
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "--name" in cmd:
+            name = cmd[cmd.index("--name") + 1]
+            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="coremark done\n", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    state = engine.run_step("sim", rerun=True)
+
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    case = payload["cases"][0]
+    log_text = Path(case["log"]).read_text(encoding="utf-8")
+
+    assert state == StateEnum.Success
+    assert case["metrics"]["score_available"] is False
+    assert case["metrics"]["score_unavailable_reason"] == "simulation cycle count not found"
+    assert "Score       : unavailable (simulation cycle count not found)" in log_text
 
 
 def test_rtthread_program_enables_default_difftest_args(tmp_path):

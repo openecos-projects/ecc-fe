@@ -15,11 +15,13 @@
   "supports_difftest": true,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "directory": "fecompiler/thirdparty/SoC2",
   "tags": [
     "compatibility",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ]
 }

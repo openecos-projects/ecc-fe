@@ -43,10 +43,14 @@ _WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
 _WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
 _WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.py")
+_BENCHMARK_PROGRAM_NAMES = {"coremark"}
+_COREMARK_EXPECTED_CRC = "0x3df51153"
+_COREMARK_ITERATIONS = 128
 _VERILATOR_DIAGNOSTIC_RE = re.compile(
     r"^%(?P<severity>Error|Warning)(?:-(?P<code>[A-Za-z0-9_]+))?:\s+"
     r"(?P<source>.+?):(?P<line>\d+):(?:(?P<column>\d+):)?\s*(?P<message>.*)$"
 )
+_SIM_CYCLE_RE = re.compile(r"\b(?:after|timeout after)\s+([0-9]+)\s+cycles\b")
 _RTTHREAD_REQUIRED_LOG_MARKERS = (
     "Thread Operating System",
     "Hello RISC-V!",
@@ -189,8 +193,33 @@ def _rtthread_requested(workspace: dict[str, Any]) -> bool:
     return False
 
 
+def _coremark_requested(workspace: dict[str, Any]) -> bool:
+    if str(workspace.get("test_suite_id", "")).strip() == "coremark":
+        return True
+    for name in workspace.get("sim_program_names", []) or []:
+        text = str(name).strip()
+        if text == "coremark" or Path(text).stem == "coremark":
+            return True
+    for source in workspace.get("sim_program_sources", []) or []:
+        if Path(str(source).strip()).stem == "coremark":
+            return True
+    return False
+
+
 def _sim_suite_name(workspace: dict[str, Any]) -> str:
-    return "rtthread" if _rtthread_requested(workspace) else "cpu_tests"
+    if _rtthread_requested(workspace):
+        return "rtthread"
+    if _coremark_requested(workspace):
+        return "coremark"
+    return "cpu_tests"
+
+
+def _suite_label(suite: str) -> str:
+    if suite == "rtthread":
+        return "RT-Thread"
+    if suite == "coremark":
+        return "CoreMark"
+    return "CPU Tests"
 
 
 def _arg_present(args: list[str], option: str) -> bool:
@@ -359,6 +388,12 @@ def _is_rtthread_case(case_name: str, image: str) -> bool:
     return Path(str(image)).stem == "rtthread.soc"
 
 
+def _is_coremark_case(case_name: str, image: str) -> bool:
+    if case_name == "coremark.soc":
+        return True
+    return Path(str(image)).stem == "coremark.soc"
+
+
 def _case_output_ok(case_name: str, image: str, returncode: int, output: str) -> tuple[bool, dict[str, Any]]:
     if not _is_rtthread_case(case_name, image):
         return _sim_output_ok(returncode, output), {}
@@ -371,6 +406,163 @@ def _case_output_ok(case_name: str, image: str, returncode: int, output: str) ->
     }
     ok = returncode == 0 and not missing and "FAILED" not in output and "%Error" not in output
     return ok, validation
+
+
+def _workspace_frequency_mhz(workspace: dict[str, Any]) -> float | None:
+    params_path = str(workspace.get("parameters_path", "")).strip()
+    candidates: list[Any] = []
+    if params_path:
+        try:
+            params = json_read(params_path)
+            candidates.extend([
+                params.get("Frequency max [MHz]"),
+                params.get("frequency_max"),
+                params.get("freq"),
+            ])
+        except Exception:
+            pass
+    candidates.extend([
+        workspace.get("frequency_mhz"),
+        workspace.get("frequency_max"),
+        workspace.get("freq"),
+    ])
+    for value in candidates:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 0:
+            return numeric
+    return None
+
+
+def _sim_cycles_from_output(output: str) -> int | None:
+    matches = list(_SIM_CYCLE_RE.finditer(output))
+    if not matches:
+        return None
+    try:
+        return int(matches[-1].group(1))
+    except ValueError:
+        return None
+
+
+def _coremark_metrics(workspace: dict[str, Any], output: str, ok: bool) -> dict[str, Any]:
+    cycles = _sim_cycles_from_output(output)
+    frequency_mhz = _workspace_frequency_mhz(workspace)
+    metrics: dict[str, Any] = {
+        "benchmark": "CoreMark-style smoke",
+        "iterations": _COREMARK_ITERATIONS,
+        "expected_crc": _COREMARK_EXPECTED_CRC,
+        "cycles": cycles,
+        "frequency_mhz": frequency_mhz,
+    }
+    if not ok:
+        metrics["score_available"] = False
+        metrics["score_unavailable_reason"] = "simulation did not pass"
+        return metrics
+    if cycles is None or cycles <= 0:
+        metrics["score_available"] = False
+        metrics["score_unavailable_reason"] = "simulation cycle count not found"
+        return metrics
+
+    coremark_per_mhz = _COREMARK_ITERATIONS / cycles
+    metrics.update({
+        "score_available": True,
+        "cycles_per_iteration": cycles / _COREMARK_ITERATIONS,
+        "coremark_per_mhz": coremark_per_mhz,
+    })
+    if frequency_mhz is not None:
+        metrics["estimated_coremark_per_second"] = coremark_per_mhz * frequency_mhz * 1_000_000
+    return metrics
+
+
+def _case_terminal_output(
+    *,
+    suite: str,
+    case_name: str,
+    image: str,
+    returncode: int,
+    ok: bool,
+    validation: dict[str, Any],
+    metrics: dict[str, Any] | None,
+    wave: str,
+    output: str,
+) -> str:
+    status = "PASS" if ok else "FAIL"
+    lines = [
+        "ECOS Simulation Result",
+        "======================",
+        f"Suite       : {_suite_label(suite)}",
+        f"Case        : {case_name}",
+        f"Status      : {status}",
+        f"Return code : {returncode}",
+        f"Image       : {image or '-'}",
+        f"Wave        : {wave or '-'}",
+    ]
+    if _is_coremark_case(case_name, image):
+        lines.extend([
+            "",
+            "CoreMark",
+            "--------",
+            "Benchmark   : CoreMark-style smoke",
+            f"Expected CRC: {_COREMARK_EXPECTED_CRC}",
+            "Validation  : checked by the simulation program",
+        ])
+        if metrics:
+            lines.extend(_format_coremark_score_lines(metrics))
+    if validation.get("type") == "rtthread_terminal":
+        missing = validation.get("missing_markers", [])
+        lines.extend([
+            "",
+            "RT-Thread terminal validation",
+            "-----------------------------",
+            f"Required markers: {len(validation.get('required_markers', []))}",
+            f"Missing markers : {', '.join(missing) if missing else '-'}",
+        ])
+
+    body = output.strip()
+    lines.extend(["", "Program output", "--------------"])
+    if body:
+        lines.append(body)
+    else:
+        lines.append("(program produced no stdout/stderr)")
+    return "\n".join(lines) + "\n"
+
+
+def _format_coremark_score_lines(metrics: dict[str, Any]) -> list[str]:
+    lines = [
+        f"Iterations  : {int(metrics.get('iterations') or _COREMARK_ITERATIONS)}",
+        f"Cycles      : {_format_metric_value(metrics.get('cycles'))}",
+    ]
+    frequency_mhz = metrics.get("frequency_mhz")
+    if frequency_mhz is not None:
+        lines.append(f"Clock       : {_format_float(float(frequency_mhz), 3)} MHz")
+    if not metrics.get("score_available"):
+        reason = str(metrics.get("score_unavailable_reason") or "unknown")
+        lines.append(f"Score       : unavailable ({reason})")
+        return lines
+
+    lines.extend([
+        f"Cycles/iter : {_format_float(float(metrics.get('cycles_per_iteration') or 0), 3)}",
+        f"CoreMark/MHz: {_format_float(float(metrics.get('coremark_per_mhz') or 0), 9)}",
+    ])
+    estimated = metrics.get("estimated_coremark_per_second")
+    if estimated is not None:
+        lines.append(f"CoreMark/s  : {_format_float(float(estimated), 3)}")
+    return lines
+
+
+def _format_metric_value(value: Any) -> str:
+    if value is None:
+        return "unavailable"
+    return str(value)
+
+
+def _format_float(value: float, precision: int) -> str:
+    text = f"{value:.{precision}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _image_from_run_args(args: list[str]) -> str:
@@ -398,6 +590,12 @@ def _apply_wave_arg(args: list[str], default_wave: Path) -> tuple[list[str], str
         return list(args), explicit
     wave = str(default_wave.expanduser().resolve())
     return [*args, "--wave", wave], wave
+
+
+def _apply_case_wave_arg(case_name: str, image: str, args: list[str], default_wave: Path) -> tuple[list[str], str]:
+    if _is_coremark_case(case_name, image) and not _wave_from_run_args(args):
+        return list(args), ""
+    return _apply_wave_arg(args, default_wave)
 
 
 def _run_tag() -> str:
@@ -434,6 +632,8 @@ def _program_sources_to_build(workspace: dict[str, Any]) -> list[Path]:
 
     if workspace.get("sim_build_all_programs"):
         for source in sorted(programs_dir.glob("*.c")):
+            if source.stem in _BENCHMARK_PROGRAM_NAMES:
+                continue
             add_source(source)
 
     names = [str(x).strip() for x in workspace.get("sim_program_names", []) or [] if str(x).strip()]
@@ -1210,7 +1410,9 @@ class VerilatorSimStep(BaseStep):
             case_name = str(case["name"])
             image = str(case["image"])
             logs = _case_logs(case_root, run_case_root, output_cases_root, case_name)
-            run_args, wave = _apply_wave_arg(
+            run_args, wave = _apply_case_wave_arg(
+                case_name,
+                image,
                 list(case["args"]),
                 logs["output_dir"] / "wave.vcd",
             )
@@ -1224,9 +1426,21 @@ class VerilatorSimStep(BaseStep):
                     stream_output=case_name == "rtthread.soc",
                 )
 
-            for log_path in (logs["latest_log"], logs["run_log"], logs["output_log"]):
-                log_path.write_text(output, encoding="utf-8")
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
+            metrics = _coremark_metrics(workspace, output, case_ok) if _is_coremark_case(case_name, image) else {}
+            terminal_output = _case_terminal_output(
+                suite=suite,
+                case_name=case_name,
+                image=image,
+                returncode=rc,
+                ok=case_ok,
+                validation=validation,
+                metrics=metrics,
+                wave=wave,
+                output=output,
+            )
+            for log_path in (logs["latest_log"], logs["run_log"], logs["output_log"]):
+                log_path.write_text(terminal_output, encoding="utf-8")
             if not case_ok:
                 all_ok = False
                 failed_cases.append(case_name)
@@ -1246,9 +1460,11 @@ class VerilatorSimStep(BaseStep):
             }
             if validation:
                 case_report["validation"] = validation
+            if metrics:
+                case_report["metrics"] = metrics
             cases_report.append(case_report)
             summary_lines.append(
-                f"[{case_name}] rc={rc} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
+                f"[{case_name}] status={'PASS' if case_ok else 'FAIL'} rc={rc} suite={suite} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
             )
 
         summary_text = "\n".join(summary_lines) + "\n"

@@ -15,7 +15,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "directory": "fecompiler/thirdparty/femtorv-mini-soc",
   "tags": [
@@ -23,6 +24,7 @@
     "femtorv",
     "minimal",
     "cpu-tests",
-    "local"
+    "local",
+    "coremark"
   ]
 }

@@ -228,5 +228,6 @@ int main(int argc, char **argv, char **) {
     std::cerr << "[soc-sim] timeout after " << cycles << " cycles\n";
     return args.timeout_ok ? 0 : 1;
   }
+  std::cerr << "[soc-sim] finish after " << cycles << " cycles\n";
   return 0;
 }

@@ -12,9 +12,9 @@
     "wrapper_top": "ecos_sim_top",
     "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "supports_difftest": true,
-    "supported_test_suites": ["smoke", "cpu-tests", "rtthread"],
+    "supported_test_suites": ["smoke", "cpu-tests", "rtthread", "coremark"],
     "directory": "fecompiler/thirdparty/SoC",
-    "tags": ["default", "cpu-tests", "rtthread"]
+    "tags": ["default", "cpu-tests", "rtthread", "coremark"]
   },
   {
     "id": "ysyx-am-soc-alt",
@@ -29,9 +29,9 @@
     "wrapper_top": "ecos_sim_top",
     "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "supports_difftest": true,
-    "supported_test_suites": ["smoke", "cpu-tests"],
+    "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
     "directory": "fecompiler/thirdparty/SoC2",
-    "tags": ["compatibility", "cpu-tests"]
+    "tags": ["compatibility", "cpu-tests", "coremark"]
   },
   {
     "id": "ysyx-am-soc-extended",
@@ -46,9 +46,9 @@
     "wrapper_top": "ecos_sim_top",
     "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "supports_difftest": true,
-    "supported_test_suites": ["smoke", "cpu-tests"],
+    "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
     "directory": "fecompiler/thirdparty/SoC3",
-    "tags": ["compatibility", "cpu-tests"]
+    "tags": ["compatibility", "cpu-tests", "coremark"]
   },
   {
     "id": "minimal-riscv-soc",
@@ -63,8 +63,8 @@
     "wrapper_top": "ecos_sim_top",
     "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
     "supports_difftest": false,
-    "supported_test_suites": ["smoke", "cpu-tests"],
+    "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
     "directory": "fecompiler/thirdparty/minimal-riscv-soc",
-    "tags": ["test-harness", "minimal", "cpu-tests", "local"]
+    "tags": ["test-harness", "minimal", "cpu-tests", "local", "coremark"]
   }
 ]

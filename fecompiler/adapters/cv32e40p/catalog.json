@@ -20,7 +20,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "cpu-tests",
-    "smoke"
+    "smoke",
+    "coremark"
   ],
   "license": "Apache-2.0 WITH SHL-2.1",
   "repository": "https://github.com/openhwgroup/cv32e40p",

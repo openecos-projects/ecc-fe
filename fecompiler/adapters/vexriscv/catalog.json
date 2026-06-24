@@ -21,7 +21,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "cpu-tests",
-    "smoke"
+    "smoke",
+    "coremark"
   ],
   "license": "MIT",
   "repository": "https://github.com/SpinalHDL/VexRiscv",

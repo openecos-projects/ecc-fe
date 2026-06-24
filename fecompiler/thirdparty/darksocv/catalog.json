@@ -16,7 +16,8 @@
   "supports_difftest": false,
   "supported_test_suites": [
     "smoke",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ],
   "license": "BSD-3-Clause",
   "repository": "https://github.com/darklife/darkriscv",
@@ -26,6 +27,7 @@
     "darkriscv",
     "profile",
     "sim-ready",
-    "cpu-tests"
+    "cpu-tests",
+    "coremark"
   ]
 }
