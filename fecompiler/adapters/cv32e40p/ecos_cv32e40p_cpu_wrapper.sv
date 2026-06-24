@@ -118,6 +118,7 @@ module ecos_cv32e40p_cpu_wrapper (
   wire        data_req;
   wire        data_gnt;
   reg         data_rvalid_q;
+  reg         local_write_resp_q;
   wire        data_we;
   wire [3:0]  data_be;
   wire [31:0] data_addr;
@@ -137,10 +138,13 @@ module ecos_cv32e40p_cpu_wrapper (
   wire                              core_sleep;
 
   wire data_write_req = data_req && data_we;
-  wire local_uart_write =
+  wire local_uart_write_req =
       (state_q == ST_IDLE) && data_write_req && (data_addr == UART_ADDR);
-  wire local_halt_write =
+  wire local_halt_write_req =
       (state_q == ST_IDLE) && data_write_req && (data_addr == HALT_ADDR);
+  wire local_write_req = local_uart_write_req || local_halt_write_req;
+  wire local_uart_write = local_uart_write_req && !local_write_resp_q;
+  wire local_halt_write = local_halt_write_req && !local_write_resp_q;
   wire local_write = local_uart_write || local_halt_write;
   wire aw_fire = io_master_awvalid && io_master_awready;
   wire w_fire = io_master_wvalid && io_master_wready;
@@ -186,7 +190,7 @@ module ecos_cv32e40p_cpu_wrapper (
     .instr_rdata_i     (instr_rdata_q),
     .data_req_o        (data_req),
     .data_gnt_i        (data_gnt),
-    .data_rvalid_i     (data_rvalid_q || local_write),
+    .data_rvalid_i     (data_rvalid_q || local_write_resp_q),
     .data_we_o         (data_we),
     .data_be_o         (data_be),
     .data_addr_o       (data_addr),
@@ -212,8 +216,8 @@ module ecos_cv32e40p_cpu_wrapper (
     .core_sleep_o      (core_sleep)
   );
 
-  assign data_gnt = (state_q == ST_IDLE) && data_req;
-  assign instr_gnt = (state_q == ST_IDLE) && !data_req && instr_req;
+  assign data_gnt = (state_q == ST_IDLE) && data_req && !local_write_resp_q;
+  assign instr_gnt = (state_q == ST_IDLE) && !data_req && instr_req && !local_write_resp_q;
 
   assign io_master_awvalid = (state_q == ST_WRITE_ADDR_DATA) && !aw_done_q;
   assign io_master_awaddr = axi_addr_q;
@@ -270,19 +274,23 @@ module ecos_cv32e40p_cpu_wrapper (
       instr_rvalid_q <= 1'b0;
       instr_rdata_q <= 32'b0;
       data_rvalid_q <= 1'b0;
+      local_write_resp_q <= 1'b0;
       data_rdata_q <= 32'b0;
     end else begin
       instr_rvalid_q <= 1'b0;
       data_rvalid_q <= 1'b0;
+      local_write_resp_q <= 1'b0;
 
       if (local_uart_write) begin
 `ifndef SYNTHESIS
         $write("%c", wstrb_byte(data_wdata, data_be));
         $fflush();
 `endif
+        local_write_resp_q <= 1'b1;
       end
 
       if (local_halt_write) begin
+        local_write_resp_q <= 1'b1;
 `ifndef SYNTHESIS
         if (data_wdata == 32'b0) begin
           $display("HIT GOOD TRAP");
@@ -297,7 +305,7 @@ module ecos_cv32e40p_cpu_wrapper (
         ST_IDLE: begin
           aw_done_q <= 1'b0;
           w_done_q <= 1'b0;
-          if (!local_write) begin
+          if (!local_write_req && !local_write_resp_q) begin
             if (data_req) begin
               serving_data_q <= 1'b1;
               axi_addr_q <= {data_addr[31:2], 2'b00};

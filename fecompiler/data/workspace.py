@@ -21,10 +21,17 @@ _LIST_PARAMETER_FIELDS = (
     "sim_images",
     "sim_program_names",
     "sim_program_sources",
+    "sim_compile_extra_cflags",
     "core_supported_test_suites",
     "soc_supported_test_suites",
 )
-_BOOL_PARAMETER_FIELDS = ("sim_all_tests", "sim_build_all_programs", "cpu_supports_difftest", "soc_supports_difftest")
+_BOOL_PARAMETER_FIELDS = (
+    "sim_all_tests",
+    "sim_build_all_programs",
+    "cpu_supports_difftest",
+    "soc_supports_difftest",
+    "sim_coremark_has_float",
+)
 _STR_PARAMETER_FIELDS = (
     "cpu_filelist",
     "cpu_adapter_filelist",
@@ -37,6 +44,12 @@ _STR_PARAMETER_FIELDS = (
     "sim_soc_root",
     "sim_build_test_script",
     "sim_program_link_base",
+    "sim_compile_preset",
+    "sim_compile_opt_level",
+    "sim_compile_march",
+    "sim_compile_mabi",
+    "sim_coremark_iterations",
+    "sim_coremark_total_data_size",
     "soc_variant",
     "soc_wrapper_id",
     "soc_wrapper_contract",
@@ -59,6 +72,12 @@ _PARAMETER_OVERRIDE_FIELDS = (
     "sim_soc_root",
     "sim_build_test_script",
     "sim_program_link_base",
+    "sim_compile_preset",
+    "sim_compile_opt_level",
+    "sim_compile_march",
+    "sim_compile_mabi",
+    "sim_coremark_iterations",
+    "sim_coremark_total_data_size",
 )
 
 
@@ -133,6 +152,14 @@ class CreateWorkspaceData:
     sim_soc_root: str = ""
     sim_build_test_script: str = ""
     sim_program_link_base: str = ""
+    sim_compile_preset: str = ""
+    sim_compile_opt_level: str = ""
+    sim_compile_march: str = ""
+    sim_compile_mabi: str = ""
+    sim_compile_extra_cflags: list[str] = field(default_factory=list)
+    sim_coremark_iterations: str = ""
+    sim_coremark_total_data_size: str = ""
+    sim_coremark_has_float: bool = False
     rtl_list: list[str] = field(default_factory=list)
 
     @property
@@ -254,6 +281,14 @@ def build_parameter_overrides(
     sim_soc_root: str = "",
     sim_build_test_script: str = "",
     sim_program_link_base: str = "",
+    sim_compile_preset: str = "",
+    sim_compile_opt_level: str = "",
+    sim_compile_march: str = "",
+    sim_compile_mabi: str = "",
+    sim_compile_extra_cflags: list[str] | None = None,
+    sim_coremark_iterations: str = "",
+    sim_coremark_total_data_size: str = "",
+    sim_coremark_has_float: bool = False,
 ) -> dict[str, Any]:
     """Normalize runtime option fields into parameters/home schema."""
     updates: dict[str, Any] = {}
@@ -275,11 +310,25 @@ def build_parameter_overrides(
 
     if sim_program_link_base:
         updates["sim_program_link_base"] = str(sim_program_link_base).strip()
+    for field in (
+        "sim_compile_preset",
+        "sim_compile_opt_level",
+        "sim_compile_march",
+        "sim_compile_mabi",
+        "sim_coremark_iterations",
+        "sim_coremark_total_data_size",
+    ):
+        if values[field]:
+            updates[field] = str(values[field]).strip()
 
     for field in ("sim_cpp_sources", "sim_images", "sim_program_sources"):
         resolved = _resolve_param_paths(values[field])
         if resolved:
             updates[field] = resolved
+
+    extra_cflags = _clean_str_list(sim_compile_extra_cflags)
+    if extra_cflags:
+        updates["sim_compile_extra_cflags"] = extra_cflags
 
     for field in (
         "sim_cflags",

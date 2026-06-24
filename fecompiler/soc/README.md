@@ -47,21 +47,21 @@ Example:
 
 ```json
 {
-  "id": "minimal-riscv-soc",
-  "name": "ECOS Minimal CPU Test Harness",
-  "variant": "minimal-riscv",
+  "id": "ysyx-am-soc",
+  "name": "YSYX AM SoC Harness",
+  "variant": "soc1",
   "top_module": "ecos_sim_top",
   "sim_ready": true,
   "contract": "ecos-sim-wrapper-v1",
   "soc_filelist": "filelist.soc.f",
-  "testbench": "../SoC/driver/main.cpp",
-  "sim_cpp_sources": ["../SoC/driver/dpi_mem.cpp", "../SoC/driver/difftest_stub.cpp"],
-  "sim_cflags": ["-I{soc_root}/../SoC"],
-  "sim_ldflags": [],
-  "sim_programs_dir": "../SoC/tests/programs",
-  "sim_tests_dir": "../SoC/tests/out",
-  "sim_build_test_script": "../SoC/scripts/build_test.sh",
-  "supports_difftest": false
+  "testbench": "driver/main.cpp",
+  "sim_cpp_sources": ["driver/dpi_mem.cpp", "driver/difftest.cpp"],
+  "sim_cflags": ["-I{soc_root}"],
+  "sim_ldflags": ["-ldl"],
+  "sim_programs_dir": "tests/programs",
+  "sim_tests_dir": "tests/out",
+  "sim_build_test_script": "scripts/build_test.sh",
+  "supports_difftest": true
 }
 ```
 

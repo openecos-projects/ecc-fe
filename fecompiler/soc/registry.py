@@ -19,20 +19,14 @@ DEFAULT_SOC_WRAPPER_ID = "ysyx-am-soc"
 
 _LEGACY_WRAPPER_DIRS = {
     "ysyx-am-soc": "SoC",
-    "ysyx-am-soc-alt": "SoC2",
-    "ysyx-am-soc-extended": "SoC3",
 }
 
 _LEGACY_WRAPPER_VARIANTS = {
     "ysyx-am-soc": "soc1",
-    "ysyx-am-soc-alt": "soc2",
-    "ysyx-am-soc-extended": "soc3",
 }
 
 _LEGACY_WRAPPER_NAMES = {
     "ysyx-am-soc": "YSYX AM SoC Harness",
-    "ysyx-am-soc-alt": "YSYX AM SoC Harness Alt",
-    "ysyx-am-soc-extended": "YSYX AM SoC Harness Extended",
 }
 
 
@@ -109,9 +103,14 @@ def _normalize_soc_wrapper_id(value: str) -> str:
     text = value.strip()
     variant_map = {
         "": DEFAULT_SOC_WRAPPER_ID,
+        "SoC": "ysyx-am-soc",
+        "SoC2": "ysyx-am-soc",
+        "SoC3": "ysyx-am-soc",
         "soc1": "ysyx-am-soc",
-        "soc2": "ysyx-am-soc-alt",
-        "soc3": "ysyx-am-soc-extended",
+        "soc2": "ysyx-am-soc",
+        "soc3": "ysyx-am-soc",
+        "ysyx-am-soc-alt": "ysyx-am-soc",
+        "ysyx-am-soc-extended": "ysyx-am-soc",
     }
     return variant_map.get(text, text)
 

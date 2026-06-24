@@ -25,7 +25,7 @@ def _compatibility_by_pair() -> dict[tuple[str, str], dict]:
 def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
     payload = catalog_payload()
     assert len(payload["cores"]) == 10
-    assert len(payload["soc_harnesses"]) == 12
+    assert [item["id"] for item in payload["soc_harnesses"]] == ["ysyx-am-soc"]
     assert len(payload["compatibility"]) == len(payload["cores"]) * len(payload["soc_harnesses"])
 
 
@@ -39,7 +39,7 @@ def test_stable_custom_filelist_combination_supports_rtthread():
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
-    item = _compatibility_by_pair()[("picorv32", "minimal-riscv-soc")]
+    item = _compatibility_by_pair()[("picorv32", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
@@ -52,7 +52,7 @@ def test_selected_catalog_cpu_keeps_user_filelist_and_adds_adapter_filelist(tmp_
 
     result = validate_frontend_config({
         "core_id": "picorv32",
-        "soc_harness_id": "minimal-riscv-soc",
+        "soc_harness_id": "ysyx-am-soc",
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
         "cpu_filelist": str(user_filelist),
@@ -69,7 +69,7 @@ def test_selected_catalog_cpu_rejects_missing_user_filelist(tmp_path):
 
     result = validate_frontend_config({
         "core_id": "picorv32",
-        "soc_harness_id": "minimal-riscv-soc",
+        "soc_harness_id": "ysyx-am-soc",
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
         "cpu_filelist": str(missing),
@@ -80,7 +80,7 @@ def test_selected_catalog_cpu_rejects_missing_user_filelist(tmp_path):
 
 
 def test_darkriscv_adapter_is_not_marked_cpu_test_ready_until_sim_handshake_is_fixed():
-    item = _compatibility_by_pair()[("darkriscv", "minimal-riscv-soc")]
+    item = _compatibility_by_pair()[("darkriscv", "ysyx-am-soc")]
     assert item["can_create_workspace"] is False
     assert item["support_level"] == "unsupported"
     assert item["status"] == "needs_cpu_adapter"
@@ -88,7 +88,7 @@ def test_darkriscv_adapter_is_not_marked_cpu_test_ready_until_sim_handshake_is_f
 
     result = validate_frontend_config({
         "core_id": "darkriscv",
-        "soc_harness_id": "minimal-riscv-soc",
+        "soc_harness_id": "ysyx-am-soc",
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
     })
@@ -104,7 +104,7 @@ def test_darkriscv_adapter_is_not_marked_cpu_test_ready_until_sim_handshake_is_f
 def test_darkriscv_legacy_workspace_does_not_inherit_soc_cpu_tests():
     workspace = {
         "cpu_wrapper_id": "darkriscv",
-        "soc_wrapper_id": "minimal-riscv-soc",
+        "soc_wrapper_id": "ysyx-am-soc",
     }
 
     assert _workspace_supported_test_suites(workspace) == []
@@ -114,7 +114,7 @@ def test_darkriscv_legacy_workspace_does_not_inherit_soc_cpu_tests():
 
 def test_cva6_adapter_can_create_basic_cpu_test_workspace():
     matrix = _compatibility_by_pair()
-    item = matrix[("cva6", "minimal-riscv-soc")]
+    item = matrix[("cva6", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
@@ -122,7 +122,7 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
 
     result = validate_frontend_config({
         "core_id": "cva6",
-        "soc_harness_id": "minimal-riscv-soc",
+        "soc_harness_id": "ysyx-am-soc",
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
     })
@@ -133,7 +133,7 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
 
 
 def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
-    item = _compatibility_by_pair()[("vexriscv", "minimal-riscv-soc")]
+    item = _compatibility_by_pair()[("vexriscv", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "experimental"
     assert item["status"] == "experimental"
@@ -141,7 +141,7 @@ def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
 
     result = validate_frontend_config({
         "core_id": "vexriscv",
-        "soc_harness_id": "minimal-riscv-soc",
+        "soc_harness_id": "ysyx-am-soc",
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
     })
@@ -151,9 +151,14 @@ def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
     assert result.normalized["cpu_wrapper_top"] == "ecos_vexriscv_cpu_wrapper"
 
 
-def test_open_soc_profiles_are_cpu_test_ready_without_rtthread():
+def test_removed_placeholder_soc_profiles_are_not_exposed():
     payload = catalog_payload()
-    profile_ids = {
+    removed_ids = {
+        "ysyx-am-soc-alt",
+        "ysyx-am-soc-extended",
+        "minimal-riscv-soc",
+        "corev-mini-soc",
+        "femtorv-mini-soc",
         "darksocv",
         "ibex-demo-system",
         "litex-vexriscv-soc",
@@ -161,22 +166,10 @@ def test_open_soc_profiles_are_cpu_test_ready_without_rtthread():
         "opentitan-earlgrey",
         "swervolf",
     }
-    profiles = {
-        str(item["id"]): item
-        for item in payload["soc_harnesses"]
-        if str(item["id"]) in profile_ids
-    }
+    exposed_ids = {str(item["id"]) for item in payload["soc_harnesses"]}
 
-    assert set(profiles) == profile_ids
-    for item in profiles.values():
-        assert item["integration_level"] == "sim_ready"
-        assert item["status"] == "experimental"
-        assert item["supports_difftest"] is False
-        assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
-
-        pair = _compatibility_by_pair()[("picorv32", str(item["id"]))]
-        assert pair["can_create_workspace"] is True
-        assert pair["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
+    assert exposed_ids == {"ysyx-am-soc"}
+    assert not (removed_ids & exposed_ids)
 
 
 def test_validate_rejects_rtthread_for_non_difftest_experimental_core():

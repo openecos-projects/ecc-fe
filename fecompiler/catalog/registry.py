@@ -311,9 +311,14 @@ def _read_id(config: dict[str, Any], field: str, fallback: str) -> str:
 
 def _normalize_soc_id(value: str) -> str:
     variant_map = {
+        "SoC": "ysyx-am-soc",
+        "SoC2": "ysyx-am-soc",
+        "SoC3": "ysyx-am-soc",
         "soc1": "ysyx-am-soc",
-        "soc2": "ysyx-am-soc-alt",
-        "soc3": "ysyx-am-soc-extended",
+        "soc2": "ysyx-am-soc",
+        "soc3": "ysyx-am-soc",
+        "ysyx-am-soc-alt": "ysyx-am-soc",
+        "ysyx-am-soc-extended": "ysyx-am-soc",
     }
     return variant_map.get(value, value)
 

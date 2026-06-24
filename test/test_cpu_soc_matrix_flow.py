@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""3x3 CPU+SoC matrix integration flow tests using fixed source variants."""
+"""CPU variant integration flow tests using the single shipped real SoC."""
 
 from __future__ import annotations
 
@@ -23,12 +23,10 @@ CPU_VARIANTS = [
 ]
 SOC_VARIANTS = [
     REPO_ROOT / "fecompiler/thirdparty/SoC",
-    REPO_ROOT / "fecompiler/thirdparty/SoC2",
-    REPO_ROOT / "fecompiler/thirdparty/SoC3",
 ]
 
-CPU_VARIANT_COUNT = 3
-SOC_VARIANT_COUNT = 3
+CPU_VARIANT_COUNT = len(CPU_VARIANTS)
+SOC_VARIANT_COUNT = len(SOC_VARIANTS)
 SIM_MAX_CYCLES = "50000000"
 RTTHREAD_SIM_MAX_CYCLES = "10000000"
 DEFAULT_AM_HOME = Path("/home/luyoung/ysyx-workbench/abstract-machine")

@@ -42,6 +42,13 @@ except ImportError:
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add"]
 DEFAULT_FRONTEND_COREMARK_CASES = ["coremark"]
+DEFAULT_COREMARK_COMPILE_PRESET = "balanced"
+DEFAULT_COREMARK_OPT_LEVEL = "-O2"
+DEFAULT_COREMARK_MARCH = "rv32im_zicsr"
+DEFAULT_COREMARK_MABI = "ilp32"
+DEFAULT_COREMARK_ITERATIONS = 128
+DEFAULT_COREMARK_TOTAL_DATA_SIZE = 2000
+DEFAULT_COREMARK_HAS_FLOAT = True
 CLI_LOG_TAIL_BYTES = 24 * 1024
 DIFFTEST_SOURCE_NAME = "difftest.cpp"
 DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
@@ -156,6 +163,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_step.add_argument("--sim-test-suite", default="")
     run_step.add_argument("--sim-cpu-test-mode", default="selected")
     run_step.add_argument("--sim-cpu-test-case", action="append", default=[])
+    run_step.add_argument("--sim-compile-preset", default="")
+    run_step.add_argument("--sim-compile-opt-level", default="")
+    run_step.add_argument("--sim-compile-march", default="")
+    run_step.add_argument("--sim-compile-mabi", default="")
+    run_step.add_argument("--sim-compile-extra-cflag", action="append", default=[])
+    run_step.add_argument("--sim-coremark-iterations", type=int, default=None)
+    run_step.add_argument("--sim-coremark-total-data-size", type=int, default=None)
+    run_step.add_argument("--sim-coremark-has-float", default="")
 
     get_info = subparsers.add_parser("get-info", help="Get step information")
     _add_json_flag(get_info)
@@ -390,6 +405,14 @@ def _create(args: argparse.Namespace) -> CliResult:
         sim_soc_root=str(normalized.get("sim_soc_root", "")),
         sim_build_test_script=str(normalized.get("sim_build_test_script", "")),
         sim_program_link_base=str(normalized.get("sim_program_link_base", "")),
+        sim_compile_preset=str(normalized.get("sim_compile_preset", "")),
+        sim_compile_opt_level=str(normalized.get("sim_compile_opt_level", "")),
+        sim_compile_march=str(normalized.get("sim_compile_march", "")),
+        sim_compile_mabi=str(normalized.get("sim_compile_mabi", "")),
+        sim_compile_extra_cflags=_normalize_str_list(normalized.get("sim_compile_extra_cflags", [])),
+        sim_coremark_iterations=str(normalized.get("sim_coremark_iterations", "")),
+        sim_coremark_total_data_size=str(normalized.get("sim_coremark_total_data_size", "")),
+        sim_coremark_has_float=_normalize_bool(normalized.get("sim_coremark_has_float", False)),
         rtl_list=_normalize_str_list(normalized.get("rtl_list", [])),
     )
     workspace = create_workspace(spec)
@@ -531,6 +554,8 @@ def _run_step(args: argparse.Namespace) -> CliResult:
                 args.sim_cpu_test_mode,
                 args.sim_cpu_test_case,
             )
+            if suite_name.lower() == "coremark":
+                _apply_coremark_compile_options(workspace, args)
             force_rerun = True
         else:
             _apply_default_sim_smoke_suite(workspace)
@@ -685,6 +710,12 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("sim_tests_out_dir", "sim_tests_out_dir"),
         ("sim_soc_root", "sim_soc_root"),
         ("sim_build_test_script", "sim_build_test_script"),
+        ("sim_compile_preset", "sim_compile_preset"),
+        ("sim_compile_opt_level", "sim_compile_opt_level"),
+        ("sim_compile_march", "sim_compile_march"),
+        ("sim_compile_mabi", "sim_compile_mabi"),
+        ("sim_coremark_iterations", "sim_coremark_iterations"),
+        ("sim_coremark_total_data_size", "sim_coremark_total_data_size"),
         ("core_id", "core_id"),
         ("soc_variant", "soc_variant"),
         ("soc_harness_id", "soc_harness_id"),
@@ -701,6 +732,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         "sim_images": getattr(args, "sim_image", []),
         "sim_program_names": getattr(args, "sim_program", []),
         "sim_program_sources": getattr(args, "sim_program_source", []),
+        "sim_compile_extra_cflags": getattr(args, "sim_compile_extra_cflag", []),
         "rtl_list": getattr(args, "rtl", []),
     }
     for field, values in list_fields.items():
@@ -1136,11 +1168,27 @@ def _explicit_soc_root(data: dict[str, Any]) -> Path | None:
 
 def _soc_wrapper_id_from_root(root: Path) -> str:
     name = root.name
-    if name == "SoC2":
-        return "ysyx-am-soc-alt"
-    if name == "SoC3":
-        return "ysyx-am-soc-extended"
     return "ysyx-am-soc"
+
+
+def _normalize_workspace_soc_id(value: Any) -> str:
+    text = str(value or "").strip()
+    alias_map = {
+        "": "",
+        "SoC": "ysyx-am-soc",
+        "SoC2": "ysyx-am-soc",
+        "SoC3": "ysyx-am-soc",
+        "soc1": "ysyx-am-soc",
+        "soc2": "ysyx-am-soc",
+        "soc3": "ysyx-am-soc",
+        "ysyx-am-soc-alt": "ysyx-am-soc",
+        "ysyx-am-soc-extended": "ysyx-am-soc",
+    }
+    return alias_map.get(text, text)
+
+
+def _workspace_soc_id(workspace: dict[str, Any]) -> str:
+    return _normalize_workspace_soc_id(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "")
 
 
 def _apply_sim_test_suite(
@@ -1196,9 +1244,60 @@ def _apply_sim_test_suite(
             "sim_build_all_programs": False,
             "sim_program_names": list(DEFAULT_FRONTEND_COREMARK_CASES),
             "sim_run_args": _default_coremark_run_args(workspace),
+            **_default_coremark_compile_settings(workspace),
         }
     else:
         raise WorkspaceCliError("run_step", "failed", f"unknown frontend sim test suite: {suite_name}")
+
+    _update_workspace_parameters(workspace, updates)
+
+
+def _default_coremark_compile_settings(workspace: dict[str, Any] | None = None) -> dict[str, Any]:
+    source = workspace or {}
+    return {
+        "sim_compile_preset": _first_text(source.get("sim_compile_preset"), DEFAULT_COREMARK_COMPILE_PRESET),
+        "sim_compile_opt_level": _first_text(source.get("sim_compile_opt_level"), DEFAULT_COREMARK_OPT_LEVEL),
+        "sim_compile_march": _first_text(source.get("sim_compile_march"), DEFAULT_COREMARK_MARCH),
+        "sim_compile_mabi": _first_text(source.get("sim_compile_mabi"), DEFAULT_COREMARK_MABI),
+        "sim_compile_extra_cflags": _normalize_str_list(source.get("sim_compile_extra_cflags", [])),
+        "sim_coremark_iterations": _positive_int(source.get("sim_coremark_iterations"), DEFAULT_COREMARK_ITERATIONS),
+        "sim_coremark_total_data_size": _positive_int(
+            source.get("sim_coremark_total_data_size"),
+            DEFAULT_COREMARK_TOTAL_DATA_SIZE,
+        ),
+        "sim_coremark_has_float": _normalize_bool(
+            source.get("sim_coremark_has_float", DEFAULT_COREMARK_HAS_FLOAT),
+        ),
+    }
+
+
+def _apply_coremark_compile_options(workspace: dict[str, Any], args: argparse.Namespace) -> None:
+    updates = _default_coremark_compile_settings(workspace)
+    for attr, field in (
+        ("sim_compile_preset", "sim_compile_preset"),
+        ("sim_compile_opt_level", "sim_compile_opt_level"),
+        ("sim_compile_march", "sim_compile_march"),
+        ("sim_compile_mabi", "sim_compile_mabi"),
+    ):
+        value = str(getattr(args, attr, "") or "").strip()
+        if value:
+            updates[field] = value
+
+    extra = _normalize_str_list(getattr(args, "sim_compile_extra_cflag", []))
+    if extra:
+        updates["sim_compile_extra_cflags"] = extra
+
+    iterations = getattr(args, "sim_coremark_iterations", None)
+    if iterations is not None:
+        updates["sim_coremark_iterations"] = _positive_int(iterations, DEFAULT_COREMARK_ITERATIONS)
+
+    data_size = getattr(args, "sim_coremark_total_data_size", None)
+    if data_size is not None:
+        updates["sim_coremark_total_data_size"] = _positive_int(data_size, DEFAULT_COREMARK_TOTAL_DATA_SIZE)
+
+    has_float = str(getattr(args, "sim_coremark_has_float", "") or "").strip()
+    if has_float:
+        updates["sim_coremark_has_float"] = _normalize_bool(has_float)
 
     _update_workspace_parameters(workspace, updates)
 
@@ -1417,17 +1516,8 @@ def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool,
 
 
 def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
-    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
-    return bool(
-        soc_id in {
-            "ysyx-am-soc",
-            "ysyx-am-soc-alt",
-            "ysyx-am-soc-extended",
-            "minimal-riscv-soc",
-            "corev-mini-soc",
-            "femtorv-mini-soc",
-        }
-    ), _fallback_soc_supported_test_suites(workspace)
+    soc_id = _workspace_soc_id(workspace)
+    return soc_id == "ysyx-am-soc", _fallback_soc_supported_test_suites(workspace)
 
 
 def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
@@ -1440,17 +1530,9 @@ def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]
 
 
 def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
-    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
+    soc_id = _workspace_soc_id(workspace)
     if soc_id == "ysyx-am-soc":
         return ["smoke", "cpu-tests", "rtthread", "coremark"]
-    if soc_id in {
-        "ysyx-am-soc-alt",
-        "ysyx-am-soc-extended",
-        "minimal-riscv-soc",
-        "corev-mini-soc",
-        "femtorv-mini-soc",
-    }:
-        return ["smoke", "cpu-tests", "coremark"]
     return []
 
 
@@ -1468,9 +1550,6 @@ def _soc_supports_difftest(workspace: dict[str, Any]) -> bool:
     raw = workspace.get("soc_supports_difftest")
     if raw is not None:
         return _normalize_bool(raw)
-    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "").strip()
-    if soc_id in {"minimal-riscv-soc", "corev-mini-soc", "femtorv-mini-soc"}:
-        return False
     return True
 
 
@@ -1486,9 +1565,7 @@ def _workspace_core_label(workspace: dict[str, Any]) -> str:
 
 
 def _workspace_soc_label(workspace: dict[str, Any]) -> str:
-    soc_id = str(workspace.get("soc_wrapper_id") or workspace.get("soc_harness_id") or "selected SoC").strip()
-    if soc_id == "minimal-riscv-soc":
-        return "Minimal RISC-V SoC"
+    soc_id = _workspace_soc_id(workspace) or "selected SoC"
     if soc_id.startswith("ysyx-am-soc"):
         return "YSYX AM SoC"
     return soc_id or "selected SoC"
@@ -2462,6 +2539,14 @@ def _normalize_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _command_to_cmd(command: str) -> str:

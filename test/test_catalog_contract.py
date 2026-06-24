@@ -23,10 +23,10 @@ def test_sim_ready_catalog_entries_have_adapter_collateral():
 
     assert result.ok is True
     assert result.counts["cpu_total"] == 10
-    assert result.counts["soc_total"] == 12
+    assert result.counts["soc_total"] == 1
     assert result.counts["sim_ready_cpu"] == 9
-    assert result.counts["sim_ready_soc"] == 12
-    assert result.counts["creatable_pairs"] == 108
+    assert result.counts["sim_ready_soc"] == 1
+    assert result.counts["creatable_pairs"] == 9
     assert result.issues == []
 
 
@@ -38,7 +38,19 @@ def test_workspace_catalog_check_cli_returns_contract_summary(capsys):
     assert response["response"] == "success"
     assert response["data"]["ok"] is True
     assert response["data"]["counts"]["sim_ready_cpu"] == 9
-    assert response["data"]["counts"]["sim_ready_soc"] == 12
+    assert response["data"]["counts"]["sim_ready_soc"] == 1
+
+
+def test_obi_cpu_wrappers_register_local_mmio_write_response():
+    root = Path(__file__).resolve().parent.parent
+    for rel in (
+        "fecompiler/adapters/ibex/ecos_ibex_cpu_wrapper.sv",
+        "fecompiler/adapters/cv32e40p/ecos_cv32e40p_cpu_wrapper.sv",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "reg         local_write_resp_q;" in text
+        assert "data_rvalid_q || local_write_resp_q" in text
+        assert "data_rvalid_q || local_write)" not in text
 
 
 def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
@@ -49,7 +61,7 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
         if item.get("can_create_workspace") and "cpu-tests" in item.get("supported_test_suites", [])
     ]
 
-    assert len(creatable) == 108
+    assert len(creatable) == 9
 
     failures: list[str] = []
     for item in creatable:

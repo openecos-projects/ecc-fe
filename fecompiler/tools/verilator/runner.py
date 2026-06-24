@@ -46,11 +46,27 @@ _WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.p
 _BENCHMARK_PROGRAM_NAMES = {"coremark"}
 _COREMARK_EXPECTED_CRC = "0x3df51153"
 _COREMARK_ITERATIONS = 128
+_COREMARK_DEFAULT_TOTAL_DATA_SIZE = 2000
+_COREMARK_DEFAULT_HAS_FLOAT = True
+_COREMARK_COMPILE_PRESETS = {
+    "debug": "-O0",
+    "balanced": "-O2",
+    "speed": "-O3",
+    "size": "-Os",
+    "custom": "-O2",
+}
+_COREMARK_ALLOWED_OPT_LEVELS = {"-O0", "-O1", "-O2", "-O3", "-Os", "-Og"}
+_CPU_PROGRAM_ENTRY_OFFSETS = {
+    "ibex": "0x80",
+}
 _VERILATOR_DIAGNOSTIC_RE = re.compile(
     r"^%(?P<severity>Error|Warning)(?:-(?P<code>[A-Za-z0-9_]+))?:\s+"
     r"(?P<source>.+?):(?P<line>\d+):(?:(?P<column>\d+):)?\s*(?P<message>.*)$"
 )
 _SIM_CYCLE_RE = re.compile(r"\b(?:after|timeout after)\s+([0-9]+)\s+cycles\b")
+_COREMARK_ITERATIONS_RE = re.compile(r"^\s*Iterations\s*:\s*(?P<value>[0-9]+)\s*$", re.MULTILINE)
+_COREMARK_ITERATIONS_PER_SEC_RE = re.compile(r"^\s*Iterations/Sec\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
+_COREMARK_PER_MHZ_RE = re.compile(r"^\s*CoreMark/MHz\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
 _RTTHREAD_REQUIRED_LOG_MARKERS = (
     "Thread Operating System",
     "Hello RISC-V!",
@@ -395,6 +411,17 @@ def _is_coremark_case(case_name: str, image: str) -> bool:
 
 
 def _case_output_ok(case_name: str, image: str, returncode: int, output: str) -> tuple[bool, dict[str, Any]]:
+    if _is_coremark_case(case_name, image):
+        has_validated = "Correct operation validated" in output
+        has_error = "Errors detected" in output or "ERROR!" in output
+        validation = {
+            "type": "coremark_validation",
+            "validated": has_validated,
+            "errors_detected": has_error,
+        }
+        ok = returncode == 0 and has_validated and not has_error and "%Error" not in output
+        return ok, validation
+
     if not _is_rtthread_case(case_name, image):
         return _sim_output_ok(returncode, output), {}
 
@@ -449,31 +476,187 @@ def _sim_cycles_from_output(output: str) -> int | None:
 def _coremark_metrics(workspace: dict[str, Any], output: str, ok: bool) -> dict[str, Any]:
     cycles = _sim_cycles_from_output(output)
     frequency_mhz = _workspace_frequency_mhz(workspace)
+    official_iterations = _coremark_int_from_output(_COREMARK_ITERATIONS_RE, output)
+    official_iterations_per_sec = _coremark_float_from_output(_COREMARK_ITERATIONS_PER_SEC_RE, output)
+    official_coremark_per_mhz = _coremark_float_from_output(_COREMARK_PER_MHZ_RE, output)
+    compile_settings = _coremark_compile_settings(workspace)
     metrics: dict[str, Any] = {
-        "benchmark": "CoreMark-style smoke",
-        "iterations": _COREMARK_ITERATIONS,
-        "expected_crc": _COREMARK_EXPECTED_CRC,
+        "benchmark": "CoreMark",
+        "iterations": official_iterations or int(compile_settings["iterations"]),
+        "expected_crc": "reported by CoreMark validation",
         "cycles": cycles,
         "frequency_mhz": frequency_mhz,
+        "compile": compile_settings,
     }
     if not ok:
         metrics["score_available"] = False
         metrics["score_unavailable_reason"] = "simulation did not pass"
+        return metrics
+    if official_coremark_per_mhz is not None:
+        metrics.update({
+            "score_available": True,
+            "coremark_per_mhz": official_coremark_per_mhz,
+        })
+        if official_iterations_per_sec is not None:
+            metrics["coremark_per_second"] = official_iterations_per_sec
+        elif frequency_mhz is not None:
+            metrics["coremark_per_second"] = official_coremark_per_mhz * frequency_mhz
+        if cycles is not None and metrics["iterations"]:
+            metrics["cycles_per_iteration"] = cycles / int(metrics["iterations"])
         return metrics
     if cycles is None or cycles <= 0:
         metrics["score_available"] = False
         metrics["score_unavailable_reason"] = "simulation cycle count not found"
         return metrics
 
-    coremark_per_mhz = _COREMARK_ITERATIONS / cycles
+    iterations = int(metrics["iterations"] or _COREMARK_ITERATIONS)
+    cycles_per_iteration = cycles / max(iterations, 1)
+    coremark_per_mhz = 1_000_000 / cycles_per_iteration
     metrics.update({
         "score_available": True,
-        "cycles_per_iteration": cycles / _COREMARK_ITERATIONS,
+        "cycles_per_iteration": cycles_per_iteration,
         "coremark_per_mhz": coremark_per_mhz,
     })
     if frequency_mhz is not None:
-        metrics["estimated_coremark_per_second"] = coremark_per_mhz * frequency_mhz * 1_000_000
+        metrics["estimated_coremark_per_second"] = coremark_per_mhz * frequency_mhz
     return metrics
+
+
+def _coremark_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
+    preset = str(workspace.get("sim_compile_preset", "balanced") or "balanced").strip().lower()
+    if preset not in _COREMARK_COMPILE_PRESETS:
+        preset = "balanced"
+
+    opt_level = str(workspace.get("sim_compile_opt_level", "") or "").strip()
+    if not opt_level:
+        opt_level = _COREMARK_COMPILE_PRESETS[preset]
+    if opt_level not in _COREMARK_ALLOWED_OPT_LEVELS:
+        opt_level = _COREMARK_COMPILE_PRESETS[preset]
+
+    iterations = _positive_int(workspace.get("sim_coremark_iterations"), _COREMARK_ITERATIONS)
+    total_data_size = _positive_int(
+        workspace.get("sim_coremark_total_data_size"),
+        _COREMARK_DEFAULT_TOTAL_DATA_SIZE,
+    )
+    extra_cflags = _normalize_string_list(workspace.get("sim_compile_extra_cflags", []))
+    return {
+        "preset": preset,
+        "opt_level": opt_level,
+        "march": str(workspace.get("sim_compile_march", "rv32im_zicsr") or "rv32im_zicsr").strip(),
+        "mabi": str(workspace.get("sim_compile_mabi", "ilp32") or "ilp32").strip(),
+        "extra_cflags": extra_cflags,
+        "iterations": iterations,
+        "total_data_size": total_data_size,
+        "has_float": _bool_workspace_value(workspace.get("sim_coremark_has_float"), _COREMARK_DEFAULT_HAS_FLOAT),
+    }
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _bool_workspace_value(value: Any, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = shlex.split(value)
+    else:
+        raw = [value]
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        text = str(item).strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _apply_coremark_build_env(workspace: dict[str, Any], env: dict[str, str], log_lines: list[str]) -> None:
+    settings = _coremark_compile_settings(workspace)
+    env["ECOS_SIM_OPT_LEVEL"] = str(settings["opt_level"])
+    env["ECOS_SIM_MARCH"] = str(settings["march"])
+    env["ECOS_SIM_MABI"] = str(settings["mabi"])
+    env["ECOS_COREMARK_ITERATIONS"] = str(settings["iterations"])
+    env["ECOS_COREMARK_TOTAL_DATA_SIZE"] = str(settings["total_data_size"])
+    env["ECOS_COREMARK_HAS_FLOAT"] = "1" if settings["has_float"] else "0"
+
+    extra_cflags = [str(item) for item in settings["extra_cflags"]]
+    if extra_cflags:
+        env["ECOS_SIM_EXTRA_CFLAGS_LINES"] = "\n".join(extra_cflags)
+        env["ECOS_SIM_EXTRA_CFLAGS"] = " ".join(shlex.quote(flag) for flag in extra_cflags)
+    flags_for_report = [
+        str(settings["opt_level"]),
+        f"-march={settings['march']}",
+        f"-mabi={settings['mabi']}",
+        *extra_cflags,
+    ]
+    env["ECOS_COREMARK_FLAGS_STR"] = ",".join(flags_for_report)
+    log_lines.append(
+        "[build_program] coremark compile "
+        f"preset={settings['preset']} opt={settings['opt_level']} "
+        f"march={settings['march']} mabi={settings['mabi']} "
+        f"iterations={settings['iterations']} total_data_size={settings['total_data_size']} "
+        f"has_float={int(bool(settings['has_float']))} "
+        f"extra_cflags={' '.join(extra_cflags) if extra_cflags else '-'}"
+    )
+
+
+def _workspace_cpu_id(workspace: dict[str, Any]) -> str:
+    return str(
+        workspace.get("cpu_wrapper_id")
+        or workspace.get("frontend_core_id")
+        or workspace.get("core_id")
+        or ""
+    ).strip()
+
+
+def _apply_cpu_program_build_env(workspace: dict[str, Any], env: dict[str, str], log_lines: list[str]) -> None:
+    cpu_id = _workspace_cpu_id(workspace)
+    entry_offset = _CPU_PROGRAM_ENTRY_OFFSETS.get(cpu_id, "")
+    if not entry_offset:
+        return
+    if env.get("SOC_USE_BOOTLOADER") == "1":
+        log_lines.append(f"[build_program] {cpu_id} entry offset skipped for bootloader image")
+        return
+    env["SOC_PROGRAM_ENTRY_OFFSET"] = entry_offset
+    log_lines.append(f"[build_program] {cpu_id} program entry offset={entry_offset}")
+
+
+def _coremark_int_from_output(pattern: re.Pattern[str], output: str) -> int | None:
+    match = pattern.search(output)
+    if not match:
+        return None
+    try:
+        return int(match.group("value"))
+    except ValueError:
+        return None
+
+
+def _coremark_float_from_output(pattern: re.Pattern[str], output: str) -> float | None:
+    match = pattern.search(output)
+    if not match:
+        return None
+    try:
+        return float(match.group("value"))
+    except ValueError:
+        return None
 
 
 def _case_terminal_output(
@@ -500,13 +683,15 @@ def _case_terminal_output(
         f"Wave        : {wave or '-'}",
     ]
     if _is_coremark_case(case_name, image):
+        compile_settings = metrics.get("compile", {}) if metrics else {}
         lines.extend([
             "",
             "CoreMark",
             "--------",
-            "Benchmark   : CoreMark-style smoke",
-            f"Expected CRC: {_COREMARK_EXPECTED_CRC}",
-            "Validation  : checked by the simulation program",
+            "Benchmark   : EEMBC CoreMark",
+            "Validation  : checked by CoreMark output",
+            f"Compiler    : {compile_settings.get('preset', 'balanced')} {compile_settings.get('opt_level', '-O2')}",
+            f"ISA/ABI     : {compile_settings.get('march', 'rv32im_zicsr')} / {compile_settings.get('mabi', 'ilp32')}",
         ])
         if metrics:
             lines.extend(_format_coremark_score_lines(metrics))
@@ -518,6 +703,14 @@ def _case_terminal_output(
             "-----------------------------",
             f"Required markers: {len(validation.get('required_markers', []))}",
             f"Missing markers : {', '.join(missing) if missing else '-'}",
+        ])
+    if validation.get("type") == "coremark_validation":
+        lines.extend([
+            "",
+            "CoreMark validation",
+            "-------------------",
+            f"Validated      : {'yes' if validation.get('validated') else 'no'}",
+            f"Errors detected: {'yes' if validation.get('errors_detected') else 'no'}",
         ])
 
     body = output.strip()
@@ -547,7 +740,10 @@ def _format_coremark_score_lines(metrics: dict[str, Any]) -> list[str]:
         f"CoreMark/MHz: {_format_float(float(metrics.get('coremark_per_mhz') or 0), 9)}",
     ])
     estimated = metrics.get("estimated_coremark_per_second")
-    if estimated is not None:
+    official = metrics.get("coremark_per_second")
+    if official is not None:
+        lines.append(f"CoreMark/s  : {_format_float(float(official), 3)}")
+    elif estimated is not None:
         lines.append(f"CoreMark/s  : {_format_float(float(estimated), 3)}")
     return lines
 
@@ -660,10 +856,12 @@ def _programs_dir(workspace: dict[str, Any]) -> Path:
 def _prepare_sim_images(workspace: dict[str, Any], *,
                         build_log_path: Path | None = None,
                         case_output_root: Path | None = None) -> tuple[list[str], bool]:
-    images = _sim_images(workspace)
+    fallback_images = _sim_images(workspace)
     sources = _program_sources_to_build(workspace)
     if not sources:
-        return images, True
+        return fallback_images, True
+
+    images: list[str] = []
 
     build_script = _build_test_script(workspace)
     explicit_out_dir = _explicit_soc_tests_out_dir(workspace)
@@ -678,9 +876,9 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     if not build_script.exists():
         if build_log_path is not None:
             build_log_path.write_text(f"build_test.sh not found: {build_script}\n", encoding="utf-8")
-        return images, False
+        return [], False
 
-    seen: set[str] = set(images)
+    seen: set[str] = set()
     lines: list[str] = []
     ok = True
     env = os.environ.copy()
@@ -688,6 +886,9 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         env["SOC_USE_BOOTLOADER"] = "1"
         env["SOC_FAST_DIFF_BOOT"] = "1"
         lines.append("[build_program] difftest fast boot env enabled")
+    _apply_cpu_program_build_env(workspace, env, lines)
+    if any(src.stem == "coremark" for src in sources):
+        _apply_coremark_build_env(workspace, env, lines)
     link_base = str(workspace.get("sim_program_link_base", "")).strip()
     if link_base:
         env["SOC_PROGRAM_LINK_BASE"] = link_base

@@ -65,11 +65,11 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（历史保留，不覆盖）
 
-`test_cpu_soc_matrix_flow` 会创建 9 个 workspace：
+`test_cpu_soc_matrix_flow` 会创建 3 个 workspace：
 
 - `workspace_projects/cpu_soc_matrix_cpu1_soc1`
 - ...
-- `workspace_projects/cpu_soc_matrix_cpu3_soc3`
+- `workspace_projects/cpu_soc_matrix_cpu3_soc1`
 
 每个组合的 case 日志在：
 
@@ -321,7 +321,7 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 ### 测什么
 
-3x3 CPU+SoC 组合矩阵回归：
+CPU 变体 + 单一真实 SoC 组合回归：
 
 - CPU 变体：
   - `docs/examples/cl3`
@@ -329,9 +329,7 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
   - `docs/examples/cl3_2`
 - SoC 变体：
   - `fecompiler/thirdparty/SoC`
-  - `fecompiler/thirdparty/SoC2`
-  - `fecompiler/thirdparty/SoC3`
-- 动态生成 9 条测试：`test_full_flow_cpu1_soc1` 到 `test_full_flow_cpu3_soc3`。
+- 动态生成 3 条测试：`test_full_flow_cpu1_soc1` 到 `test_full_flow_cpu3_soc1`。
 - 每个组合都跑完整 `prepare -> elab -> lint -> sim`。
 - 每个 SoC 的 `tests/programs/*.c` 都应被编译成 `.soc.bin` 并执行。
 - `cpu1_soc1` 组合额外把 `rtthread` 作为 `rtthread.soc` case 执行，用于覆盖 tests + RT-Thread 混合 case。

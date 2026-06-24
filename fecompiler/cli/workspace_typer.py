@@ -180,6 +180,14 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         sim_test_suite: Annotated[str | None, typer.Option("--sim-test-suite")] = None,
         sim_cpu_test_mode: Annotated[str, typer.Option("--sim-cpu-test-mode")] = "selected",
         sim_cpu_test_case: Annotated[list[str] | None, typer.Option("--sim-cpu-test-case")] = None,
+        sim_compile_preset: Annotated[str | None, typer.Option("--sim-compile-preset")] = None,
+        sim_compile_opt_level: Annotated[str | None, typer.Option("--sim-compile-opt-level")] = None,
+        sim_compile_march: Annotated[str | None, typer.Option("--sim-compile-march")] = None,
+        sim_compile_mabi: Annotated[str | None, typer.Option("--sim-compile-mabi")] = None,
+        sim_compile_extra_cflag: Annotated[list[str] | None, typer.Option("--sim-compile-extra-cflag")] = None,
+        sim_coremark_iterations: Annotated[int | None, typer.Option("--sim-coremark-iterations")] = None,
+        sim_coremark_total_data_size: Annotated[int | None, typer.Option("--sim-coremark-total-data-size")] = None,
+        sim_coremark_has_float: Annotated[str | None, typer.Option("--sim-coremark-has-float")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
         args = argparse.Namespace(
@@ -189,6 +197,14 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             sim_test_suite=sim_test_suite or "",
             sim_cpu_test_mode=sim_cpu_test_mode,
             sim_cpu_test_case=list(sim_cpu_test_case or []),
+            sim_compile_preset=sim_compile_preset or "",
+            sim_compile_opt_level=sim_compile_opt_level or "",
+            sim_compile_march=sim_compile_march or "",
+            sim_compile_mabi=sim_compile_mabi or "",
+            sim_compile_extra_cflag=list(sim_compile_extra_cflag or []),
+            sim_coremark_iterations=sim_coremark_iterations,
+            sim_coremark_total_data_size=sim_coremark_total_data_size,
+            sim_coremark_has_float=sim_coremark_has_float or "",
         )
         finish("run-step", json_output, lambda: handlers.run_step(args))
 

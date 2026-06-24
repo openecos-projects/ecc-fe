@@ -47,6 +47,10 @@ if [[ "${NAME}" == "rtthread" || "${SRC}" == "rtthread" ]]; then
   NAME="rtthread"
 fi
 
+if [[ "${NAME}" == "coremark" ]]; then
+  SRC="${ROOT}/tests/benchmarks/coremark/core_main.c"
+fi
+
 if [[ "${IS_RTTHREAD}" != "1" && ! -f "${SRC}" ]]; then
   echo "test source not found: ${SRC}" >&2
   exit 1
@@ -83,9 +87,51 @@ if ! command -v "${HEXDUMP}" >/dev/null 2>&1; then
   exit 1
 fi
 
-COMMON_CFLAGS="-fno-pic -march=rv32im_zicsr -mcmodel=medany -mstrict-align -mabi=ilp32"
-CFLAGS="-DMAINARGS=\"\" -lm -g -O2 -Wall ${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common -fno-asynchronous-unwind-tables -fno-builtin -fno-stack-protector -Wno-main -U_FORTIFY_SOURCE -fvisibility=hidden -fdata-sections -ffunction-sections"
-ASFLAGS="${COMMON_CFLAGS} -I${ROOT}/tests/include -I${ROOT}/tests/common/include -I${ROOT}/tests/common"
+SIM_MARCH="${ECOS_SIM_MARCH:-rv32im_zicsr}"
+SIM_MABI="${ECOS_SIM_MABI:-ilp32}"
+SIM_OPT_LEVEL="${ECOS_SIM_OPT_LEVEL:--O2}"
+EXTRA_CFLAGS=()
+if [[ -n "${ECOS_SIM_EXTRA_CFLAGS_LINES:-}" ]]; then
+  while IFS= read -r flag; do
+    [[ -n "${flag}" ]] && EXTRA_CFLAGS+=("${flag}")
+  done <<< "${ECOS_SIM_EXTRA_CFLAGS_LINES}"
+elif [[ -n "${ECOS_SIM_EXTRA_CFLAGS:-}" ]]; then
+  # Backward-compatible fallback for simple whitespace-separated flags.
+  read -r -a EXTRA_CFLAGS <<< "${ECOS_SIM_EXTRA_CFLAGS}"
+fi
+COMMON_CFLAGS=(
+  -fno-pic
+  "-march=${SIM_MARCH}"
+  -mcmodel=medany
+  -mstrict-align
+  "-mabi=${SIM_MABI}"
+)
+CFLAGS=(
+  '-DMAINARGS=""'
+  -lm
+  -g
+  "${SIM_OPT_LEVEL}"
+  -Wall
+  "${COMMON_CFLAGS[@]}"
+  "-I${ROOT}/tests/include"
+  "-I${ROOT}/tests/common/include"
+  "-I${ROOT}/tests/common"
+  -fno-asynchronous-unwind-tables
+  -fno-builtin
+  -fno-stack-protector
+  -Wno-main
+  -U_FORTIFY_SOURCE
+  -fvisibility=hidden
+  -fdata-sections
+  -ffunction-sections
+  "${EXTRA_CFLAGS[@]}"
+)
+ASFLAGS=(
+  "${COMMON_CFLAGS[@]}"
+  "-I${ROOT}/tests/include"
+  "-I${ROOT}/tests/common/include"
+  "-I${ROOT}/tests/common"
+)
 if [[ "${IS_RTTHREAD}" == "1" ]]; then
   SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-1}"
   SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-1}"
@@ -100,8 +146,22 @@ elif [[ -n "${SOC_PROGRAM_LINK_BASE:-}" ]]; then
 else
   PMEM_START=0x20000000
 fi
+PROGRAM_ENTRY_OFFSET="${SOC_PROGRAM_ENTRY_OFFSET:-0x0}"
+PROGRAM_ENTRY_OFFSET_DEC=$((PROGRAM_ENTRY_OFFSET))
+if (( PROGRAM_ENTRY_OFFSET_DEC < 0 )); then
+  echo "SOC_PROGRAM_ENTRY_OFFSET must be non-negative: ${SOC_PROGRAM_ENTRY_OFFSET}" >&2
+  exit 1
+fi
 
-LDFLAGS="-z noexecstack -melf32lriscv -T ${ROOT}/tests/common/linker.ld --defsym=_pmem_start=${PMEM_START} --defsym=_entry_offset=0x0 --gc-sections -e _start"
+LDFLAGS=(
+  -z noexecstack
+  -melf32lriscv
+  -T "${ROOT}/tests/common/linker.ld"
+  "--defsym=_pmem_start=${PMEM_START}"
+  "--defsym=_entry_offset=${PROGRAM_ENTRY_OFFSET}"
+  --gc-sections
+  -e _start
+)
 BOOT_SRC_BASE=0x20000000
 BOOT_PAYLOAD_OFFSET=0x100
 BOOT_MROM_SIZE=0x100000
@@ -167,18 +227,46 @@ else
   mapfile -t COMMON_SRCS < <(
     find -L "${ROOT}/tests/common" -type f \( -name '*.c' -o -name '*.S' \) ! -path "${ROOT}/tests/common/soc_bootloader.S" | sort
   )
+  if [[ "${NAME}" == "coremark" ]]; then
+    COREMARK_DIR="${ROOT}/tests/benchmarks/coremark"
+    COREMARK_PORT_DIR="${COREMARK_DIR}/ecos"
+    COREMARK_ITERATIONS="${ECOS_COREMARK_ITERATIONS:-128}"
+    COREMARK_TOTAL_DATA_SIZE="${ECOS_COREMARK_TOTAL_DATA_SIZE:-2000}"
+    COREMARK_HAS_FLOAT="${ECOS_COREMARK_HAS_FLOAT:-1}"
+    COREMARK_FLAGS_TEXT="${ECOS_COREMARK_FLAGS_STR:-${SIM_OPT_LEVEL},-march=${SIM_MARCH},-mabi=${SIM_MABI}}"
+    CFLAGS+=(
+      "-I${COREMARK_DIR}"
+      "-I${COREMARK_PORT_DIR}"
+      "-DITERATIONS=${COREMARK_ITERATIONS}"
+      "-DTOTAL_DATA_SIZE=${COREMARK_TOTAL_DATA_SIZE}"
+      "-DHAS_FLOAT=${COREMARK_HAS_FLOAT}"
+      -DPERFORMANCE_RUN=1
+      -DMAIN_HAS_NOARGC=1
+      "-DFLAGS_STR=\"${COREMARK_FLAGS_TEXT}\""
+    )
+    SRC="${COREMARK_DIR}/core_main.c"
+    COREMARK_SRCS=(
+      "${COREMARK_DIR}/core_list_join.c"
+      "${COREMARK_DIR}/core_matrix.c"
+      "${COREMARK_DIR}/core_state.c"
+      "${COREMARK_DIR}/core_util.c"
+      "${COREMARK_PORT_DIR}/core_portme.c"
+    )
+  else
+    COREMARK_SRCS=()
+  fi
 
   OBJS=()
   INDEX=0
-  for FILE in "${SRC}" "${COMMON_SRCS[@]}"; do
+  for FILE in "${SRC}" "${COREMARK_SRCS[@]}" "${COMMON_SRCS[@]}"; do
     OBJ="${TMPDIR}/obj_${INDEX}.o"
     INDEX=$((INDEX + 1))
     case "${FILE}" in
       *.c)
-        "${CC}" -std=gnu11 ${CFLAGS} -c -o "${OBJ}" "${FILE}"
+        "${CC}" -std=gnu11 "${CFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
         ;;
       *.S)
-        "${AS}" ${ASFLAGS} -c -o "${OBJ}" "${FILE}"
+        "${AS}" "${ASFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
         ;;
       *)
         echo "Unsupported source: ${FILE}" >&2
@@ -188,7 +276,7 @@ else
     OBJS+=("${OBJ}")
   done
 
-  "${LD}" ${LDFLAGS} -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
+  "${LD}" "${LDFLAGS[@]}" -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
   "${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
   "${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
   "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
@@ -197,7 +285,12 @@ fi
 
 PAYLOAD_SIZE="$(wc -c < "${PREFIX}.bin")"
 if [[ "${SOC_USE_BOOTLOADER}" != "1" ]]; then
-  cp -f "${PREFIX}.bin" "${PREFIX}.soc.bin"
+  if (( PROGRAM_ENTRY_OFFSET_DEC > 0 )); then
+    truncate -s "$((PROGRAM_ENTRY_OFFSET_DEC + PAYLOAD_SIZE))" "${PREFIX}.soc.bin"
+    dd if="${PREFIX}.bin" of="${PREFIX}.soc.bin" bs=1 seek="${PROGRAM_ENTRY_OFFSET_DEC}" conv=notrunc status=none
+  else
+    cp -f "${PREFIX}.bin" "${PREFIX}.soc.bin"
+  fi
   echo "[build_test] built: ${PREFIX}.soc.bin"
   exit 0
 fi
@@ -215,7 +308,7 @@ fi
 BOOT_OBJ="${TMPDIR}/soc_bootloader.o"
 BOOT_BIN="${TMPDIR}/soc_bootloader.bin"
 
-"${AS}" ${ASFLAGS} -c -o "${BOOT_OBJ}" "${ROOT}/tests/common/soc_bootloader.S"
+"${AS}" "${ASFLAGS[@]}" -c -o "${BOOT_OBJ}" "${ROOT}/tests/common/soc_bootloader.S"
 "${LD}" -z noexecstack -melf32lriscv -T "${ROOT}/tests/common/soc_bootloader.ld" --gc-sections -e _start \
   --defsym=_payload_src=${PAYLOAD_SRC_ADDR} \
   --defsym=_payload_dst=${BOOT_DST_BASE} \
