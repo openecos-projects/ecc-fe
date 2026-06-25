@@ -6,7 +6,7 @@ BUILD_ROOT="${ROOT}/build"
 MDIR="${BUILD_ROOT}/verilator"
 OUT_BIN="${1:-${BUILD_ROOT}/soc_top}"
 VERILATOR_BIN="${VERILATOR_BIN:-verilator}"
-CPU_ROOT="${CPU_ROOT:-/home/luyoung/ecc-fe/docs/examples/cl3}"
+CPU_ROOT="${CPU_ROOT:-/home/luyoung/ecc-fe/examples/cl3}"
 
 if command -v nproc >/dev/null 2>&1; then
   JOBS_DEFAULT="$(nproc)"

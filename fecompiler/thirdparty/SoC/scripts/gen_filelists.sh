@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CPU_ROOT="${CPU_ROOT:-/home/luyoung/ecc-fe/docs/examples/cl3}"
+CPU_ROOT="${CPU_ROOT:-/home/luyoung/ecc-fe/examples/cl3}"
 
 CPU_LIST="${CPU_ROOT}/filelist.cpu.f"
 SOC_LIST="${ROOT}/filelist.soc.f"

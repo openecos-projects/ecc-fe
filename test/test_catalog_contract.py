@@ -82,7 +82,7 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
         }
         if bool(item.get("requires_cpu_filelist")):
             request["cpu_filelist"] = str(
-                Path(__file__).resolve().parent.parent / "docs/examples/cl3/filelist.cpu.f"
+                Path(__file__).resolve().parent.parent / "examples/cl3/filelist.cpu.f"
             )
         create_request.write_text(json.dumps(request), encoding="utf-8")
 
@@ -194,7 +194,7 @@ def _prepare_mismatches(
 
 def _expected_cpu_filelist(core: dict, requires_cpu_filelist: bool) -> str:
     if requires_cpu_filelist:
-        return str(Path(__file__).resolve().parent.parent / "docs/examples/cl3/filelist.cpu.f")
+        return str(Path(__file__).resolve().parent.parent / "examples/cl3/filelist.cpu.f")
     return str((Path(__file__).resolve().parent.parent / str(core["cpu_filelist"])).resolve())
 
 

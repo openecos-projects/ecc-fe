@@ -35,7 +35,7 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
 - `test_cpu_soc_matrix_flow.py`
 - `test_cpu_soc_rtthread_flow.py`
 
-`test_examples.py` 是集成测试，当前不在 `//:all_tests` 里，需通过 `pytest` 运行。
+`test_examples.py` 是轻量 example collateral 检查，当前不在 `//:all_tests` 里，需通过 `pytest` 运行。
 
 CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 
@@ -43,7 +43,7 @@ CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 # 单独跑 CPU+SoC 全流程
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
 
-# 跑 3x3 CPU+SoC matrix
+# 跑 example CL3 CPU + SoC matrix
 bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"
 
 # 启动 RT-Thread smoke test
@@ -65,11 +65,9 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `workspace_projects/cpu_soc_test/sim_verilator/report/cases/<case>/log.txt`
 - `workspace_projects/cpu_soc_test/sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（历史保留，不覆盖）
 
-`test_cpu_soc_matrix_flow` 会创建 3 个 workspace：
+`test_cpu_soc_matrix_flow` 会创建 1 个 workspace：
 
 - `workspace_projects/cpu_soc_matrix_cpu1_soc1`
-- ...
-- `workspace_projects/cpu_soc_matrix_cpu3_soc1`
 
 每个组合的 case 日志在：
 
@@ -246,39 +244,26 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 ### 测什么
 
-基于 `docs/examples/filelist.f` 的端到端集成行为：
+基于 `examples/cl3` 的示例文件完整性检查：
 
-- `filelist` 源文件拷贝到 `origin/`。
-- `origin/filelist.f` 内容已转绝对路径且文件存在。
-- `prepare/elab/lint/sim` 步骤状态成功。
-- 关键产物存在：
-  - `prepare_fe/output/merged_rtl.f`
-  - `elab_slang/report/log.txt`
-  - `lint_verilator/report/log.txt`
-- `elab` 子流程 `subflow.json` 全成功。
-- 最终 `home/flow.json` 所有步骤为 `Success`。
+- `examples/cl3/filelist.cpu.f` 存在。
+- `examples/cl3/cl3_verilog/filelist.f` 存在。
+- 两级 filelist 中列出的 RTL 路径都能在本地解析到实际文件。
+- 该测试不运行 `prepare/elab/lint/sim`，只保证仓库内示例 collateral 没有断链。
 
 ### 怎么测
 
-- 使用模块级 fixture `adder_workspace`：
-  - 清理 `workspace_projects/test_adder`
-  - `create_workspace(...)`
-  - `EngineFlow.create_step_workspaces()`
-  - `EngineFlow.run_all(rerun=True)`
-- 后续断言复用同一 workspace，降低重复构建开销。
+- 直接读取 `examples/cl3/filelist.cpu.f`。
+- 再读取嵌套的 `examples/cl3/cl3_verilog/filelist.f`。
+- 逐行检查相对路径是否存在。
 
 ### 用到的 API
 
-- `fecompiler.config.DEFAULT_PROJECTS_ROOT`
-- `fecompiler.data.workspace.CreateWorkspaceData`
-- `fecompiler.data.workspace.create_workspace`
-- `fecompiler.data.workspace.load_workspace`
-- `fecompiler.engine.flow.EngineFlow`
-- `fecompiler.data.step.StateEnum`
+- `pathlib.Path`
 
 ### 依赖说明
 
-该文件属于集成测试，依赖本地可执行工具与环境（如 `slang/verilator`）可用；相比纯单元测试更接近真实运行链路。
+该文件属于轻量文件完整性测试，不依赖 `slang/verilator` 或 RISC-V toolchain。
 
 ---
 
@@ -324,12 +309,10 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 CPU 变体 + 单一真实 SoC 组合回归：
 
 - CPU 变体：
-  - `docs/examples/cl3`
-  - `docs/examples/cl3_1`
-  - `docs/examples/cl3_2`
+  - `examples/cl3`
 - SoC 变体：
   - `fecompiler/thirdparty/SoC`
-- 动态生成 3 条测试：`test_full_flow_cpu1_soc1` 到 `test_full_flow_cpu3_soc1`。
+- 动态生成 1 条测试：`test_full_flow_cpu1_soc1`。
 - 每个组合都跑完整 `prepare -> elab -> lint -> sim`。
 - 每个 SoC 的 `tests/programs/*.c` 都应被编译成 `.soc.bin` 并执行。
 - `cpu1_soc1` 组合额外把 `rtthread` 作为 `rtthread.soc` case 执行，用于覆盖 tests + RT-Thread 混合 case。
@@ -337,7 +320,7 @@ CPU 变体 + 单一真实 SoC 组合回归：
 
 ### 怎么测
 
-- `setUpClass` 先检查 `slang/verilator`、RISC-V GCC toolchain、3 组 CPU 和 3 组 SoC 必要文件。
+- `setUpClass` 先检查 `slang/verilator`、RISC-V GCC toolchain、CL3 CPU example 和真实 SoC 必要文件。
 - 每个组合创建独立 workspace：
   - `workspace_projects/cpu_soc_matrix_cpu<cpu_idx>_soc<soc_idx>`
 - 每个 workspace 使用对应 CPU filelist、SoC filelist、testbench、`dpi_mem.cpp`、`difftest.cpp`。

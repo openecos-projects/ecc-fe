@@ -17,9 +17,7 @@ from fecompiler.engine.flow import EngineFlow
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CPU_VARIANTS = [
-    REPO_ROOT / "docs/examples/cl3",
-    REPO_ROOT / "docs/examples/cl3_1",
-    REPO_ROOT / "docs/examples/cl3_2",
+    REPO_ROOT / "examples/cl3",
 ]
 SOC_VARIANTS = [
     REPO_ROOT / "fecompiler/thirdparty/SoC",

@@ -17,10 +17,9 @@ ecc-fe/
 ├── BUILD.bazel                 # Bazel targets: CLI, examples, tests
 ├── MODULE.bazel                # Bazel module config
 ├── docs/
-│   └── examples/
-│       ├── cl3/                # CL3 CPU example
-│       ├── cl3_1/              # CL3 variant
-│       └── cl3_2/              # CL3 variant
+│   └── *.md                    # user and developer documentation
+├── examples/
+│   └── cl3/                    # CL3 CPU example collateral
 ├── fecompiler/
 │   ├── allflow/                # DEFAULT_FLOW_STEPS
 │   ├── cli/                    # python -m fecompiler.cli.main
@@ -220,7 +219,7 @@ cd /home/luyoung/ecc-fe
 python3 -m fecompiler.cli.main \
   --design cl3_soc \
   --top ecos_sim_top \
-  --cpu-filelist docs/examples/cl3/filelist.cpu.f \
+  --cpu-filelist examples/cl3/filelist.cpu.f \
   --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
   --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
   --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \

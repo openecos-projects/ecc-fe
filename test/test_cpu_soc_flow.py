@@ -14,7 +14,7 @@ from fecompiler.engine.flow import EngineFlow
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CPU_FILELIST = REPO_ROOT / "docs/examples/cl3/filelist.cpu.f"
+CPU_FILELIST = REPO_ROOT / "examples/cl3/filelist.cpu.f"
 SOC_FILELIST = REPO_ROOT / "fecompiler/thirdparty/SoC/filelist.soc.f"
 TESTBENCH = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/main.cpp"
 DPI_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp"

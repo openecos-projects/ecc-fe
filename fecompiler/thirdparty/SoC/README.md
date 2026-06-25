@@ -13,8 +13,8 @@ This directory contains all non-CPU assets for CL3/SoC simulation:
 
 CPU code is intentionally placed outside this directory at:
 
-- `/home/luyoung/ecc-fe/docs/examples/cl3/cl3_verilog`
-- `/home/luyoung/ecc-fe/docs/examples/cl3/filelist.cpu.f`
+- `/home/luyoung/ecc-fe/examples/cl3/cl3_verilog`
+- `/home/luyoung/ecc-fe/examples/cl3/filelist.cpu.f`
 
 `build_soc_sim.sh` and `gen_filelists.sh` will read CPU files from that path by default.
 You can override with `CPU_ROOT=<path>`.
@@ -27,7 +27,7 @@ From repo root:
 python3 -m fecompiler.cli.main \
   --design cl3_soc \
   --top ecos_sim_top \
-  --cpu-filelist /home/luyoung/ecc-fe/docs/examples/cl3/filelist.cpu.f \
+  --cpu-filelist /home/luyoung/ecc-fe/examples/cl3/filelist.cpu.f \
   --soc-filelist /home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/filelist.soc.f \
   --testbench /home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/driver/main.cpp \
   --sim-cpp /home/luyoung/ecc-fe/fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \

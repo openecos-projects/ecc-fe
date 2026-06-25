@@ -33,7 +33,7 @@ alias(
 #   python3 -m fecompiler.cli.main \
 #       --design cl3_soc_phase2_full \
 #       --top ysyxSoCTop \
-#       --cpu-filelist docs/examples/cl3/filelist.cpu.f \
+#       --cpu-filelist examples/cl3/filelist.cpu.f \
 #       --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
 #       --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
 #       --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
@@ -50,7 +50,7 @@ py_binary(
     args = [
         "--design", "cl3_soc_phase2_full",
         "--top", "ysyxSoCTop",
-        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--cpu-filelist", "examples/cl3/filelist.cpu.f",
         "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
         "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
         "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
@@ -62,7 +62,7 @@ py_binary(
     ],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
     ]),
 )
@@ -78,7 +78,7 @@ py_binary(
     args = [
         "--design", "cl3_soc_phase2_full",
         "--top", "ysyxSoCTop",
-        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--cpu-filelist", "examples/cl3/filelist.cpu.f",
         "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
         "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
         "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
@@ -90,7 +90,7 @@ py_binary(
     ],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
     ]),
 )
@@ -136,7 +136,7 @@ py_binary(
         "--design", "cl3_soc_rtthread",
         "--top", "ysyxSoCTop",
         "--workspace", "/home/luyoung/ecc-fe/workspace_projects/cl3_soc_rtthread",
-        "--cpu-filelist", "docs/examples/cl3/filelist.cpu.f",
+        "--cpu-filelist", "examples/cl3/filelist.cpu.f",
         "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
         "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
         "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
@@ -153,7 +153,7 @@ py_binary(
     ],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/thirdparty/rt-thread-am/**",
         "fecompiler/tools/slang/**",
@@ -210,7 +210,7 @@ py_test(
     imports = ["."],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/tools/slang/**",
         "fecompiler/tools/verilator/**",
@@ -225,9 +225,7 @@ py_test(
     imports = ["."],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
-        "docs/examples/cl3_1/**",
-        "docs/examples/cl3_2/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/thirdparty/SoC2/**",
         "fecompiler/thirdparty/SoC3/**",
@@ -245,7 +243,7 @@ py_test(
     imports = ["."],
     deps = [":fecompiler"],
     data = glob([
-        "docs/examples/cl3/**",
+        "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/thirdparty/rt-thread-am/**",
         "fecompiler/tools/slang/**",

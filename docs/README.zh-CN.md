@@ -263,7 +263,7 @@ from fecompiler.engine.flow import EngineFlow
 spec = CreateWorkspaceData(
     directory="workspace_projects/AAA",
     parameters={"Design": "AAA", "Top module": "ecos_sim_top"},
-    cpu_filelist="/path/to/cl3_1/filelist.cpu.f",
+    cpu_filelist="/path/to/cpu/filelist.cpu.f",
     soc_filelist="/path/to/SoC2/filelist.soc.f",
     testbench="/path/to/SoC2/driver/main.cpp",
     sim_cpp_sources=["/path/to/SoC2/driver/dpi_mem.cpp"],
