@@ -8,28 +8,7 @@
 # Python bytecode / extension artifacts
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-
-# Python packaging / build artifacts
-.Python
-build/
-dist/
-develop-eggs/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-*.egg
-.installed.cfg
-MANIFEST
 
 # Python test / tool caches
 .coverage
@@ -39,18 +18,14 @@ htmlcov/
 .pytest_cache/
 .hypothesis/
 .mypy_cache/
-.pyre/
-.pytype/
 .ruff_cache/
 .tox/
 .nox/
 dmypy.json
 .dmypy.json
-nosetests.xml
 coverage.xml
 *.cover
 *.py.cover
-cover/
 
 # Python environments
 .env
@@ -73,20 +48,16 @@ profile_default/
 ipython_config.py
 
 # Project outputs
-workspace_projects/
-bazel-*
-gui/node_modules/
-gui/dist/
-gui/.vite/
+/workspace_projects/
+/bazel-*
 
-# Generated docs / local assistant files
-docs/backend-architecture-mermaid.md
+# Local assistant files
 .cursorignore
 .cursorindexingignore
 
 # Third-party build directories (sources are tracked)
-fecompiler/thirdparty/slang/build/
-fecompiler/thirdparty/verilator/build/
+/fecompiler/thirdparty/slang/build/
+/fecompiler/thirdparty/verilator/build/
 
 # SoC generated test artifacts:
 # keep runnable test images (*.soc.bin) tracked, ignore other volatile outputs.
@@ -100,5 +71,7 @@ fecompiler/thirdparty/SoC*/tests/out/*.run.log
 fecompiler/thirdparty/SoC*/tests/out/logs/
 !fecompiler/thirdparty/SoC*/tests/out/*.soc.bin
 
-# Simulator disassembly traces
+# Simulator instruction traces
 trace_hart_*.dasm
+trace_hart_*.log
+trace_hart_*_commit.log
