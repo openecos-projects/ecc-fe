@@ -60,6 +60,8 @@ _STR_PARAMETER_FIELDS = (
     "cpu_wrapper_contract",
     "cpu_socket_contract",
     "cpu_wrapper_top",
+    "cpu_standard_top",
+    "cpu_wrapper_generation",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",

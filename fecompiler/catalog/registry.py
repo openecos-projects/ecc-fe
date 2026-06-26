@@ -204,6 +204,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
+        "cpu_standard_top": str(core.data.get("cpu_standard_top", "")) if core is not None else "",
+        "cpu_wrapper_generation": str(core.data.get("cpu_wrapper_generation", "")) if core is not None else "",
         "cpu_supports_difftest": _core_supports_difftest(core),
         "core_supported_test_suites": _core_supported_test_suites(core),
         "core_sim_program_link_base": str(core.data.get("sim_program_link_base", "")) if core is not None else "",

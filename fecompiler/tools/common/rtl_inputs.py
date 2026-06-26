@@ -24,6 +24,8 @@ _FINGERPRINT_TEXT_FIELDS = (
     "soc_wrapper_top",
     "top_module",
     "cpu_socket_contract",
+    "cpu_standard_top",
+    "cpu_wrapper_generation",
 )
 
 
@@ -47,7 +49,15 @@ def prepared_inputs_current(workspace: dict[str, Any], data: dict[str, Any] | No
     actual = data.get("source_fingerprint")
     if not isinstance(actual, dict):
         return not _uses_explicit_frontend_inputs(workspace)
-    return {str(key): str(value) for key, value in actual.items()} == workspace_input_fingerprint(workspace)
+    expected = workspace_input_fingerprint(workspace)
+    actual_text = {str(key): str(value) for key, value in actual.items()}
+    for key, expected_value in expected.items():
+        actual_value = actual_text.get(key)
+        if actual_value is None and expected_value == "":
+            continue
+        if actual_value != expected_value:
+            return False
+    return True
 
 
 def prepared_inputs(workspace: dict[str, Any]) -> dict[str, Any]:

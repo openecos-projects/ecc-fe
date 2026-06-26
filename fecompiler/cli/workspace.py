@@ -361,6 +361,8 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
     parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
+    parameters["cpu_standard_top"] = validation.normalized.get("cpu_standard_top", "")
+    parameters["cpu_wrapper_generation"] = validation.normalized.get("cpu_wrapper_generation", "")
     if validation.normalized.get("cpu_adapter_filelist"):
         parameters["cpu_adapter_filelist"] = validation.normalized["cpu_adapter_filelist"]
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
@@ -868,6 +870,10 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
         request["cpu_filelist"] = normalized["cpu_filelist"]
     if normalized.get("cpu_adapter_filelist"):
         request["cpu_adapter_filelist"] = normalized["cpu_adapter_filelist"]
+    if normalized.get("cpu_standard_top"):
+        request["cpu_standard_top"] = normalized["cpu_standard_top"]
+    if normalized.get("cpu_wrapper_generation"):
+        request["cpu_wrapper_generation"] = normalized["cpu_wrapper_generation"]
     request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
     request["soc_supports_difftest"] = bool(normalized.get("soc_supports_difftest", True))
     request["core_supported_test_suites"] = normalized.get("core_supported_test_suites", [])
@@ -1555,7 +1561,7 @@ def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool,
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id == "darkriscv":
         return True, []
-    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "custom-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
+    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "custom-filelist", "standard-cpu-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
 
 
 def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -1571,6 +1577,8 @@ def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]
         return ["cpu-tests", "smoke"]
     if core_id in {"custom-filelist", "ysyx_00000000", ""}:
         return ["smoke", "cpu-tests", "rtthread", "coremark"]
+    if core_id == "standard-cpu-filelist":
+        return ["smoke", "cpu-tests", "coremark"]
     return []
 
 
@@ -1586,7 +1594,7 @@ def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     if raw is not None:
         return _normalize_bool(raw)
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv"}:
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv", "standard-cpu-filelist"}:
         return False
     return True
 

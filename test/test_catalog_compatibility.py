@@ -24,7 +24,7 @@ def _compatibility_by_pair() -> dict[tuple[str, str], dict]:
 
 def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
     payload = catalog_payload()
-    assert len(payload["cores"]) == 10
+    assert len(payload["cores"]) == 11
     assert [item["id"] for item in payload["soc_harnesses"]] == ["ysyx-am-soc"]
     assert len(payload["compatibility"]) == len(payload["cores"]) * len(payload["soc_harnesses"])
 
@@ -48,6 +48,29 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     })
     assert result.ok is True
     assert result.normalized["core_sim_coremark_use_difftest"] is False
+
+
+def test_standard_cpu_filelist_generates_wrapper_and_excludes_rtthread(tmp_path):
+    item = _compatibility_by_pair()[("standard-cpu-filelist", "ysyx-am-soc")]
+    assert item["can_create_workspace"] is True
+    assert item["support_level"] == "supported"
+    assert item["status"] == "requires_filelist"
+    assert item["requires_cpu_filelist"] is True
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
+
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("ecos_user_cpu_top.sv\n", encoding="utf-8")
+    result = validate_frontend_config({
+        "core_id": "standard-cpu-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+    })
+    assert result.ok is True
+    assert result.normalized["cpu_standard_top"] == "ecos_user_cpu_top"
+    assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"
+    assert result.normalized["cpu_supports_difftest"] is False
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
