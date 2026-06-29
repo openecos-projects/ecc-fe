@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 
 from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
+from fecompiler.resources import catalog_manifest_roots, frontend_repo_root
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -245,8 +245,16 @@ def _catalog() -> dict[str, list[CatalogEntry]]:
         category: [CatalogEntry.from_dict(item) for item in _load_builtin(filename)]
         for category, filename in _CATEGORY_FILES.items()
     }
-    catalog["cores"] = _merge_catalog_manifests(catalog["cores"], _catalog_manifest_dir("adapters"))
-    catalog["soc_harnesses"] = _merge_catalog_manifests(catalog["soc_harnesses"], _catalog_manifest_dir("thirdparty"))
+    catalog["cores"] = _merge_catalog_manifests(
+        catalog["cores"],
+        catalog_manifest_roots("adapters"),
+        "adapters",
+    )
+    catalog["soc_harnesses"] = _merge_catalog_manifests(
+        catalog["soc_harnesses"],
+        catalog_manifest_roots("thirdparty"),
+        "thirdparty",
+    )
     return catalog
 
 
@@ -259,11 +267,15 @@ def _load_builtin(filename: str) -> list[dict[str, Any]]:
     return [dict(item) for item in data if isinstance(item, dict)]
 
 
-def _merge_catalog_manifests(entries: list[CatalogEntry], root: Path) -> list[CatalogEntry]:
+def _merge_catalog_manifests(
+    entries: list[CatalogEntry],
+    roots: list[Path],
+    kind: str,
+) -> list[CatalogEntry]:
     by_id = {entry.id: entry for entry in entries}
     order = [entry.id for entry in entries]
 
-    for item in _load_catalog_manifests(root):
+    for item in _load_catalog_manifests(roots, kind):
         entry = CatalogEntry.from_dict(item)
         if not entry.id:
             continue
@@ -274,32 +286,64 @@ def _merge_catalog_manifests(entries: list[CatalogEntry], root: Path) -> list[Ca
     return [by_id[entry_id] for entry_id in order if entry_id in by_id]
 
 
-def _load_catalog_manifests(root: Path) -> list[dict[str, Any]]:
-    if not root.exists():
-        return []
+def _load_catalog_manifests(roots: list[Path], kind: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for manifest_path in sorted(root.glob("*/catalog.json")):
-        try:
-            with manifest_path.open(encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+    for root in roots:
+        if not root.exists():
             continue
-        if isinstance(data, dict):
-            item = dict(data)
-            item.setdefault("manifest_path", str(manifest_path))
-            items.append(item)
+        for manifest_path in _resource_catalog_paths(root):
+            try:
+                with manifest_path.open(encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                item = dict(data)
+                if not _catalog_entry_matches_kind(item, kind):
+                    continue
+                item.setdefault("manifest_path", str(manifest_path))
+                items.append(_resolve_catalog_entry_paths(item, manifest_path))
     return items
 
 
-def _catalog_manifest_dir(name: str) -> Path:
-    return _frontend_repo_root() / "fecompiler" / name
+def _catalog_entry_matches_kind(item: dict[str, Any], kind: str) -> bool:
+    if kind == "adapters":
+        return "cpu_wrapper_contract" in item or "cpu_wrapper_top" in item or "cpu_filelist" in item
+    if kind == "thirdparty":
+        return "wrapper_contract" in item or "wrapper_top" in item or "cpu_socket_contract" in item
+    return True
+
+
+def _resource_catalog_paths(root: Path) -> list[Path]:
+    paths = []
+    direct = root / "catalog.json"
+    if direct.is_file():
+        paths.append(direct)
+    paths.extend(sorted(root.glob("*/catalog.json")))
+    return paths
+
+
+def _resolve_catalog_entry_paths(item: dict[str, Any], manifest_path: Path) -> dict[str, Any]:
+    for field in ("directory", "cpu_filelist"):
+        value = str(item.get(field, "")).strip()
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            item[field] = str(path.resolve())
+            continue
+        if field == "directory" and value == "fecompiler/thirdparty/SoC":
+            candidate = manifest_path.parent
+        elif value.startswith("fecompiler/"):
+            candidate = frontend_repo_root() / value
+        else:
+            candidate = manifest_path.parent / value
+        item[field] = str(candidate.resolve())
+    return item
 
 
 def _frontend_repo_root() -> Path:
-    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-    return Path(__file__).resolve().parents[2]
+    return frontend_repo_root()
 
 
 def _read_id(config: dict[str, Any], field: str, fallback: str) -> str:
@@ -348,7 +392,7 @@ def _core_cpu_filelist(core: CatalogEntry | None) -> str:
     path = Path(builtin).expanduser()
     if path.is_absolute():
         return str(path)
-    return str((Path(__file__).resolve().parents[2] / path).resolve())
+    return str((frontend_repo_root() / path).resolve())
 
 
 def _adapter_cpu_filelist(

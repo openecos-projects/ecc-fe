@@ -22,7 +22,7 @@ ecc-fe/
 │   └── cl3/                    # CL3 CPU example collateral
 ├── fecompiler/
 │   ├── allflow/                # DEFAULT_FLOW_STEPS
-│   ├── cli/                    # python -m fecompiler.cli.main
+│   ├── cli/                    # ecc-fe command line entry point
 │   ├── data/                   # workspace/flow/state persistence
 │   ├── engine/                 # EngineFlow orchestration
 │   ├── tools/
@@ -119,7 +119,7 @@ GOOD/BAD TRAP depending on the written value.
 Before claiming a new adapter is runnable, run the static catalog check:
 
 ```bash
-python3 -m fecompiler.cli.workspace catalog-check --json
+ecc-fe workspace catalog-check --json
 ```
 
 This command does not build or simulate.  It checks that `sim_ready` catalog
@@ -232,10 +232,15 @@ Step states are `Invalid`, `Unstart`, `Success`, `Ongoing`, `Pending`, and
 
 ## CLI
 
+`ecc-fe` is the stable command line boundary for ECOS Studio integration.
+The GUI invokes this command and consumes JSON responses instead of importing
+internal Python modules directly.  The legacy `fecompiler` console script and
+`python3 -m fecompiler.cli.main` entry point are kept as compatibility aliases.
+
 ```bash
 cd /home/luyoung/ecc-fe
 
-python3 -m fecompiler.cli.main \
+ecc-fe \
   --design cl3_soc \
   --top ecos_sim_top \
   --cpu-filelist examples/cl3/filelist.cpu.f \
@@ -249,6 +254,17 @@ python3 -m fecompiler.cli.main \
   --sim-arg=--max-cycles \
   --sim-arg=10000000 \
   --rerun
+```
+
+Workspace-oriented commands use a JSON protocol suitable for GUI adapters:
+
+```bash
+ecc-fe workspace create --input-json request.json --json
+ecc-fe workspace load --directory /path/to/workspace --json
+ecc-fe workspace run-step --directory /path/to/workspace --step elab --json
+ecc-fe workspace run-flow --directory /path/to/workspace --rerun --json
+ecc-fe workspace get-info --directory /path/to/workspace --step sim --id cases --json
+ecc-fe workspace get-home --directory /path/to/workspace --json
 ```
 
 ## Bazel Commands
@@ -294,6 +310,19 @@ riscv32-unknown-elf-gcc       # or RISCV_PREFIX=<prefix>
 yosys                         # provided by the Yosys/OSS CAD Suite resource
 ECOS_SURFER_ASSETS_PATH       # Resource Manager-installed Surfer assets
 ```
+
+When `ecc-fe` is installed as a Resource Manager runtime, optional frontend
+resources can be installed separately and assembled at runtime:
+
+```text
+ECOS_FE_COMPILER_ROOT=/path/to/ecc-fe-runtime
+ECOS_FE_RESOURCE_ROOTS=/path/to/ecc-fe-soc-ysyx-am[:/path/to/other/resource]
+ECOS_FE_SOC_ROOT=/path/to/ecc-fe-soc-ysyx-am
+```
+
+`ECOS_FE_RESOURCE_ROOTS` may contain SoC harnesses, CPU adapters, and future
+test resources. This keeps the CLI runtime small while allowing ECOS Studio to
+compose the complete flow from installed resources.
 
 RT-Thread BSP notes live in [`fecompiler/thirdparty/README`](fecompiler/thirdparty/README).
 

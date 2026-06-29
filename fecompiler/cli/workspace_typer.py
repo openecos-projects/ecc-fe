@@ -1,4 +1,4 @@
-"""Typer command bindings for the fecompiler workspace CLI.
+"""Typer command bindings for the ecc-fe workspace CLI.
 
 This module owns only the Typer-facing command shape.  Workspace business
 logic, JSON rendering, and compatibility behavior stay in ``workspace.py``.

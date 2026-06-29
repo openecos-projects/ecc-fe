@@ -13,6 +13,7 @@ from fecompiler.cli import workspace as workspace_cli
 from fecompiler.catalog import registry as catalog_registry
 from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
+from fecompiler.soc.registry import soc_runtime_options
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.tools.common.rtl_inputs import slang_defines, verilator_lint_defines
 from fecompiler.tools.slang.runner import SlangElabStep, parse_slang_diagnostics, scan_rtl_structure
@@ -68,6 +69,53 @@ def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:
     (driver_dir / "difftest.cpp").write_text("int difftest(){return 0;}\n", encoding="utf-8")
     (scripts_dir / "build_test.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     return soc_root.resolve()
+
+
+def _write_fake_soc_manifests(soc_root: Path, directory_value: str = ".") -> None:
+    (soc_root / "catalog.json").write_text(
+        json.dumps(
+            {
+                "id": "ysyx-am-soc",
+                "name": "YSYX AM SoC Harness",
+                "description": "External test SoC harness.",
+                "variant": "soc1",
+                "isa": ["rv32"],
+                "bus": "ysyx-soc",
+                "integration_level": "sim_ready",
+                "status": "stable",
+                "wrapper_contract": "ecos-sim-wrapper-v1",
+                "wrapper_top": "ecos_sim_top",
+                "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+                "supports_difftest": True,
+                "supported_test_suites": ["smoke", "cpu-tests", "rtthread", "coremark"],
+                "directory": directory_value,
+                "tags": ["default"],
+            },
+        ),
+        encoding="utf-8",
+    )
+    (soc_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "ysyx-am-soc",
+                "name": "YSYX AM SoC Harness",
+                "variant": "soc1",
+                "top_module": "ecos_sim_top",
+                "sim_ready": True,
+                "contract": "ecos-sim-wrapper-v1",
+                "soc_filelist": "filelist.soc.f",
+                "testbench": "driver/main.cpp",
+                "sim_cpp_sources": ["driver/dpi_mem.cpp", "driver/difftest.cpp"],
+                "sim_cflags": ["-I{soc_root}"],
+                "sim_ldflags": ["-ldl"],
+                "sim_programs_dir": "tests/programs",
+                "sim_tests_dir": "tests/out",
+                "sim_build_test_script": "scripts/build_test.sh",
+                "supports_difftest": True,
+            },
+        ),
+        encoding="utf-8",
+    )
 
 
 def _is_verilator_compile_cmd(cmd: list[str]) -> bool:
@@ -636,6 +684,79 @@ def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, m
     assert ws["sim_build_test_script"] == str(soc_root / "scripts" / "build_test.sh")
 
 
+def test_workspace_create_discovers_external_soc_resource_root(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe-runtime"
+    fe_root.mkdir()
+    soc_root = _make_fake_soc_root(tmp_path / "resources", "ysyx-am-soc")
+    _write_fake_soc_manifests(soc_root)
+    cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
+    cpu_filelist.parent.mkdir()
+    cpu_filelist.write_text("", encoding="utf-8")
+    request = tmp_path / "create_external_soc.json"
+    request.write_text(
+        json.dumps(
+            {
+                "directory": str(tmp_path / "ws_external_soc"),
+                "cpu_filelist": str(cpu_filelist),
+                "soc_harness_id": "ysyx-am-soc",
+                "sim_cflags": [],
+                "sim_cpp_sources": [],
+                "sim_ldflags": [],
+                "parameters": {"Design": "chip", "Top module": "ysyxSoCTop"},
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(soc_root))
+    catalog_registry._catalog.cache_clear()
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    ws = load_workspace(str(tmp_path / "ws_external_soc"))
+
+    assert ws["soc_wrapper_id"] == "ysyx-am-soc"
+    assert ws["sim_soc_root"] == str(soc_root)
+    assert ws["soc_filelist"] == str(soc_root / "filelist.soc.f")
+    assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
+    assert ws["sim_cpp_sources"] == [
+        str(soc_root / "driver" / "dpi_mem.cpp"),
+        str(soc_root / "driver" / "difftest.cpp"),
+    ]
+
+
+def test_soc_runtime_options_discovers_external_soc_root(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe-runtime"
+    fe_root.mkdir()
+    soc_root = _make_fake_soc_root(tmp_path / "resources", "ysyx-am-soc")
+    _write_fake_soc_manifests(soc_root)
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(soc_root))
+
+    options = soc_runtime_options("ysyx-am-soc")
+
+    assert options["sim_soc_root"] == str(soc_root)
+    assert options["soc_filelist"] == str(soc_root / "filelist.soc.f")
+
+
+def test_external_soc_catalog_can_keep_legacy_builtin_directory(tmp_path, monkeypatch):
+    fe_root = tmp_path / "ecc-fe-runtime"
+    fe_root.mkdir()
+    soc_root = _make_fake_soc_root(tmp_path / "resources", "ysyx-am-soc")
+    _write_fake_soc_manifests(soc_root, "fecompiler/thirdparty/SoC")
+
+    monkeypatch.setenv("ECOS_FE_COMPILER_ROOT", str(fe_root))
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(soc_root))
+    catalog_registry._catalog.cache_clear()
+
+    payload = catalog_registry.catalog_payload()
+    soc = next(item for item in payload["soc_harnesses"] if item["id"] == "ysyx-am-soc")
+
+    assert soc["directory"] == str(soc_root)
+    assert all(item["id"] != "ysyx-am-soc" for item in payload["cores"])
+
+
 def test_workspace_create_rejects_removed_placeholder_soc_harness(tmp_path, monkeypatch):
     fe_root = tmp_path / "ecc-fe"
     old_soc_root = _make_fake_soc_root(fe_root, "SoC")
@@ -758,7 +879,7 @@ def test_workspace_help_uses_typer_when_available(capsys):
     assert workspace_cli_run(["--help"]) == 0
 
     output = capsys.readouterr().out
-    assert "Usage: fecompiler workspace" in output
+    assert "Usage: ecc-fe workspace" in output
     assert "create" in output
     assert "run-step" in output
 
@@ -770,7 +891,7 @@ def test_workspace_create_help_lists_gui_compatible_options(capsys):
     assert workspace_cli_run(["create", "--help"]) == 0
 
     output = capsys.readouterr().out
-    assert "Usage: fecompiler workspace create" in output
+    assert "Usage: ecc-fe workspace create" in output
     assert "--input-json" in output
     assert "--cpu-filelist" in output
     assert "--soc-variant" in output

@@ -2,12 +2,12 @@
 
 This command shape mirrors the Electron CLI bridge used by ecos-studio main:
 
-    python3 -m fecompiler.cli.main workspace create --input-json request.json --json
-    python3 -m fecompiler.cli.main workspace load --directory <workspace> --json
-    python3 -m fecompiler.cli.main workspace run-flow --directory <workspace> --json
-    python3 -m fecompiler.cli.main workspace run-step --directory <workspace> --step sim --json
-    python3 -m fecompiler.cli.main workspace get-info --directory <workspace> --step sim --id subflow --json
-    python3 -m fecompiler.cli.main workspace get-home --directory <workspace> --json
+    ecc-fe workspace create --input-json request.json --json
+    ecc-fe workspace load --directory <workspace> --json
+    ecc-fe workspace run-flow --directory <workspace> --json
+    ecc-fe workspace run-step --directory <workspace> --step sim --json
+    ecc-fe workspace get-info --directory <workspace> --step sim --id subflow --json
+    ecc-fe workspace get-home --directory <workspace> --json
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class WorkspaceCliError(Exception):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fecompiler workspace",
+        prog="ecc-fe workspace",
         description="Manage fecompiler workspaces with ECOS Studio CLI-compatible JSON responses.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -221,7 +221,7 @@ def _run_typer(argv: Sequence[str]) -> int:
     try:
         result = command.main(
             args=list(argv),
-            prog_name="fecompiler workspace",
+            prog_name="ecc-fe workspace",
             standalone_mode=False,
         )
     except click.exceptions.Exit as exc:

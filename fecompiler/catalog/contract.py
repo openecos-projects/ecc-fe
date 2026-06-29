@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.catalog.registry import catalog_payload
+from fecompiler.resources import frontend_repo_root
 
 CPU_WRAPPER_CONTRACT = "ecos-cpu-wrapper-v1"
 CPU_SOCKET_CONTRACT = "ysyx-axi-cpu-socket-v1"
@@ -386,10 +386,7 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _frontend_repo_root() -> Path:
-    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-    return Path(__file__).resolve().parents[2]
+    return frontend_repo_root()
 
 
 def _dict_items(value: Any) -> list[dict[str, Any]]:

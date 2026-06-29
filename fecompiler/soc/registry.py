@@ -9,10 +9,11 @@ runtime description here.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from fecompiler.resources import frontend_repo_root, soc_manifest_roots
 
 
 DEFAULT_SOC_WRAPPER_ID = "ysyx-am-soc"
@@ -116,10 +117,7 @@ def _normalize_soc_wrapper_id(value: str) -> str:
 
 
 def _frontend_repo_root() -> Path:
-    env_root = os.getenv("ECOS_FE_COMPILER_ROOT", "").strip()
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-    return Path(__file__).resolve().parents[2]
+    return frontend_repo_root()
 
 
 def _soc_manifest(wrapper_id: str) -> dict[str, Any] | None:
@@ -174,21 +172,30 @@ def _wrapper_from_manifest(data: dict[str, Any]) -> SocWrapper:
 
 
 def _manifest_paths() -> dict[str, Path]:
-    root = _frontend_repo_root() / "fecompiler" / "thirdparty"
     paths: dict[str, Path] = {}
-    if not root.exists():
-        return paths
-    for manifest_path in sorted(root.glob("*/manifest.json")):
-        try:
-            with manifest_path.open(encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+    for root in soc_manifest_roots():
+        if not root.exists():
             continue
-        if not isinstance(data, dict):
-            continue
-        wrapper_id = str(data.get("id", "")).strip()
-        if wrapper_id:
-            paths[wrapper_id] = manifest_path
+        for manifest_path in _resource_manifest_paths(root):
+            try:
+                with manifest_path.open(encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            wrapper_id = str(data.get("id", "")).strip()
+            if wrapper_id:
+                paths[wrapper_id] = manifest_path
+    return paths
+
+
+def _resource_manifest_paths(root: Path) -> list[Path]:
+    paths = []
+    direct = root / "manifest.json"
+    if direct.is_file():
+        paths.append(direct)
+    paths.extend(sorted(root.glob("*/manifest.json")))
     return paths
 
 
