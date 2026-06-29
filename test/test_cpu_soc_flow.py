@@ -40,13 +40,7 @@ WS_DIR = DEFAULT_PROJECTS_ROOT / "cpu_soc_test"
 
 
 def _tool_ready() -> bool:
-    slang_local = REPO_ROOT / "fecompiler/tools/slang/bin/slang"
-    verilator_local = REPO_ROOT / "fecompiler/tools/verilator/bin/verilator"
-    return (
-        slang_local.exists() or shutil.which("slang") is not None
-    ) and (
-        verilator_local.exists() or shutil.which("verilator") is not None
-    )
+    return shutil.which("slang") is not None and shutil.which("verilator") is not None
 
 
 def _required_paths() -> list[Path]:
@@ -55,6 +49,8 @@ def _required_paths() -> list[Path]:
 
 def _riscv_toolchain_ready() -> bool:
     candidates = [
+        "riscv32-unknown-elf-gcc",
+        "riscv64-unknown-elf-gcc",
         "riscv64-none-elf-gcc",
         "riscv-none-elf-gcc",
         "riscv64-unknown-linux-gnu-gcc",

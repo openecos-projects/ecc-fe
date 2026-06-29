@@ -35,12 +35,6 @@ from fecompiler.utility.json import json_read, json_write
 
 # ── shared helper ─────────────────────────────────────────────────────────────
 
-_LOCAL_VERILATOR_BIN = Path(__file__).parent / "bin" / "verilator"
-_SYSTEM_VERILATOR_BIN = Path("/usr/local/bin/verilator")
-_LOCAL_VERILATOR_INCLUDE = Path(__file__).parent / "include"
-_SYSTEM_VERILATOR_INCLUDE = Path("/usr/local/share/verilator/include")
-_WORKSPACE_REL_VERILATOR_BIN = Path("fecompiler/tools/verilator/bin/verilator")
-_WORKSPACE_REL_VERILATOR_INCLUDE = Path("fecompiler/tools/verilator/include")
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
 _WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.py")
 _BENCHMARK_PROGRAM_NAMES = {"coremark"}
@@ -76,35 +70,13 @@ _RTTHREAD_REQUIRED_LOG_MARKERS = (
 )
 
 
-def _repo_tool_path(local: Path, workspace_rel: Path, system: Path) -> Path | None:
-    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
-    candidates = [
-        local,
-        Path(workspace_dir) / workspace_rel if workspace_dir else None,
-        Path.cwd() / workspace_rel,
-        system,
-    ]
-    return next((path for path in candidates if path is not None and path.exists()), None)
-
-
 def _verilator_cmd() -> str:
-    """Return verilator executable path (repo-local first, then system)."""
-    cmd = _repo_tool_path(
-        _LOCAL_VERILATOR_BIN,
-        _WORKSPACE_REL_VERILATOR_BIN,
-        _SYSTEM_VERILATOR_BIN,
-    )
-    return str(cmd) if cmd is not None else "verilator"
-
-
-def _verilator_include_args() -> list[str]:
-    """Return include arg for verilator runtime headers if present."""
-    include = _repo_tool_path(
-        _LOCAL_VERILATOR_INCLUDE,
-        _WORKSPACE_REL_VERILATOR_INCLUDE,
-        _SYSTEM_VERILATOR_INCLUDE,
-    )
-    return [f"-I{include}"] if include is not None else []
+    """Return the Resource Manager/PATH-provided verilator executable."""
+    for env_name in ("ECOS_VERILATOR", "VERILATOR"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return shutil.which("verilator") or "verilator"
 
 
 def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
@@ -1015,6 +987,8 @@ def _riscv_cross_compile_prefix() -> str:
     if os.getenv("RISCV_PREFIX", "").strip():
         return os.getenv("RISCV_PREFIX", "").strip()
     for prefix in (
+        "riscv32-unknown-elf-",
+        "riscv64-unknown-elf-",
         "riscv64-none-elf-",
         "riscv-none-elf-",
         "riscv64-unknown-linux-gnu-",
@@ -1106,7 +1080,6 @@ class VerilatorLintStep(BaseStep):
             "-Wall",
             "-Wno-fatal",
             "-Wno-DECLFILENAME",
-            *_verilator_include_args(),
             *verilator_incdir_args(workspace),
             *verilator_lint_define_args(workspace),
             "--top",
@@ -1496,7 +1469,6 @@ class VerilatorSimStep(BaseStep):
             "-Wno-fatal",
             "--timing",
             "--trace",
-            *_verilator_include_args(),
             *verilator_incdir_args(workspace),
             *verilator_define_args(workspace),
             *_sim_cflags_args(workspace),

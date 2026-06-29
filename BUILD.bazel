@@ -156,8 +156,6 @@ py_binary(
         "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/thirdparty/rt-thread-am/**",
-        "fecompiler/tools/slang/**",
-        "fecompiler/tools/verilator/**",
     ]),
 )
 
@@ -212,8 +210,6 @@ py_test(
     data = glob([
         "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
-        "fecompiler/tools/slang/**",
-        "fecompiler/tools/verilator/**",
     ]),
 )
 
@@ -230,8 +226,6 @@ py_test(
         "fecompiler/thirdparty/SoC2/**",
         "fecompiler/thirdparty/SoC3/**",
         "fecompiler/thirdparty/rt-thread-am/**",
-        "fecompiler/tools/slang/**",
-        "fecompiler/tools/verilator/**",
     ]),
 )
 
@@ -246,8 +240,6 @@ py_test(
         "examples/cl3/**",
         "fecompiler/thirdparty/SoC/**",
         "fecompiler/thirdparty/rt-thread-am/**",
-        "fecompiler/tools/slang/**",
-        "fecompiler/tools/verilator/**",
     ]),
 )
 

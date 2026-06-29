@@ -279,17 +279,23 @@ python3 -m pytest test/test_examples.py -q
 
 Detailed test notes live in [`test/README.md`](test/README.md).
 
-## Third-party Tools
+## Tool Dependencies
 
-Repo-local binaries are expected under:
+`ecc-fe` does not carry Slang, Verilator, Yosys, Surfer, or the RISC-V GCC
+toolchain as repo-local binaries. Install them through ECOS Studio Resource
+Manager, or make equivalent executables available on `PATH`.
+
+The frontend flow consumes these runtime contracts:
 
 ```text
-fecompiler/tools/slang/bin/slang
-fecompiler/tools/verilator/bin/verilator
+slang                         # or ECOS_SLANG=/path/to/slang
+verilator                     # or ECOS_VERILATOR=/path/to/verilator
+riscv32-unknown-elf-gcc       # or RISCV_PREFIX=<prefix>
+yosys                         # provided by the Yosys/OSS CAD Suite resource
+ECOS_SURFER_ASSETS_PATH       # Resource Manager-installed Surfer assets
 ```
 
-Build instructions for third-party tools and RT-Thread BSP notes live in
-[`fecompiler/thirdparty/README`](fecompiler/thirdparty/README).
+RT-Thread BSP notes live in [`fecompiler/thirdparty/README`](fecompiler/thirdparty/README).
 
 ## Documentation
 

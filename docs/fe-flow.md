@@ -154,8 +154,8 @@ sim_verilator/
 | Step | Tool | 主要输入 | 主要输出 | 子步骤 |
 |---|---|---|---|---|
 | `prepare_fe` | Python parser | `cpu_filelist`, `soc_filelist`; 或 legacy `input_filelist`; 或 `origin_verilog` | `output/merged_rtl.f`, `output/prepared_inputs.json`, `report/prepare.rpt` | `collect inputs`, `merge filelist`, `persist state`, `report` |
-| `elab_slang` | `fecompiler/tools/slang/bin/slang` 或 PATH 中的 `slang` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/elab.rpt` | `elaborate`, `report` |
-| `lint_verilator` | repo-local 或系统 `verilator` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/lint.rpt` | `lint`, `report` |
+| `elab_slang` | Resource Manager/PATH 中的 `slang`，或 `ECOS_SLANG` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/elab.rpt` | `elaborate`, `report` |
+| `lint_verilator` | Resource Manager/PATH 中的 `verilator`，或 `ECOS_VERILATOR` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/lint.rpt` | `lint`, `report` |
 | `sim_verilator` | `verilator --binary`; 可选 SoC `scripts/build_test.sh`; 可选 difftest ref so | RTL, `testbench`, `sim_cpp_sources`, `sim_cflags`, `sim_ldflags`, `sim_run_args`, cases 配置 | `output/<design>_sim`, `output/cases/<case>/`, `report/cases.json`, `report/runs/<run_id>/` | `compile`, `simulate`, `report` |
 
 ## 数据如何流动

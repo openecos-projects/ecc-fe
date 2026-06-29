@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,6 @@ from fecompiler.utility.json import json_write
 
 
 # ── slang binary location ─────────────────────────────────────────────────────
-
-_SLANG_BIN = Path(__file__).parent / "bin" / "slang"
-_WORKSPACE_REL_SLANG_BIN = Path("fecompiler/tools/slang/bin/slang")
 
 _MODULE_BLOCK_RE = re.compile(
     r"\bmodule\s+(?P<name>[A-Za-z_][\w$]*)\b(?P<body>.*?)(?:\bendmodule\b|\Z)",
@@ -106,20 +104,12 @@ _SYSTEMVERILOG_PRIMITIVES = {
 
 
 def _slang_cmd() -> str:
-    """Return path to slang binary (built or system)."""
-    workspace_dir = os.getenv("BUILD_WORKSPACE_DIRECTORY", "").strip()
-    workspace_bin = (
-        Path(workspace_dir) / _WORKSPACE_REL_SLANG_BIN if workspace_dir else None
-    )
-    cwd_bin = Path.cwd() / _WORKSPACE_REL_SLANG_BIN
-
-    if _SLANG_BIN.exists():
-        return str(_SLANG_BIN)
-    if workspace_bin is not None and workspace_bin.exists():
-        return str(workspace_bin)
-    if cwd_bin.exists():
-        return str(cwd_bin)
-    return "slang"   # fall back to system PATH
+    """Return the Resource Manager/PATH-provided slang executable."""
+    for env_name in ("ECOS_SLANG", "SLANG"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return shutil.which("slang") or "slang"
 
 
 # ── SlangElabStep ─────────────────────────────────────────────────────────────
