@@ -32,8 +32,11 @@ jobs:
           mkdir -p dist "${ROOT}"
           cp -a bin fecompiler examples docs README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
           find "${ROOT}" \
-            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) -prune -exec rm -rf {} + \
-            -o \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) -type f -delete
+            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
+            -type d -prune -exec rm -rf {} +
+          find "${ROOT}" \
+            \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
+            -type f -delete
 
           tar -czf "dist/${ARCHIVE}" "${ROOT}"
           SHA256="$(sha256sum "dist/${ARCHIVE}" | awk '{print $1}')"
