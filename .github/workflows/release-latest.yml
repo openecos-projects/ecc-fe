@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release-latest:
@@ -61,12 +61,10 @@ jobs:
       - name: Publish latest release
         uses: softprops/action-gh-release@v2
         with:
-          repository: openecos-projects/ecos-resource-assets
-          token: ${{ secrets.ECOS_RESOURCE_ASSETS_TOKEN }}
           tag_name: ecc-fe-latest
           name: ECC-FE latest
           body: |
-            Mutable latest ECC-FE runtime package generated from openecos-projects/ecc-fe `main`.
+            Mutable latest ECC-FE runtime package generated from `main`.
           prerelease: false
           make_latest: false
           overwrite_files: true
