@@ -1,0 +1,73 @@
+name: Release latest ECC-FE runtime
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Package runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="latest"
+          ROOT="ecc-fe-${VERSION}"
+          ARCHIVE="ecc-fe-${VERSION}.tar.gz"
+          SHA_FILE="${ARCHIVE}.sha256"
+          METADATA="ecc-fe-${VERSION}.metadata.json"
+
+          mkdir -p dist "${ROOT}"
+          cp -a bin fecompiler examples docs README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
+          find "${ROOT}" \
+            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) -prune -exec rm -rf {} + \
+            -o \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) -type f -delete
+
+          tar -czf "dist/${ARCHIVE}" "${ROOT}"
+          SHA256="$(sha256sum "dist/${ARCHIVE}" | awk '{print $1}')"
+          SIZE="$(stat -c '%s' "dist/${ARCHIVE}")"
+          printf '%s  %s\n' "${SHA256}" "${ARCHIVE}" > "dist/${SHA_FILE}"
+
+          export VERSION ARCHIVE SHA256 SIZE METADATA
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const metadata = {
+            name: 'ecc-fe',
+            version: process.env.VERSION,
+            commit: process.env.GITHUB_SHA,
+            sha256: process.env.SHA256,
+            size: Number(process.env.SIZE),
+            built_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+            archive: process.env.ARCHIVE,
+          }
+          fs.writeFileSync(`dist/${process.env.METADATA}`, `${JSON.stringify(metadata, null, 2)}\n`)
+          NODE
+
+      - name: Publish latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: openecos-projects/ecos-resource-assets
+          token: ${{ secrets.ECOS_RESOURCE_ASSETS_TOKEN }}
+          tag_name: ecc-fe-latest
+          name: ECC-FE latest
+          body: |
+            Mutable latest ECC-FE runtime package generated from openecos-projects/ecc-fe `main`.
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            dist/ecc-fe-latest.tar.gz
+            dist/ecc-fe-latest.tar.gz.sha256
+            dist/ecc-fe-latest.metadata.json
