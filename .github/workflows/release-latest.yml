@@ -28,13 +28,24 @@ jobs:
           ARCHIVE="ecc-fe-${VERSION}.tar.gz"
           SHA_FILE="${ARCHIVE}.sha256"
           METADATA="ecc-fe-${VERSION}.metadata.json"
+          SOC_VERSION="latest"
+          SOC_ROOT="ecc-fe-soc-ysyx-am-${SOC_VERSION}"
+          SOC_ARCHIVE="${SOC_ROOT}.tar.gz"
+          SOC_SHA_FILE="${SOC_ARCHIVE}.sha256"
 
-          mkdir -p dist "${ROOT}"
+          mkdir -p dist "${ROOT}" "${SOC_ROOT}/fecompiler/thirdparty"
           cp -a bin fecompiler examples docs README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
+          cp -a fecompiler/thirdparty/SoC "${SOC_ROOT}/fecompiler/thirdparty/"
           find "${ROOT}" \
             \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
             -type d -prune -exec rm -rf {} +
           find "${ROOT}" \
+            \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
+            -type f -delete
+          find "${SOC_ROOT}" \
+            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
+            -type d -prune -exec rm -rf {} +
+          find "${SOC_ROOT}" \
             \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
             -type f -delete
 
@@ -42,6 +53,9 @@ jobs:
           SHA256="$(sha256sum "dist/${ARCHIVE}" | awk '{print $1}')"
           SIZE="$(stat -c '%s' "dist/${ARCHIVE}")"
           printf '%s  %s\n' "${SHA256}" "${ARCHIVE}" > "dist/${SHA_FILE}"
+          tar -czf "dist/${SOC_ARCHIVE}" "${SOC_ROOT}"
+          SOC_SHA256="$(sha256sum "dist/${SOC_ARCHIVE}" | awk '{print $1}')"
+          printf '%s  %s\n' "${SOC_SHA256}" "${SOC_ARCHIVE}" > "dist/${SOC_SHA_FILE}"
 
           export VERSION ARCHIVE SHA256 SIZE METADATA
           node - <<'NODE'
@@ -83,3 +97,19 @@ jobs:
             dist/ecc-fe-latest.tar.gz
             dist/ecc-fe-latest.tar.gz.sha256
             dist/ecc-fe-latest.metadata.json
+
+      - name: Publish latest SoC harness release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: openecos-projects/ecos-resource-assets
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ecc-fe-soc-ysyx-am-latest
+          name: ECC-FE YSYX AM SoC Harness latest
+          body: |
+            Mutable latest ECC-FE YSYX AM SoC harness package generated from openecos-projects/ecc-fe `main`.
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            dist/ecc-fe-soc-ysyx-am-latest.tar.gz
+            dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
