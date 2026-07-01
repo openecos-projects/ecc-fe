@@ -32,22 +32,24 @@ jobs:
           SOC_ROOT="ecc-fe-soc-ysyx-am-${SOC_VERSION}"
           SOC_ARCHIVE="${SOC_ROOT}.tar.gz"
           SOC_SHA_FILE="${SOC_ARCHIVE}.sha256"
+          EXAMPLES_VERSION="latest"
+          EXAMPLES_ROOT="ecc-fe-examples-${EXAMPLES_VERSION}"
+          EXAMPLES_ARCHIVE="${EXAMPLES_ROOT}.tar.gz"
+          EXAMPLES_SHA_FILE="${EXAMPLES_ARCHIVE}.sha256"
 
-          mkdir -p dist "${ROOT}" "${SOC_ROOT}/fecompiler/thirdparty"
-          cp -a bin fecompiler examples docs README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
+          mkdir -p dist "${ROOT}" "${SOC_ROOT}/fecompiler/thirdparty" "${EXAMPLES_ROOT}"
+          cp -a bin fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
           cp -a fecompiler/thirdparty/SoC "${SOC_ROOT}/fecompiler/thirdparty/"
-          find "${ROOT}" \
-            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
-            -type d -prune -exec rm -rf {} +
-          find "${ROOT}" \
-            \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
-            -type f -delete
-          find "${SOC_ROOT}" \
-            \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
-            -type d -prune -exec rm -rf {} +
-          find "${SOC_ROOT}" \
-            \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
-            -type f -delete
+          cp -a examples "${EXAMPLES_ROOT}/"
+          rm -rf "${ROOT}/fecompiler/thirdparty/SoC"
+          for PACKAGE_ROOT in "${ROOT}" "${SOC_ROOT}" "${EXAMPLES_ROOT}"; do
+            find "${PACKAGE_ROOT}" \
+              \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
+              -type d -prune -exec rm -rf {} +
+            find "${PACKAGE_ROOT}" \
+              \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
+              -type f -delete
+          done
 
           tar -czf "dist/${ARCHIVE}" "${ROOT}"
           SHA256="$(sha256sum "dist/${ARCHIVE}" | awk '{print $1}')"
@@ -56,6 +58,9 @@ jobs:
           tar -czf "dist/${SOC_ARCHIVE}" "${SOC_ROOT}"
           SOC_SHA256="$(sha256sum "dist/${SOC_ARCHIVE}" | awk '{print $1}')"
           printf '%s  %s\n' "${SOC_SHA256}" "${SOC_ARCHIVE}" > "dist/${SOC_SHA_FILE}"
+          tar -czf "dist/${EXAMPLES_ARCHIVE}" "${EXAMPLES_ROOT}"
+          EXAMPLES_SHA256="$(sha256sum "dist/${EXAMPLES_ARCHIVE}" | awk '{print $1}')"
+          printf '%s  %s\n' "${EXAMPLES_SHA256}" "${EXAMPLES_ARCHIVE}" > "dist/${EXAMPLES_SHA_FILE}"
 
           export VERSION ARCHIVE SHA256 SIZE METADATA
           node - <<'NODE'
@@ -113,3 +118,19 @@ jobs:
           files: |
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
+
+      - name: Publish latest examples release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: openecos-projects/ecos-resource-assets
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ecc-fe-examples-latest
+          name: ECC-FE Examples latest
+          body: |
+            Mutable latest ECC-FE examples package generated from openecos-projects/ecc-fe `main`.
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            dist/ecc-fe-examples-latest.tar.gz
+            dist/ecc-fe-examples-latest.tar.gz.sha256
