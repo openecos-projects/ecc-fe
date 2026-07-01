@@ -206,7 +206,7 @@ def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:
 
     status = str(probe.get("status", "")).strip().lower()
     if status in {"unavailable", "skipped", ""}:
-        return False
+        return True
 
     quality = probe.get("quality", {})
     gate = str(quality.get("gate", "") if isinstance(quality, dict) else "").strip().lower()
