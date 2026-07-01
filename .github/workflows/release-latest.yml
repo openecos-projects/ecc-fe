@@ -37,9 +37,9 @@ jobs:
           EXAMPLES_ARCHIVE="${EXAMPLES_ROOT}.tar.gz"
           EXAMPLES_SHA_FILE="${EXAMPLES_ARCHIVE}.sha256"
 
-          mkdir -p dist "${ROOT}" "${SOC_ROOT}/fecompiler/thirdparty" "${EXAMPLES_ROOT}"
+          mkdir -p dist "${ROOT}" "${SOC_ROOT}" "${EXAMPLES_ROOT}"
           cp -a bin fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
-          cp -a fecompiler/thirdparty/SoC "${SOC_ROOT}/fecompiler/thirdparty/"
+          cp -a fecompiler/thirdparty/SoC/. "${SOC_ROOT}/"
           cp -a examples "${EXAMPLES_ROOT}/"
           rm -rf "${ROOT}/fecompiler/thirdparty/SoC"
           for PACKAGE_ROOT in "${ROOT}" "${SOC_ROOT}" "${EXAMPLES_ROOT}"; do

@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -738,6 +741,37 @@ def test_soc_runtime_options_discovers_external_soc_root(tmp_path, monkeypatch):
 
     assert options["sim_soc_root"] == str(soc_root)
     assert options["soc_filelist"] == str(soc_root / "filelist.soc.f")
+
+
+def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
+    source_soc = Path(__file__).resolve().parent.parent / "fecompiler" / "thirdparty" / "SoC"
+    soc_root = tmp_path / "ysyx-am-soc"
+    shutil.copytree(source_soc, soc_root)
+
+    examples_root = tmp_path / "ecc-fe-examples"
+    cpu_root = examples_root / "examples" / "cl3"
+    (cpu_root / "cl3_verilog").mkdir(parents=True)
+    (cpu_root / "cl3_verilog" / "filelist.f").write_text("CL3Top.sv\n", encoding="utf-8")
+
+    env = {
+        **os.environ,
+        "ECOS_FE_RESOURCE_ROOTS": str(examples_root),
+    }
+    env.pop("CPU_ROOT", None)
+    result = subprocess.run(
+        [str(soc_root / "scripts" / "gen_filelists.sh")],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (cpu_root / "filelist.cpu.f").read_text(encoding="utf-8").splitlines() == [
+        "cl3_verilog/difftest_info_pkg.sv",
+        "cl3_verilog/difftest.sv",
+        "cl3_verilog/CL3Top.sv",
+    ]
 
 
 def test_external_soc_catalog_can_keep_legacy_builtin_directory(tmp_path, monkeypatch):

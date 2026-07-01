@@ -6,7 +6,43 @@ BUILD_ROOT="${ROOT}/build"
 MDIR="${BUILD_ROOT}/verilator"
 OUT_BIN="${1:-${BUILD_ROOT}/soc_top}"
 VERILATOR_BIN="${VERILATOR_BIN:-verilator}"
-CPU_ROOT="${CPU_ROOT:-/home/luyoung/ecc-fe/examples/cl3}"
+
+find_default_cpu_root() {
+  local candidate
+  local roots="${ECOS_FE_RESOURCE_ROOTS:-}"
+  if [[ -n "${roots}" ]]; then
+    local -a resource_roots
+    IFS=':' read -r -a resource_roots <<< "${roots}"
+    for root in "${resource_roots[@]}"; do
+      for candidate in "${root}/examples/cl3" "${root}/cl3"; do
+        if [[ -f "${candidate}/filelist.cpu.f" ]]; then
+          cd "${candidate}" && pwd
+          return 0
+        fi
+      done
+    done
+  fi
+
+  for candidate in \
+    "${ROOT}/../../../examples/cl3" \
+    "${ROOT}/examples/cl3" \
+    "${PWD}/examples/cl3"; do
+    if [[ -f "${candidate}/filelist.cpu.f" ]]; then
+      cd "${candidate}" && pwd
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if [[ -z "${CPU_ROOT:-}" ]]; then
+  if ! CPU_ROOT="$(find_default_cpu_root)"; then
+    echo "[build_soc_sim] CPU_ROOT is not set and examples/cl3 was not found." >&2
+    echo "[build_soc_sim] Set CPU_ROOT or install the ecc-fe-examples resource." >&2
+    exit 1
+  fi
+fi
 
 if command -v nproc >/dev/null 2>&1; then
   JOBS_DEFAULT="$(nproc)"
