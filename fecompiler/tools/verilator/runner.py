@@ -30,13 +30,17 @@ from fecompiler.tools.verilator.subflow import (
     init_lint_subflow,
     init_sim_subflow,
 )
+from fecompiler.resources import (
+    resolve_difftest_reference_model,
+    resolve_rtthread_am_root,
+    resolve_rtthread_prepare_helper,
+)
 from fecompiler.utility.json import json_read, json_write
 
 
 # ── shared helper ─────────────────────────────────────────────────────────────
 
 _WORKSPACE_REL_SOC_ROOT = Path("fecompiler/thirdparty/SoC")
-_WORKSPACE_REL_RTTHREAD_PREPARE = Path("fecompiler/thirdparty/rtthread_prepare.py")
 _BENCHMARK_PROGRAM_NAMES = {"coremark"}
 _COREMARK_EXPECTED_CRC = "0x3df51153"
 _COREMARK_ITERATIONS = 1
@@ -235,7 +239,7 @@ def _rtthread_ref_so(workspace: dict[str, Any]) -> Path:
     soc_root = _workspace_soc_root(workspace)
     if soc_root is None:
         soc_root = _invocation_root() / _WORKSPACE_REL_SOC_ROOT
-    return soc_root / "tools" / "riscv32-spike-so"
+    return resolve_difftest_reference_model(soc_root)
 
 
 def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:
@@ -861,6 +865,8 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     _apply_cpu_program_build_env(workspace, env, lines)
     if any(src.stem == "coremark" for src in sources):
         _apply_coremark_build_env(workspace, env, lines)
+    if any(src.stem == "rtthread" for src in sources):
+        _apply_rtthread_build_env(workspace, env, lines)
     link_base = str(workspace.get("sim_program_link_base", "")).strip()
     if link_base:
         env["SOC_PROGRAM_LINK_BASE"] = link_base
@@ -924,6 +930,19 @@ def _build_program_source_label(src: Path, name: str) -> str:
     return "rtthread-am BSP" if name == "rtthread" else str(src)
 
 
+def _apply_rtthread_build_env(workspace: dict[str, Any], env: dict[str, str], lines: list[str]) -> None:
+    soc_root = _workspace_soc_root(workspace)
+    rtthread_root = resolve_rtthread_am_root(soc_root)
+    if rtthread_root.exists():
+        env["RTTHREAD_AM_ROOT"] = str(rtthread_root)
+        lines.append(f"[build_program] rtthread_am_root={rtthread_root}")
+
+    helper = resolve_rtthread_prepare_helper(soc_root)
+    if helper.is_file():
+        env["RTTHREAD_PREPARE"] = str(helper)
+        lines.append(f"[build_program] rtthread_prepare={helper}")
+
+
 def _build_program_failure_diagnosis(name: str, output: str) -> str:
     if name != "rtthread":
         return ""
@@ -942,11 +961,7 @@ def _rtthread_build_preflight_errors(workspace: dict[str, Any]) -> list[str]:
     errors: list[str] = []
 
     soc_root = _workspace_soc_root(workspace)
-    rtthread_root = Path(os.getenv("RTTHREAD_AM_ROOT", "")).expanduser() if os.getenv("RTTHREAD_AM_ROOT") else None
-    if rtthread_root is None and soc_root is not None:
-        rtthread_root = soc_root.parent / "rt-thread-am"
-    if rtthread_root is None:
-        rtthread_root = _invocation_root() / "rt-thread-am"
+    rtthread_root = resolve_rtthread_am_root(soc_root)
     rtthread_bsp = rtthread_root / "bsp" / "abstract-machine"
     if not rtthread_bsp.is_dir():
         errors.append(f"rt-thread-am BSP not found: {rtthread_bsp}")
@@ -973,14 +988,8 @@ def _rtthread_build_preflight_errors(workspace: dict[str, Any]) -> list[str]:
 
 def _rtthread_prepare_helper(workspace: dict[str, Any]) -> Path | None:
     soc_root = _workspace_soc_root(workspace)
-    candidates: list[Path] = []
-    if soc_root is not None:
-        candidates.append(soc_root.parent / "rtthread_prepare.py")
-    candidates.extend([
-        _invocation_root() / _WORKSPACE_REL_RTTHREAD_PREPARE,
-        Path(__file__).resolve().parents[2] / "thirdparty" / "rtthread_prepare.py",
-    ])
-    return next((path.resolve() for path in candidates if path.is_file()), None)
+    helper = resolve_rtthread_prepare_helper(soc_root)
+    return helper if helper.is_file() else None
 
 
 def _riscv_cross_compile_prefix() -> str:

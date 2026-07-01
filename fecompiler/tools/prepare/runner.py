@@ -10,6 +10,7 @@ from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
+from fecompiler.resources import resolve_thirdparty_path
 from fecompiler.utility.json import json_read, json_write
 
 
@@ -467,6 +468,7 @@ class PrepareStep(BaseStep):
                     continue
                 nested_ref = nested_ref.strip("\"'")
                 nested_path = Path(nested_ref) if Path(nested_ref).is_absolute() else base / nested_ref
+                nested_path = resolve_thirdparty_path(nested_path)
                 nested = PrepareStep._parse_sv_filelist(str(nested_path), visited)
                 resolved.extend(nested["rtl_files"])
                 incdirs.extend(nested["incdirs"])
@@ -481,7 +483,7 @@ class PrepareStep(BaseStep):
                     if not inc:
                         continue
                     inc_path = Path(inc) if Path(inc).is_absolute() else base / inc
-                    incdirs.append(inc_path.expanduser().resolve())
+                    incdirs.append(resolve_thirdparty_path(inc_path))
                 continue
             if line.startswith("+define+"):
                 payload = line.removeprefix("+define+").strip()
@@ -499,7 +501,7 @@ class PrepareStep(BaseStep):
                 continue
 
             src = Path(token) if Path(token).is_absolute() else base / token
-            src = src.expanduser().resolve()
+            src = resolve_thirdparty_path(src)
             if not src.exists():
                 raise FileNotFoundError(f"RTL source not found in {path}: {line}")
             resolved.append(src)

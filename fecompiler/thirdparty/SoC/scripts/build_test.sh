@@ -180,7 +180,7 @@ if [[ "${IS_RTTHREAD}" == "1" ]]; then
   RTTHREAD_AM_ROOT="${RTTHREAD_AM_ROOT:-${ROOT}/../rt-thread-am}"
   RTTHREAD_BSP="${RTTHREAD_AM_ROOT}/bsp/abstract-machine"
   RTTHREAD_ARCH="${RTTHREAD_ARCH:-riscv32-nemu}"
-  RTTHREAD_PREPARE="${ROOT}/../rtthread_prepare.py"
+  RTTHREAD_PREPARE="${RTTHREAD_PREPARE:-${ROOT}/../rtthread_prepare.py}"
   if [[ ! -d "${RTTHREAD_BSP}" ]]; then
     echo "rt-thread-am BSP not found: ${RTTHREAD_BSP}" >&2
     exit 1

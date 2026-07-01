@@ -45,6 +45,31 @@ def test_workspace_catalog_check_cli_returns_contract_summary(capsys):
     assert response["data"]["counts"]["sim_ready_soc"] == 1
 
 
+def test_prepare_filelist_resolves_external_thirdparty_resource(tmp_path, monkeypatch):
+    resource_root = tmp_path / "ecc-fe-cpu-rtl"
+    rtl = resource_root / "thirdparty" / "picorv32" / "picorv32.v"
+    incdir = resource_root / "thirdparty" / "picorv32" / "include"
+    rtl.parent.mkdir(parents=True)
+    incdir.mkdir()
+    rtl.write_text("module picorv32; endmodule\n", encoding="utf-8")
+
+    adapter_dir = tmp_path / "runtime" / "fecompiler" / "adapters" / "picorv32"
+    adapter_dir.mkdir(parents=True)
+    filelist = adapter_dir / "filelist.cpu.f"
+    filelist.write_text(
+        "+incdir+../../thirdparty/picorv32/include\n"
+        "../../thirdparty/picorv32/picorv32.v\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(resource_root))
+
+    parsed = PrepareStep._parse_sv_filelist(str(filelist))
+
+    assert parsed["rtl_files"] == [rtl.resolve()]
+    assert parsed["incdirs"] == [incdir.resolve()]
+
+
 def test_obi_cpu_wrappers_register_local_mmio_write_response():
     root = Path(__file__).resolve().parent.parent
     for rel in (

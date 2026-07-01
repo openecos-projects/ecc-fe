@@ -2099,6 +2099,24 @@ def test_rtthread_program_enables_default_difftest_args(tmp_path):
     assert "--timeout-ok" in args
 
 
+def test_rtthread_program_uses_external_difftest_ref_when_soc_ref_is_split(tmp_path, monkeypatch):
+    soc_root = tmp_path / "SoC"
+    ref_root = tmp_path / "ecc-fe-difftest-ref"
+    ref_so = ref_root / "tools" / "riscv32-spike-so"
+    soc_root.mkdir()
+    ref_so.parent.mkdir(parents=True)
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+    ref_so.write_bytes(b"")
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(ref_root))
+
+    args = _sim_run_args({
+        "soc_filelist": str(soc_root / "filelist.soc.f"),
+        "sim_program_names": ["rtthread"],
+    })
+
+    assert args[args.index("--ref") + 1] == str(ref_so.resolve())
+
+
 def test_rtthread_program_keeps_explicit_difftest_args(tmp_path):
     soc_root = tmp_path / "SoC"
     soc_root.mkdir()
@@ -2284,6 +2302,35 @@ def test_rtthread_build_preflight_allows_fallback_helper_without_scons(tmp_path,
         return f"/usr/bin/{command}"
 
     monkeypatch.setenv("AM_HOME", str(am_home))
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
+
+    workspace = {"soc_filelist": str(soc_root / "filelist.soc.f")}
+
+    assert _rtthread_prepare_helper(workspace) == helper.resolve()
+    assert _rtthread_build_preflight_errors(workspace) == []
+
+
+def test_rtthread_build_preflight_resolves_external_cpu_rtl_resource(tmp_path, monkeypatch):
+    soc_root = tmp_path / "ecc-fe-soc-ysyx-am" / "SoC"
+    cpu_resource = tmp_path / "ecc-fe-cpu-rtl"
+    helper = cpu_resource / "thirdparty" / "rtthread_prepare.py"
+    rtthread_bsp = cpu_resource / "thirdparty" / "rt-thread-am" / "bsp" / "abstract-machine"
+    am_home = tmp_path / "abstract-machine"
+    soc_root.mkdir(parents=True)
+    helper.parent.mkdir(parents=True)
+    rtthread_bsp.mkdir(parents=True)
+    am_home.mkdir()
+    helper.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (am_home / "Makefile").write_text("", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
+
+    def _fake_which(command):
+        if command == "scons":
+            return None
+        return f"/usr/bin/{command}"
+
+    monkeypatch.setenv("AM_HOME", str(am_home))
+    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(cpu_resource))
     monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
 
     workspace = {"soc_filelist": str(soc_root / "filelist.soc.f")}

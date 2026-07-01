@@ -10,7 +10,7 @@ from typing import Any
 
 from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
-from fecompiler.resources import catalog_manifest_roots, frontend_repo_root
+from fecompiler.resources import catalog_manifest_roots, frontend_repo_root, resolve_thirdparty_path
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -338,7 +338,7 @@ def _resolve_catalog_entry_paths(item: dict[str, Any], manifest_path: Path) -> d
             candidate = frontend_repo_root() / value
         else:
             candidate = manifest_path.parent / value
-        item[field] = str(candidate.resolve())
+        item[field] = str(resolve_thirdparty_path(candidate))
     return item
 
 
@@ -392,7 +392,7 @@ def _core_cpu_filelist(core: CatalogEntry | None) -> str:
     path = Path(builtin).expanduser()
     if path.is_absolute():
         return str(path)
-    return str((frontend_repo_root() / path).resolve())
+    return str(resolve_thirdparty_path(frontend_repo_root() / path))
 
 
 def _adapter_cpu_filelist(

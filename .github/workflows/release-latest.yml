@@ -32,17 +32,47 @@ jobs:
           SOC_ROOT="ecc-fe-soc-ysyx-am-${SOC_VERSION}"
           SOC_ARCHIVE="${SOC_ROOT}.tar.gz"
           SOC_SHA_FILE="${SOC_ARCHIVE}.sha256"
+          CPU_RTL_VERSION="latest"
+          CPU_RTL_ROOT="ecc-fe-cpu-rtl-${CPU_RTL_VERSION}"
+          CPU_RTL_ARCHIVE="${CPU_RTL_ROOT}.tar.gz"
+          CPU_RTL_SHA_FILE="${CPU_RTL_ARCHIVE}.sha256"
+          DIFFTEST_REF_VERSION="latest"
+          DIFFTEST_REF_ROOT="ecc-fe-difftest-ref-${DIFFTEST_REF_VERSION}"
+          DIFFTEST_REF_ARCHIVE="${DIFFTEST_REF_ROOT}.tar.gz"
+          DIFFTEST_REF_SHA_FILE="${DIFFTEST_REF_ARCHIVE}.sha256"
           EXAMPLES_VERSION="latest"
           EXAMPLES_ROOT="ecc-fe-examples-${EXAMPLES_VERSION}"
           EXAMPLES_ARCHIVE="${EXAMPLES_ROOT}.tar.gz"
           EXAMPLES_SHA_FILE="${EXAMPLES_ARCHIVE}.sha256"
 
-          mkdir -p dist "${ROOT}" "${SOC_ROOT}" "${EXAMPLES_ROOT}"
+          mkdir -p \
+            dist \
+            "${ROOT}" \
+            "${SOC_ROOT}" \
+            "${CPU_RTL_ROOT}/thirdparty" \
+            "${DIFFTEST_REF_ROOT}/tools" \
+            "${EXAMPLES_ROOT}"
           cp -a bin fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
           cp -a fecompiler/thirdparty/SoC/. "${SOC_ROOT}/"
+          cp -a \
+            fecompiler/thirdparty/README \
+            fecompiler/thirdparty/rtthread_prepare.py \
+            fecompiler/thirdparty/cv32e40p \
+            fecompiler/thirdparty/cva6 \
+            fecompiler/thirdparty/darkriscv \
+            fecompiler/thirdparty/ibex \
+            fecompiler/thirdparty/learn-fpga \
+            fecompiler/thirdparty/picorv32 \
+            fecompiler/thirdparty/rt-thread-am \
+            fecompiler/thirdparty/scr1 \
+            fecompiler/thirdparty/serv \
+            fecompiler/thirdparty/vexriscv \
+            "${CPU_RTL_ROOT}/thirdparty/"
+          cp -a fecompiler/thirdparty/SoC/tools/riscv32-spike-so "${DIFFTEST_REF_ROOT}/tools/"
           cp -a examples "${EXAMPLES_ROOT}/"
-          rm -rf "${ROOT}/fecompiler/thirdparty/SoC"
-          for PACKAGE_ROOT in "${ROOT}" "${SOC_ROOT}" "${EXAMPLES_ROOT}"; do
+          rm -rf "${ROOT}/fecompiler/thirdparty"
+          rm -f "${SOC_ROOT}/tools/riscv32-spike-so"
+          for PACKAGE_ROOT in "${ROOT}" "${SOC_ROOT}" "${CPU_RTL_ROOT}" "${DIFFTEST_REF_ROOT}" "${EXAMPLES_ROOT}"; do
             find "${PACKAGE_ROOT}" \
               \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
               -type d -prune -exec rm -rf {} +
@@ -58,6 +88,12 @@ jobs:
           tar -czf "dist/${SOC_ARCHIVE}" "${SOC_ROOT}"
           SOC_SHA256="$(sha256sum "dist/${SOC_ARCHIVE}" | awk '{print $1}')"
           printf '%s  %s\n' "${SOC_SHA256}" "${SOC_ARCHIVE}" > "dist/${SOC_SHA_FILE}"
+          tar -czf "dist/${CPU_RTL_ARCHIVE}" "${CPU_RTL_ROOT}"
+          CPU_RTL_SHA256="$(sha256sum "dist/${CPU_RTL_ARCHIVE}" | awk '{print $1}')"
+          printf '%s  %s\n' "${CPU_RTL_SHA256}" "${CPU_RTL_ARCHIVE}" > "dist/${CPU_RTL_SHA_FILE}"
+          tar -czf "dist/${DIFFTEST_REF_ARCHIVE}" "${DIFFTEST_REF_ROOT}"
+          DIFFTEST_REF_SHA256="$(sha256sum "dist/${DIFFTEST_REF_ARCHIVE}" | awk '{print $1}')"
+          printf '%s  %s\n' "${DIFFTEST_REF_SHA256}" "${DIFFTEST_REF_ARCHIVE}" > "dist/${DIFFTEST_REF_SHA_FILE}"
           tar -czf "dist/${EXAMPLES_ARCHIVE}" "${EXAMPLES_ROOT}"
           EXAMPLES_SHA256="$(sha256sum "dist/${EXAMPLES_ARCHIVE}" | awk '{print $1}')"
           printf '%s  %s\n' "${EXAMPLES_SHA256}" "${EXAMPLES_ARCHIVE}" > "dist/${EXAMPLES_SHA_FILE}"
@@ -118,6 +154,38 @@ jobs:
           files: |
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
+
+      - name: Publish latest CPU RTL release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: openecos-projects/ecos-resource-assets
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ecc-fe-cpu-rtl-latest
+          name: ECC-FE CPU RTL latest
+          body: |
+            Mutable latest ECC-FE CPU RTL package generated from openecos-projects/ecc-fe `main`.
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            dist/ecc-fe-cpu-rtl-latest.tar.gz
+            dist/ecc-fe-cpu-rtl-latest.tar.gz.sha256
+
+      - name: Publish latest difftest reference release
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: openecos-projects/ecos-resource-assets
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ecc-fe-difftest-ref-latest
+          name: ECC-FE Difftest Reference latest
+          body: |
+            Mutable latest ECC-FE difftest reference package generated from openecos-projects/ecc-fe `main`.
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            dist/ecc-fe-difftest-ref-latest.tar.gz
+            dist/ecc-fe-difftest-ref-latest.tar.gz.sha256
 
       - name: Publish latest examples release
         uses: softprops/action-gh-release@v2

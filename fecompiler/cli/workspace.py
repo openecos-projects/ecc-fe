@@ -28,6 +28,7 @@ from fecompiler.cli.workspace_typer import build_typer_app as build_workspace_ty
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.engine.flow import EngineFlow
+from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.soc import soc_runtime_options
 from fecompiler.tools.common.rtl_inputs import prepared_inputs_current
 from fecompiler.utility.json import json_read, json_write
@@ -1437,12 +1438,13 @@ def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
     soc_root = _workspace_soc_root(workspace)
     if not soc_root:
         return ["--max-cycles", "50000000"]
+    ref_so = resolve_difftest_reference_model(soc_root)
     return [
         "--max-cycles",
         "50000000",
         "--diff",
         "--ref",
-        str(soc_root / "tools" / "riscv32-spike-so"),
+        str(ref_so),
         "--diff-image-offset",
         "0x100",
         "--diff-reset-vector",
@@ -1462,11 +1464,12 @@ def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
     args = ["--max-cycles", "10000000"]
     if not soc_root:
         return [*args, "--timeout-ok"]
+    ref_so = resolve_difftest_reference_model(soc_root)
     return [
         *args,
         "--diff",
         "--ref",
-        str(soc_root / "tools" / "riscv32-spike-so"),
+        str(ref_so),
         "--diff-image-offset",
         "0x100",
         "--diff-reset-vector",
@@ -1485,11 +1488,12 @@ def _default_coremark_run_args(workspace: dict[str, Any]) -> list[str]:
     soc_root = _workspace_soc_root(workspace)
     if not soc_root:
         return args
+    ref_so = resolve_difftest_reference_model(soc_root)
     return [
         *args,
         "--diff",
         "--ref",
-        str(soc_root / "tools" / "riscv32-spike-so"),
+        str(ref_so),
         "--diff-image-offset",
         "0x100",
         "--diff-reset-vector",

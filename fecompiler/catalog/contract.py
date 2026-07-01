@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.catalog.registry import catalog_payload
-from fecompiler.resources import frontend_repo_root
+from fecompiler.resources import frontend_repo_root, resolve_thirdparty_path
 
 CPU_WRAPPER_CONTRACT = "ecos-cpu-wrapper-v1"
 CPU_SOCKET_CONTRACT = "ysyx-axi-cpu-socket-v1"
@@ -293,6 +293,8 @@ def _parse_filelist(path: Path, visited: set[Path] | None = None) -> ParsedFilel
 
             if nested:
                 nested_path = _resolve_manifest_path(resolved.parent, nested)
+                if nested_path is not None:
+                    nested_path = resolve_thirdparty_path(nested_path)
                 if nested_path is not None and nested_path.is_file():
                     nested_result = _parse_filelist(nested_path, visited)
                     files.extend(nested_result.files)
@@ -306,6 +308,7 @@ def _parse_filelist(path: Path, visited: set[Path] | None = None) -> ParsedFilel
             file_path = _resolve_manifest_path(resolved.parent, token)
             if file_path is None:
                 continue
+            file_path = resolve_thirdparty_path(file_path)
             if file_path.is_file():
                 files.append(file_path)
             else:
@@ -363,7 +366,8 @@ def _resolve_repo_path(root: Path, value: str) -> Path | None:
     path = Path(text).expanduser()
     if path.is_absolute():
         return path.resolve()
-    return (root / path).resolve()
+    candidate = (root / path).resolve()
+    return resolve_thirdparty_path(candidate)
 
 
 def _resolve_manifest_path(base: Path, value: str) -> Path | None:
@@ -373,7 +377,8 @@ def _resolve_manifest_path(base: Path, value: str) -> Path | None:
     path = Path(text).expanduser()
     if path.is_absolute():
         return path.resolve()
-    return (base / path).resolve()
+    candidate = (base / path).resolve()
+    return resolve_thirdparty_path(candidate)
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
