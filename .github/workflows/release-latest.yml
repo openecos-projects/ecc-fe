@@ -18,6 +18,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check tracked waveform files
+        shell: bash
+        run: bash .github/scripts/check-no-tracked-waveforms.sh
+
       - name: Package runtime
         shell: bash
         run: |
@@ -78,6 +82,9 @@ jobs:
               -type d -prune -exec rm -rf {} +
             find "${PACKAGE_ROOT}" \
               \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
+              -type f -delete
+            find "${PACKAGE_ROOT}" \
+              \( -name '*.vcd' -o -name '*.vcd.gz' -o -name '*.fst' -o -name '*.fsdb' -o -name '*.vpd' -o -name '*.ghw' -o -name '*.wlf' -o -name '*.lxt' -o -name '*.lxt2' \) \
               -type f -delete
           done
 

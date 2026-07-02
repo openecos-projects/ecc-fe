@@ -75,3 +75,14 @@ fecompiler/thirdparty/SoC*/tests/out/logs/
 trace_hart_*.dasm
 trace_hart_*.log
 trace_hart_*_commit.log
+
+# Simulator waveform dumps
+*.vcd
+*.vcd.gz
+*.fst
+*.fsdb
+*.vpd
+*.ghw
+*.wlf
+*.lxt
+*.lxt2
