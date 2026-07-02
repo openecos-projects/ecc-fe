@@ -36,18 +36,22 @@ jobs:
           SOC_ROOT="ecc-fe-soc-ysyx-am-${SOC_VERSION}"
           SOC_ARCHIVE="${SOC_ROOT}.tar.gz"
           SOC_SHA_FILE="${SOC_ARCHIVE}.sha256"
+          SOC_METADATA="${SOC_ROOT}.metadata.json"
           CPU_RTL_VERSION="latest"
           CPU_RTL_ROOT="ecc-fe-cpu-rtl-${CPU_RTL_VERSION}"
           CPU_RTL_ARCHIVE="${CPU_RTL_ROOT}.tar.gz"
           CPU_RTL_SHA_FILE="${CPU_RTL_ARCHIVE}.sha256"
+          CPU_RTL_METADATA="${CPU_RTL_ROOT}.metadata.json"
           DIFFTEST_REF_VERSION="latest"
           DIFFTEST_REF_ROOT="ecc-fe-difftest-ref-${DIFFTEST_REF_VERSION}"
           DIFFTEST_REF_ARCHIVE="${DIFFTEST_REF_ROOT}.tar.gz"
           DIFFTEST_REF_SHA_FILE="${DIFFTEST_REF_ARCHIVE}.sha256"
+          DIFFTEST_REF_METADATA="${DIFFTEST_REF_ROOT}.metadata.json"
           EXAMPLES_VERSION="latest"
           EXAMPLES_ROOT="ecc-fe-examples-${EXAMPLES_VERSION}"
           EXAMPLES_ARCHIVE="${EXAMPLES_ROOT}.tar.gz"
           EXAMPLES_SHA_FILE="${EXAMPLES_ARCHIVE}.sha256"
+          EXAMPLES_METADATA="${EXAMPLES_ROOT}.metadata.json"
 
           mkdir -p \
             dist \
@@ -94,30 +98,51 @@ jobs:
           printf '%s  %s\n' "${SHA256}" "${ARCHIVE}" > "dist/${SHA_FILE}"
           tar -czf "dist/${SOC_ARCHIVE}" "${SOC_ROOT}"
           SOC_SHA256="$(sha256sum "dist/${SOC_ARCHIVE}" | awk '{print $1}')"
+          SOC_SIZE="$(stat -c '%s' "dist/${SOC_ARCHIVE}")"
           printf '%s  %s\n' "${SOC_SHA256}" "${SOC_ARCHIVE}" > "dist/${SOC_SHA_FILE}"
           tar -czf "dist/${CPU_RTL_ARCHIVE}" "${CPU_RTL_ROOT}"
           CPU_RTL_SHA256="$(sha256sum "dist/${CPU_RTL_ARCHIVE}" | awk '{print $1}')"
+          CPU_RTL_SIZE="$(stat -c '%s' "dist/${CPU_RTL_ARCHIVE}")"
           printf '%s  %s\n' "${CPU_RTL_SHA256}" "${CPU_RTL_ARCHIVE}" > "dist/${CPU_RTL_SHA_FILE}"
           tar -czf "dist/${DIFFTEST_REF_ARCHIVE}" "${DIFFTEST_REF_ROOT}"
           DIFFTEST_REF_SHA256="$(sha256sum "dist/${DIFFTEST_REF_ARCHIVE}" | awk '{print $1}')"
+          DIFFTEST_REF_SIZE="$(stat -c '%s' "dist/${DIFFTEST_REF_ARCHIVE}")"
           printf '%s  %s\n' "${DIFFTEST_REF_SHA256}" "${DIFFTEST_REF_ARCHIVE}" > "dist/${DIFFTEST_REF_SHA_FILE}"
           tar -czf "dist/${EXAMPLES_ARCHIVE}" "${EXAMPLES_ROOT}"
           EXAMPLES_SHA256="$(sha256sum "dist/${EXAMPLES_ARCHIVE}" | awk '{print $1}')"
+          EXAMPLES_SIZE="$(stat -c '%s' "dist/${EXAMPLES_ARCHIVE}")"
           printf '%s  %s\n' "${EXAMPLES_SHA256}" "${EXAMPLES_ARCHIVE}" > "dist/${EXAMPLES_SHA_FILE}"
 
-          export VERSION ARCHIVE SHA256 SIZE METADATA
+          export \
+            VERSION ROOT ARCHIVE SHA256 SIZE METADATA \
+            SOC_VERSION SOC_ROOT SOC_ARCHIVE SOC_SHA256 SOC_SIZE SOC_METADATA \
+            CPU_RTL_VERSION CPU_RTL_ROOT CPU_RTL_ARCHIVE CPU_RTL_SHA256 CPU_RTL_SIZE CPU_RTL_METADATA \
+            DIFFTEST_REF_VERSION DIFFTEST_REF_ROOT DIFFTEST_REF_ARCHIVE DIFFTEST_REF_SHA256 DIFFTEST_REF_SIZE DIFFTEST_REF_METADATA \
+            EXAMPLES_VERSION EXAMPLES_ROOT EXAMPLES_ARCHIVE EXAMPLES_SHA256 EXAMPLES_SIZE EXAMPLES_METADATA
           node - <<'NODE'
           const fs = require('node:fs')
-          const metadata = {
-            name: 'ecc-fe',
-            version: process.env.VERSION,
-            commit: process.env.GITHUB_SHA,
-            sha256: process.env.SHA256,
-            size: Number(process.env.SIZE),
-            built_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-            archive: process.env.ARCHIVE,
+          const builtAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+          const packages = [
+            ['ecc-fe', process.env.VERSION, process.env.ARCHIVE, process.env.SHA256, process.env.SIZE, process.env.ROOT, process.env.METADATA],
+            ['ecc-fe-soc-ysyx-am', process.env.SOC_VERSION, process.env.SOC_ARCHIVE, process.env.SOC_SHA256, process.env.SOC_SIZE, process.env.SOC_ROOT, process.env.SOC_METADATA],
+            ['ecc-fe-cpu-rtl', process.env.CPU_RTL_VERSION, process.env.CPU_RTL_ARCHIVE, process.env.CPU_RTL_SHA256, process.env.CPU_RTL_SIZE, process.env.CPU_RTL_ROOT, process.env.CPU_RTL_METADATA],
+            ['ecc-fe-difftest-ref', process.env.DIFFTEST_REF_VERSION, process.env.DIFFTEST_REF_ARCHIVE, process.env.DIFFTEST_REF_SHA256, process.env.DIFFTEST_REF_SIZE, process.env.DIFFTEST_REF_ROOT, process.env.DIFFTEST_REF_METADATA],
+            ['ecc-fe-examples', process.env.EXAMPLES_VERSION, process.env.EXAMPLES_ARCHIVE, process.env.EXAMPLES_SHA256, process.env.EXAMPLES_SIZE, process.env.EXAMPLES_ROOT, process.env.EXAMPLES_METADATA],
+          ]
+
+          for (const [name, version, archive, sha256, size, stripPrefix, metadataFile] of packages) {
+            const metadata = {
+              name,
+              version,
+              commit: process.env.GITHUB_SHA,
+              sha256,
+              size: Number(size),
+              built_at: builtAt,
+              archive,
+              strip_prefix: stripPrefix,
+            }
+            fs.writeFileSync(`dist/${metadataFile}`, `${JSON.stringify(metadata, null, 2)}\n`)
           }
-          fs.writeFileSync(`dist/${process.env.METADATA}`, `${JSON.stringify(metadata, null, 2)}\n`)
           NODE
 
       - name: Create resource release token
@@ -161,6 +186,7 @@ jobs:
           files: |
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz
             dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
+            dist/ecc-fe-soc-ysyx-am-latest.metadata.json
 
       - name: Publish latest CPU RTL release
         uses: softprops/action-gh-release@v2
@@ -177,6 +203,7 @@ jobs:
           files: |
             dist/ecc-fe-cpu-rtl-latest.tar.gz
             dist/ecc-fe-cpu-rtl-latest.tar.gz.sha256
+            dist/ecc-fe-cpu-rtl-latest.metadata.json
 
       - name: Publish latest difftest reference release
         uses: softprops/action-gh-release@v2
@@ -193,6 +220,7 @@ jobs:
           files: |
             dist/ecc-fe-difftest-ref-latest.tar.gz
             dist/ecc-fe-difftest-ref-latest.tar.gz.sha256
+            dist/ecc-fe-difftest-ref-latest.metadata.json
 
       - name: Publish latest examples release
         uses: softprops/action-gh-release@v2
@@ -209,3 +237,4 @@ jobs:
           files: |
             dist/ecc-fe-examples-latest.tar.gz
             dist/ecc-fe-examples-latest.tar.gz.sha256
+            dist/ecc-fe-examples-latest.metadata.json
