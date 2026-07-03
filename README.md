@@ -324,6 +324,27 @@ ECOS_FE_SOC_ROOT=/path/to/ecc-fe-soc-ysyx-am
 test resources. This keeps the CLI runtime small while allowing ECOS Studio to
 compose the complete flow from installed resources.
 
+## Third-Party Resource Provenance
+
+The Resource Manager packages preserve the source boundary used in this
+repository:
+
+- The `ecc-fe` runtime archive contains the CLI and Python flow code, but does
+  not contain `fecompiler/thirdparty`.
+- The `ecc-fe-soc-ysyx-am` archive contains the SoC harness under
+  `fecompiler/thirdparty/SoC`, excluding the difftest reference binary.
+- The `ecc-fe-difftest-ref` archive contains only
+  `fecompiler/thirdparty/SoC/tools/riscv32-spike-so`.
+- The `ecc-fe-cpu-rtl` archive contains the CPU RTL/resource bundle from
+  `fecompiler/thirdparty`.
+
+Most CPU RTL resources in `fecompiler/thirdparty` are pinned git submodules:
+`cv32e40p`, `darkriscv`, `ibex`, `learn-fpga`, `picorv32`, `rt-thread-am`,
+`scr1`, and `serv`. The `cva6` and `vexriscv` directories are vendored
+snapshots in this repository, so updates to them should be intentional and
+documented with their upstream source and commit in the release notes or
+change log.
+
 RT-Thread BSP notes live in [`fecompiler/thirdparty/README`](fecompiler/thirdparty/README).
 
 ## Documentation

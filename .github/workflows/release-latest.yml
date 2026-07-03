@@ -145,6 +145,10 @@ jobs:
           }
           NODE
 
+      - name: Check release archive contents
+        shell: bash
+        run: bash .github/scripts/check-release-archives.sh dist
+
       - name: Create resource release token
         id: app-token
         uses: actions/create-github-app-token@v2
