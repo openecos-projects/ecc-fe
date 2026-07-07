@@ -1386,10 +1386,16 @@ def test_prepare_generates_cpu_alias_for_cpu_top_filelist(tmp_path):
     prepared = json.loads(manifest.read_text(encoding="utf-8"))
     prepare_report = json.loads(report.read_text(encoding="utf-8"))
     generated = Path(ws["directory"]) / "prepare_fe" / "output" / "generated_standard_cpu_wrapper.sv"
+    generated_text = generated.read_text(encoding="utf-8")
 
     assert state == StateEnum.Success
     assert generated.is_file()
-    assert "cpu_top u_cpu" in generated.read_text(encoding="utf-8")
+    assert "cpu_top cl3_top" in generated_text
+    assert ".io_extIrq" in generated_text
+    assert ".io_master_aw_ready" in generated_text
+    assert ".io_master_aw_bits_awaddr" in generated_text
+    assert ".io_interrupt" not in generated_text
+    assert ".io_master_awready" not in generated_text
     assert str(cpu_top.resolve()) in prepared["rtl_files"]
     assert str(generated.resolve()) in prepared["rtl_files"]
     assert str(soc_alias.resolve()) not in prepared["rtl_files"]

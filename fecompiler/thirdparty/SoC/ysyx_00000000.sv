@@ -109,7 +109,7 @@ module ysyx_00000000 (
     end
   endfunction
 
-  cpu_top u_cpu (
+  cpu_top cl3_top (
     .clock                  (clock),
     .reset                  (reset),
     .io_extIrq              (io_interrupt),
