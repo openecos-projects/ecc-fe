@@ -101,8 +101,8 @@ CPU RTL -> CPU wrapper -> ysyx-axi-cpu-socket-v1
 ### User CPU Filelist Contract
 
 `ecc-fe` accepts a user-provided CPU RTL filelist through `custom-filelist`.
-The filelist must provide exactly one CPU top module named `CL3Top`, with the
-same IO signal names as `examples/cl3_std/cl3_verilog/CL3Top.sv`.  During
+The filelist must provide exactly one CPU top module named `cpu_top`, with the
+same IO signal names as `examples/cl3_std/cl3_verilog/cpu_top.sv`.  During
 prepare, `ecc-fe` generates the SoC-facing `ysyx_00000000` compatibility wrapper
 and connects it to the selected SoC harness.
 

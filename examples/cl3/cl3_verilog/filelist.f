@@ -66,4 +66,4 @@ DCache.sv
 AxiArbiter.sv
 CL3CLINT.sv
 CL3Xbar.sv
-CL3Top.sv
+cpu_top.sv

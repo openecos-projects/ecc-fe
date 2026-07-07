@@ -751,7 +751,7 @@ def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
     examples_root = tmp_path / "ecc-fe-examples"
     cpu_root = examples_root / "examples" / "cl3"
     (cpu_root / "cl3_verilog").mkdir(parents=True)
-    (cpu_root / "cl3_verilog" / "filelist.f").write_text("CL3Top.sv\n", encoding="utf-8")
+    (cpu_root / "cl3_verilog" / "filelist.f").write_text("cpu_top.sv\n", encoding="utf-8")
 
     env = {
         **os.environ,
@@ -770,7 +770,7 @@ def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
     assert (cpu_root / "filelist.cpu.f").read_text(encoding="utf-8").splitlines() == [
         "cl3_verilog/difftest_info_pkg.sv",
         "cl3_verilog/difftest.sv",
-        "cl3_verilog/CL3Top.sv",
+        "cl3_verilog/cpu_top.sv",
     ]
 
 
@@ -1347,19 +1347,19 @@ def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_pa
     assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
 
 
-def test_prepare_generates_cpu_alias_for_cl3_top_filelist(tmp_path):
+def test_prepare_generates_cpu_alias_for_cpu_top_filelist(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
     soc_root.mkdir()
 
-    cpu_top = cpu_root / "CL3Top.v"
+    cpu_top = cpu_root / "cpu_top.v"
     soc_alias = soc_root / "ysyx_00000000.sv"
     soc_top = soc_root / "ecos_sim_top.v"
-    cpu_top.write_text("module CL3Top(); endmodule\n", encoding="utf-8")
+    cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
     soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
     soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
-    (cpu_root / "filelist.cpu.f").write_text("CL3Top.v\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text("cpu_top.v\n", encoding="utf-8")
     (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
@@ -1368,7 +1368,7 @@ def test_prepare_generates_cpu_alias_for_cl3_top_filelist(tmp_path):
             "Design": "chip",
             "Top module": "ecos_sim_top",
             "cpu_wrapper_top": "ysyx_00000000",
-            "cpu_standard_top": "CL3Top",
+            "cpu_standard_top": "cpu_top",
             "cpu_wrapper_generation": "standard_alias_v1",
         },
         cpu_filelist=str(cpu_root / "filelist.cpu.f"),
@@ -1389,7 +1389,7 @@ def test_prepare_generates_cpu_alias_for_cl3_top_filelist(tmp_path):
 
     assert state == StateEnum.Success
     assert generated.is_file()
-    assert "CL3Top u_cpu" in generated.read_text(encoding="utf-8")
+    assert "cpu_top u_cpu" in generated.read_text(encoding="utf-8")
     assert str(cpu_top.resolve()) in prepared["rtl_files"]
     assert str(generated.resolve()) in prepared["rtl_files"]
     assert str(soc_alias.resolve()) not in prepared["rtl_files"]

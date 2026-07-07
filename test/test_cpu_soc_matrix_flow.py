@@ -58,7 +58,7 @@ def _required_paths() -> list[Path]:
     for cpu_root in CPU_VARIANTS:
         paths.extend([
             cpu_root / "filelist.cpu.f",
-            cpu_root / "cl3_verilog/CL3Top.sv",
+            cpu_root / "cl3_verilog/cpu_top.sv",
         ])
     for soc_root in SOC_VARIANTS:
         paths.extend([

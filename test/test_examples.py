@@ -48,16 +48,16 @@ def test_cl3_nested_filelist_entries_exist() -> None:
     assert missing == []
 
 
-def test_cl3_has_exactly_one_cl3_cpu_top() -> None:
+def test_cl3_has_exactly_one_cpu_top() -> None:
     matches = [
         rel_path
         for rel_path in _filelist_entries(CPU_FILELIST)
         if (CL3_ROOT / rel_path).read_text(encoding="utf-8", errors="ignore").find(
-            "module CL3Top"
+            "module cpu_top"
         ) >= 0
     ]
 
-    assert matches == ["cl3_verilog/CL3Top.sv"]
+    assert matches == ["cl3_verilog/cpu_top.sv"]
 
 
 def test_cl3_std_example_filelists_exist() -> None:
@@ -84,20 +84,19 @@ def test_cl3_std_nested_filelist_entries_exist() -> None:
     assert missing == []
 
 
-def test_cl3_std_has_exactly_one_cl3_cpu_top() -> None:
+def test_cl3_std_has_exactly_one_cpu_top() -> None:
     matches = [
         rel_path
         for rel_path in _filelist_entries(CL3_STD_CPU_FILELIST)
         if (CL3_STD_ROOT / rel_path).read_text(encoding="utf-8", errors="ignore").find(
-            "module CL3Top"
+            "module cpu_top"
         ) >= 0
     ]
 
-    assert matches == ["cl3_verilog/CL3Top.sv"]
+    assert matches == ["cl3_verilog/cpu_top.sv"]
 
 
 def test_cl3_std_cpu_filelist_does_not_ship_generated_wrapper() -> None:
     entries = _filelist_entries(CL3_STD_CPU_FILELIST)
 
-    assert "cl3_verilog/ecos_user_cpu_top.sv" not in entries
     assert "cl3_verilog/ysyx_00000000.sv" not in entries

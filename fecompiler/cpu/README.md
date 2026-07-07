@@ -21,7 +21,7 @@ AM SoC harness.  A compatible CPU wrapper should expose:
 - Optional slave channels, tied off by wrappers that do not use them.
 
 The current CL3 integration uses `ysyx_00000000` as the reference CPU wrapper.
-It adapts `CL3Top` to the YSYX AM SoC CPU socket and also provides the existing
+It adapts `cpu_top` to the YSYX AM SoC CPU socket and also provides the existing
 UART/trap side effects used by CPU tests.
 
 ## Integration Rule

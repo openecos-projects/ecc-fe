@@ -15,7 +15,7 @@ from fecompiler.utility.json import json_read, json_write
 
 
 COMPATIBILITY_CPU_ALIAS_TOP = "ysyx_00000000"
-STANDARD_CPU_TOP = "ecos_user_cpu_top"
+STANDARD_CPU_TOP = "cpu_top"
 STANDARD_CPU_WRAPPER_GENERATION = "standard_alias_v1"
 
 
