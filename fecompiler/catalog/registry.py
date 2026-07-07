@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shlex
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -17,6 +19,8 @@ DEFAULT_CORE_ID = "custom-filelist"
 DEFAULT_SOC_HARNESS_ID = "ysyx-am-soc"
 DEFAULT_TOOLCHAIN_ID = "riscv32-unknown-elf"
 DEFAULT_TEST_SUITE_ID = "cpu-tests"
+COMPATIBILITY_CPU_ALIAS_TOP = "ysyx_00000000"
+_RTL_SUFFIXES = (".v", ".sv", ".vh", ".svh")
 
 _CATEGORY_FILES = {
     "cores": "cores.json",
@@ -79,6 +83,8 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
     adapter_cpu_filelist = _adapter_cpu_filelist(config, core, user_cpu_filelist, core_cpu_filelist)
     if user_cpu_filelist and not Path(user_cpu_filelist).expanduser().exists():
         issues.append(ValidationIssue("error", "cpu_filelist_not_found", f"CPU filelist not found: {user_cpu_filelist}", "cpu_filelist"))
+    elif user_cpu_filelist and core is not None:
+        issues.extend(_validate_user_cpu_filelist_contract(core, Path(user_cpu_filelist).expanduser()))
     if core is not None and bool(core.data.get("requires_filelist")):
         filelist = effective_cpu_filelist
         if not filelist:
@@ -204,6 +210,7 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
+        "required_cpu_top_module": _required_user_cpu_top_module(core),
         "cpu_standard_top": str(core.data.get("cpu_standard_top", "")) if core is not None else "",
         "cpu_wrapper_generation": str(core.data.get("cpu_wrapper_generation", "")) if core is not None else "",
         "cpu_supports_difftest": _core_supports_difftest(core),
@@ -407,6 +414,132 @@ def _adapter_cpu_filelist(
     if core_id == DEFAULT_CORE_ID or (core is not None and bool(core.data.get("requires_filelist"))):
         return ""
     return core_cpu_filelist
+
+
+def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path) -> list[ValidationIssue]:
+    required_top = _required_user_cpu_top_module(core)
+    if not required_top:
+        return []
+
+    parsed = _parse_user_cpu_filelist(filelist_path)
+    issues = [
+        ValidationIssue(
+            "error",
+            "cpu_filelist_rtl_not_found",
+            f"RTL file referenced by CPU filelist was not found: {path}",
+            "cpu_filelist",
+        )
+        for path in parsed["missing"]
+    ]
+    top_count = _filelist_module_count(parsed["files"], required_top)
+    if top_count != 1:
+        code = "cpu_top_module_not_found" if top_count == 0 else "cpu_top_module_count_mismatch"
+        issues.append(
+            ValidationIssue(
+                "error",
+                code,
+                f"CPU filelist must define exactly one SoC-facing CPU top module {required_top}; found {top_count}.",
+                "cpu_filelist",
+            )
+        )
+    return issues
+
+
+def _required_user_cpu_top_module(core: CatalogEntry | None) -> str:
+    if core is None or not bool(core.data.get("requires_filelist")):
+        return ""
+    if str(core.data.get("cpu_wrapper_generation", "")).strip():
+        return ""
+    return str(
+        core.data.get("required_cpu_top_module")
+        or core.data.get("cpu_wrapper_top")
+        or COMPATIBILITY_CPU_ALIAS_TOP
+    ).strip()
+
+
+def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = None) -> dict[str, list[Path]]:
+    resolved = filelist_path.expanduser().resolve()
+    if visited is None:
+        visited = set()
+    if resolved in visited:
+        return {"files": [], "missing": []}
+    visited.add(resolved)
+
+    files: list[Path] = []
+    missing: list[Path] = []
+    try:
+        lines = resolved.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return {"files": [], "missing": [resolved]}
+
+    for raw_line in lines:
+        tokens = _filelist_tokens(raw_line)
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            nested = ""
+            if token in {"-f", "-F"} and index + 1 < len(tokens):
+                nested = tokens[index + 1]
+                index += 2
+            elif (token.startswith("-f") or token.startswith("-F")) and len(token) > 2:
+                nested = token[2:]
+                index += 1
+            else:
+                index += 1
+
+            if nested:
+                nested_path = _resolve_filelist_token(resolved.parent, nested)
+                if nested_path.is_file():
+                    nested_result = _parse_user_cpu_filelist(nested_path, visited)
+                    files.extend(nested_result["files"])
+                    missing.extend(nested_result["missing"])
+                else:
+                    missing.append(nested_path)
+                continue
+
+            if not _is_rtl_path_token(token):
+                continue
+            path = _resolve_filelist_token(resolved.parent, token)
+            if path.is_file():
+                files.append(path)
+            else:
+                missing.append(path)
+    return {"files": files, "missing": missing}
+
+
+def _filelist_tokens(raw_line: str) -> list[str]:
+    line = raw_line.strip()
+    if not line or line.startswith("#") or line.startswith("//") or line.startswith("`"):
+        return []
+    try:
+        return shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return line.split()
+
+
+def _is_rtl_path_token(token: str) -> bool:
+    if token.startswith(("+", "-", "$")):
+        return False
+    return Path(token).suffix.lower() in _RTL_SUFFIXES
+
+
+def _resolve_filelist_token(base: Path, token: str) -> Path:
+    path = Path(token.strip("\"'")).expanduser()
+    if path.is_absolute():
+        return resolve_thirdparty_path(path).resolve()
+    return resolve_thirdparty_path(base / path).resolve()
+
+
+def _filelist_module_count(files: list[Path], module_name: str) -> int:
+    pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
+    count = 0
+    for path in files:
+        try:
+            if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
+                count += 1
+        except OSError:
+            continue
+    return count
 
 
 def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:

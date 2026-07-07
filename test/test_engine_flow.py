@@ -1347,7 +1347,7 @@ def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_pa
     assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
 
 
-def test_prepare_keeps_soc_cpu_alias_for_custom_filelist_without_adapter_alias(tmp_path):
+def test_prepare_rejects_custom_filelist_without_direct_cpu_alias(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
@@ -1377,15 +1377,9 @@ def test_prepare_keeps_soc_cpu_alias_for_custom_filelist_without_adapter_alias(t
     engine.create_step_workspaces()
     state = engine.run_step("prepare", rerun=True)
 
-    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
-    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
-    prepared = json.loads(manifest.read_text(encoding="utf-8"))
-    prepare_report = json.loads(report.read_text(encoding="utf-8"))
-
-    assert state == StateEnum.Success
-    assert str(cpu_top.resolve()) in prepared["rtl_files"]
-    assert str(soc_alias.resolve()) in prepared["rtl_files"]
-    assert "filtered" not in prepare_report["inputs"]["soc_filelist"]
+    assert state == StateEnum.Incomplete
+    prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
+    assert "CPU filelist must define the SoC-facing CPU top module ysyx_00000000" in prepare_subflow
 
 
 def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path):

@@ -94,7 +94,9 @@ done
 require_entry "${difftest_archive}" "ecc-fe-difftest-ref-latest/tools/riscv32-spike-so"
 
 require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3/filelist.cpu.f"
+require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3/cl3_verilog/ysyx_00000000.sv"
 require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3_std/filelist.cpu.f"
+require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3_std/cl3_verilog/ysyx_00000000.sv"
 
 if [[ "${failures}" -ne 0 ]]; then
   exit 1

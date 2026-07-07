@@ -98,23 +98,19 @@ CPU RTL -> CPU wrapper -> ysyx-axi-cpu-socket-v1
        -> SoC wrapper/harness -> ecos_sim_top -> Verilator main.cpp / GUI
 ```
 
-### User CPU Filelist Modes
+### User CPU Filelist Contract
 
-`ecc-fe` supports two user-provided CPU paths:
+`ecc-fe` accepts a user-provided CPU RTL filelist through `custom-filelist`.
+The filelist must provide the SoC-facing CPU top module `ysyx_00000000`
+directly.  This keeps the user CPU and the selected SoC harness on the same
+explicit integration contract instead of relying on a hidden compatibility
+wrapper from the SoC resource.
 
-- `custom-filelist`: the user's filelist already provides the SoC-facing
-  compatibility module `ysyx_00000000`.
-- `standard-cpu-filelist`: the user's filelist provides a standard CPU top
-  named `ecos_user_cpu_top`; `prepare` generates the `ysyx_00000000`
-  compatibility wrapper automatically.
-
-The standard CPU top uses the same AXI-like CPU socket as the SoC harness.
-It is intentionally stricter than "any CPU top": port names and handshake
-semantics must match `ysyx-axi-cpu-socket-v1`.  The advantage is that users no
-longer need to write a compatibility wrapper by hand.  The generated wrapper
-also preserves the simulator MMIO convention used by CPU tests: UART writes to
-`0x1000_0000` are printed, and writes to `0x1000_000c` terminate the run as
-GOOD/BAD TRAP depending on the written value.
+The `ysyx_00000000` top must expose the AXI-like CPU socket used by
+`ysyx-axi-cpu-socket-v1`.  A runnable wrapper should also preserve the simulator
+MMIO convention used by CPU tests: UART writes to `0x1000_0000` are printed, and
+writes to `0x1000_000c` terminate the run as GOOD/BAD TRAP depending on the
+written value.
 
 Before claiming a new adapter is runnable, run the static catalog check:
 
@@ -140,8 +136,7 @@ workspace_projects/<design>/
 ├── log/log.txt                     # flow-level status
 ├── prepare_fe/output/
 │   ├── merged_rtl.f
-│   ├── prepared_inputs.json
-│   └── generated_standard_cpu_wrapper.sv  # only for standard-cpu-filelist
+│   └── prepared_inputs.json
 ├── review_fe/report/
 │   ├── rtl_review.json
 │   ├── rtl_review_summary.md

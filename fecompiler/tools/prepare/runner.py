@@ -125,6 +125,12 @@ class PrepareStep(BaseStep):
         if cpu_filelist or soc_filelist:
             if cpu_filelist:
                 _add_filelist("cpu_filelist", cpu_filelist)
+                if self._requires_direct_cpu_filelist_alias(workspace, cpu_adapter_filelist):
+                    self._validate_direct_cpu_filelist_alias(
+                        step,
+                        cpu_filelist,
+                        cpu_filelist_defines_alias,
+                    )
             else:
                 inputs["cpu_filelist"] = {"path": "", "rtl_files": 0, "skipped": "not provided"}
 
@@ -244,6 +250,48 @@ class PrepareStep(BaseStep):
             str(workspace.get(field, "")).strip()
             for field in ("soc_wrapper_id", "soc_harness_id")
         )
+
+    @staticmethod
+    def _requires_direct_cpu_filelist_alias(workspace: dict[str, Any], cpu_adapter_filelist: str) -> bool:
+        if str(cpu_adapter_filelist).strip():
+            return False
+        if str(workspace.get("cpu_wrapper_generation", "")).strip() == STANDARD_CPU_WRAPPER_GENERATION:
+            return False
+        if not PrepareStep._requires_frontend_cpu_alias(workspace):
+            return False
+
+        required_top = str(workspace.get("required_cpu_top_module", "")).strip()
+        if required_top:
+            return required_top == COMPATIBILITY_CPU_ALIAS_TOP
+
+        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
+        return not wrapper_top or wrapper_top == COMPATIBILITY_CPU_ALIAS_TOP
+
+    def _validate_direct_cpu_filelist_alias(
+        self,
+        step: WorkspaceStep,
+        cpu_filelist: str,
+        cpu_filelist_defines_alias: bool,
+    ) -> None:
+        if cpu_filelist_defines_alias:
+            return
+
+        message = (
+            "CPU filelist must define the SoC-facing CPU top module "
+            f"{COMPATIBILITY_CPU_ALIAS_TOP}; do not rely on the SoC filelist "
+            "to provide the CPU compatibility wrapper."
+        )
+        self._update_substep(
+            step,
+            PrepareSubFlowEnum.collect_inputs.value,
+            ok=False,
+            info={
+                "error": message,
+                "cpu_filelist": cpu_filelist,
+                "required_top": COMPATIBILITY_CPU_ALIAS_TOP,
+            },
+        )
+        raise RuntimeError(f"prepare failed: {message}")
 
     @staticmethod
     def _uses_generated_standard_cpu_wrapper(workspace: dict[str, Any]) -> bool:

@@ -48,6 +48,18 @@ def test_cl3_nested_filelist_entries_exist() -> None:
     assert missing == []
 
 
+def test_cl3_has_exactly_one_soc_facing_cpu_top() -> None:
+    matches = [
+        rel_path
+        for rel_path in _filelist_entries(CPU_FILELIST)
+        if (CL3_ROOT / rel_path).read_text(encoding="utf-8", errors="ignore").find(
+            "module ysyx_00000000"
+        ) >= 0
+    ]
+
+    assert matches == ["cl3_verilog/ysyx_00000000.sv"]
+
+
 def test_cl3_std_example_filelists_exist() -> None:
     assert CL3_STD_CPU_FILELIST.exists()
     assert CL3_STD_NESTED_FILELIST.exists()
@@ -82,3 +94,15 @@ def test_cl3_std_has_exactly_one_standard_cpu_top() -> None:
     ]
 
     assert matches == ["cl3_verilog/ecos_user_cpu_top.sv"]
+
+
+def test_cl3_std_has_exactly_one_soc_facing_cpu_top() -> None:
+    matches = [
+        rel_path
+        for rel_path in _filelist_entries(CL3_STD_CPU_FILELIST)
+        if (CL3_STD_ROOT / rel_path).read_text(encoding="utf-8", errors="ignore").find(
+            "module ysyx_00000000"
+        ) >= 0
+    ]
+
+    assert matches == ["cl3_verilog/ysyx_00000000.sv"]

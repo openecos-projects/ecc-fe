@@ -67,3 +67,4 @@ cl3_verilog/AxiArbiter.sv
 cl3_verilog/CL3CLINT.sv
 cl3_verilog/CL3Xbar.sv
 cl3_verilog/CL3Top.sv
+cl3_verilog/ysyx_00000000.sv
