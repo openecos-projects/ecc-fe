@@ -50,8 +50,6 @@ SOC_LIST="${ROOT}/filelist.soc.f"
 } > "${SOC_LIST}"
 
 {
-  echo "cl3_verilog/difftest_info_pkg.sv"
-  echo "cl3_verilog/difftest.sv"
   sed 's#^#cl3_verilog/#' "${CPU_ROOT}/cl3_verilog/filelist.f"
 } > "${CPU_LIST}"
 

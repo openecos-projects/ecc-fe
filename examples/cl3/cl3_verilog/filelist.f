@@ -1,6 +1,4 @@
-./difftest_info_pkg.sv
-./difftest.sv
-./difftest_wrapper.sv
+difftest_wrapper.sv
 MaxPeriodGaloisLFSR.sv
 CL3BTB.sv
 CL3NPC.sv

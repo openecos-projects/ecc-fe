@@ -768,8 +768,6 @@ def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (cpu_root / "filelist.cpu.f").read_text(encoding="utf-8").splitlines() == [
-        "cl3_verilog/difftest_info_pkg.sv",
-        "cl3_verilog/difftest.sv",
         "cl3_verilog/cpu_top.sv",
     ]
 
