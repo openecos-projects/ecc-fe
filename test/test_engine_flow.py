@@ -1347,39 +1347,54 @@ def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_pa
     assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
 
 
-def test_prepare_rejects_custom_filelist_without_direct_cpu_alias(tmp_path):
+def test_prepare_generates_cpu_alias_for_cl3_top_filelist(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
     soc_root.mkdir()
 
-    cpu_top = cpu_root / "custom_cpu.v"
+    cpu_top = cpu_root / "CL3Top.v"
     soc_alias = soc_root / "ysyx_00000000.sv"
-    cpu_top.write_text("module custom_cpu(); endmodule\n", encoding="utf-8")
+    soc_top = soc_root / "ecos_sim_top.v"
+    cpu_top.write_text("module CL3Top(); endmodule\n", encoding="utf-8")
     soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
-    (cpu_root / "filelist.cpu.f").write_text("custom_cpu.v\n", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("ysyx_00000000.sv\n", encoding="utf-8")
+    soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text("CL3Top.v\n", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
-        directory=str(tmp_path / "ws_prepare_custom"),
+        directory=str(tmp_path / "ws_prepare_generated_alias"),
         parameters={
             "Design": "chip",
             "Top module": "ecos_sim_top",
             "cpu_wrapper_top": "ysyx_00000000",
+            "cpu_standard_top": "CL3Top",
+            "cpu_wrapper_generation": "standard_alias_v1",
         },
         cpu_filelist=str(cpu_root / "filelist.cpu.f"),
         soc_filelist=str(soc_root / "filelist.soc.f"),
     )
     create_workspace(spec)
-    ws = load_workspace(str(tmp_path / "ws_prepare_custom"))
+    ws = load_workspace(str(tmp_path / "ws_prepare_generated_alias"))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
     state = engine.run_step("prepare", rerun=True)
 
-    assert state == StateEnum.Incomplete
-    prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
-    assert "CPU filelist must define the SoC-facing CPU top module ysyx_00000000" in prepare_subflow
+    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
+    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
+    prepared = json.loads(manifest.read_text(encoding="utf-8"))
+    prepare_report = json.loads(report.read_text(encoding="utf-8"))
+    generated = Path(ws["directory"]) / "prepare_fe" / "output" / "generated_standard_cpu_wrapper.sv"
+
+    assert state == StateEnum.Success
+    assert generated.is_file()
+    assert "CL3Top u_cpu" in generated.read_text(encoding="utf-8")
+    assert str(cpu_top.resolve()) in prepared["rtl_files"]
+    assert str(generated.resolve()) in prepared["rtl_files"]
+    assert str(soc_alias.resolve()) not in prepared["rtl_files"]
+    assert prepare_report["inputs"]["generated_cpu_wrapper"]["generated"] is True
+    assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
 
 
 def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path):

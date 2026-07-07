@@ -67,4 +67,3 @@ AxiArbiter.sv
 CL3CLINT.sv
 CL3Xbar.sv
 CL3Top.sv
-ysyx_00000000.sv

@@ -22,6 +22,16 @@ def _compatibility_by_pair() -> dict[tuple[str, str], dict]:
     }
 
 
+def _custom_filelist_core() -> dict:
+    return next(item for item in catalog_payload()["cores"] if item["id"] == "custom-filelist")
+
+
+def _cl3_top_source(ports: list[str] | None = None) -> str:
+    selected_ports = ports or list(_custom_filelist_core()["required_cpu_top_ports"])
+    port_lines = [f"  input {port}" for port in selected_ports]
+    return "module CL3Top(\n" + ",\n".join(port_lines) + "\n);\nendmodule\n"
+
+
 def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
     payload = catalog_payload()
     assert len(payload["cores"]) == 10
@@ -37,10 +47,10 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     assert item["requires_cpu_filelist"] is True
     assert item["supported_test_suites"] == ["smoke", "cpu-tests", "rtthread", "coremark"]
 
-    cpu_top = tmp_path / "ysyx_00000000.sv"
-    cpu_top.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    cpu_top = tmp_path / "CL3Top.sv"
+    cpu_top.write_text(_cl3_top_source(), encoding="utf-8")
     user_filelist = tmp_path / "filelist.f"
-    user_filelist.write_text("ysyx_00000000.sv\n", encoding="utf-8")
+    user_filelist.write_text("CL3Top.sv\n", encoding="utf-8")
     result = validate_frontend_config({
         "core_id": "custom-filelist",
         "soc_harness_id": "ysyx-am-soc",
@@ -50,12 +60,33 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     })
     assert result.ok is True
     assert result.normalized["core_sim_coremark_use_difftest"] is False
-    assert result.normalized["required_cpu_top_module"] == "ysyx_00000000"
+    assert result.normalized["required_cpu_top_module"] == "CL3Top"
+    assert result.normalized["cpu_wrapper_top"] == "ysyx_00000000"
+    assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"
+    assert len(result.normalized["required_cpu_top_ports"]) == 39
 
 
-def test_custom_filelist_requires_soc_facing_cpu_top(tmp_path):
+def test_custom_filelist_requires_cl3_cpu_top(tmp_path):
+    cpu_top = tmp_path / "ysyx_00000000.sv"
+    cpu_top.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("ysyx_00000000.sv\n", encoding="utf-8")
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+    })
+
+    assert result.ok is False
+    assert any(issue.code == "cpu_top_module_not_found" for issue in result.issues)
+
+
+def test_custom_filelist_requires_cl3_cpu_top_ports(tmp_path):
+    required_ports = list(_custom_filelist_core()["required_cpu_top_ports"])
     cpu_top = tmp_path / "CL3Top.sv"
-    cpu_top.write_text("module CL3Top(); endmodule\n", encoding="utf-8")
+    cpu_top.write_text(_cl3_top_source(required_ports[:-1] + ["unexpected_port"]), encoding="utf-8")
     user_filelist = tmp_path / "filelist.f"
     user_filelist.write_text("CL3Top.sv\n", encoding="utf-8")
     result = validate_frontend_config({
@@ -67,7 +98,7 @@ def test_custom_filelist_requires_soc_facing_cpu_top(tmp_path):
     })
 
     assert result.ok is False
-    assert any(issue.code == "cpu_top_module_not_found" for issue in result.issues)
+    assert any(issue.code == "cpu_top_ports_mismatch" for issue in result.issues)
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():

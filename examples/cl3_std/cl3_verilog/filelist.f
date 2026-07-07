@@ -65,5 +65,3 @@ AxiArbiter.sv
 CL3CLINT.sv
 CL3Xbar.sv
 CL3Top.sv
-ecos_user_cpu_top.sv
-ysyx_00000000.sv

@@ -211,6 +211,7 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
         "required_cpu_top_module": _required_user_cpu_top_module(core),
+        "required_cpu_top_ports": _required_user_cpu_top_ports(core),
         "cpu_standard_top": str(core.data.get("cpu_standard_top", "")) if core is not None else "",
         "cpu_wrapper_generation": str(core.data.get("cpu_wrapper_generation", "")) if core is not None else "",
         "cpu_supports_difftest": _core_supports_difftest(core),
@@ -438,10 +439,31 @@ def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path
             ValidationIssue(
                 "error",
                 code,
-                f"CPU filelist must define exactly one SoC-facing CPU top module {required_top}; found {top_count}.",
+                f"CPU filelist must define exactly one CPU top module {required_top}; found {top_count}.",
                 "cpu_filelist",
             )
         )
+        return issues
+
+    required_ports = _required_user_cpu_top_ports(core)
+    if required_ports:
+        found_ports = _filelist_module_ports(parsed["files"], required_top)
+        missing = [port for port in required_ports if port not in found_ports]
+        extra = [port for port in found_ports if port not in required_ports]
+        if missing or extra:
+            detail = []
+            if missing:
+                detail.append(f"missing: {', '.join(missing)}")
+            if extra:
+                detail.append(f"extra: {', '.join(extra)}")
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "cpu_top_ports_mismatch",
+                    f"CPU top module {required_top} ports must match the required interface ({'; '.join(detail)}).",
+                    "cpu_filelist",
+                )
+            )
     return issues
 
 
@@ -449,12 +471,25 @@ def _required_user_cpu_top_module(core: CatalogEntry | None) -> str:
     if core is None or not bool(core.data.get("requires_filelist")):
         return ""
     if str(core.data.get("cpu_wrapper_generation", "")).strip():
-        return ""
+        return str(
+            core.data.get("required_cpu_top_module")
+            or core.data.get("cpu_standard_top")
+            or ""
+        ).strip()
     return str(
         core.data.get("required_cpu_top_module")
         or core.data.get("cpu_wrapper_top")
         or COMPATIBILITY_CPU_ALIAS_TOP
     ).strip()
+
+
+def _required_user_cpu_top_ports(core: CatalogEntry | None) -> list[str]:
+    if core is None or not bool(core.data.get("requires_filelist")):
+        return []
+    ports = core.data.get("required_cpu_top_ports")
+    if not isinstance(ports, list):
+        return []
+    return [str(port).strip() for port in ports if str(port).strip()]
 
 
 def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = None) -> dict[str, list[Path]]:
@@ -540,6 +575,65 @@ def _filelist_module_count(files: list[Path], module_name: str) -> int:
         except OSError:
             continue
     return count
+
+
+def _filelist_module_ports(files: list[Path], module_name: str) -> list[str]:
+    for path in files:
+        try:
+            ports = _module_port_names(path.read_text(encoding="utf-8", errors="ignore"), module_name)
+        except OSError:
+            continue
+        if ports:
+            return ports
+    return []
+
+
+def _module_port_names(text: str, module_name: str) -> list[str]:
+    stripped = _strip_sv_comments(text)
+    pattern = re.compile(
+        rf"\bmodule\s+{re.escape(module_name)}\b\s*(?:#\s*\([\s\S]*?\)\s*)?\((?P<ports>[\s\S]*?)\)\s*;",
+        re.MULTILINE,
+    )
+    match = pattern.search(stripped)
+    if not match:
+        return []
+
+    ports: list[str] = []
+    for raw_port in match.group("ports").split(","):
+        name = _port_decl_name(raw_port)
+        if name:
+            ports.append(name)
+    return ports
+
+
+def _port_decl_name(raw_port: str) -> str:
+    text = raw_port.strip()
+    if not text:
+        return ""
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    tokens = [
+        token
+        for token in re.split(r"\s+", text)
+        if token
+        and token not in {
+            "input",
+            "output",
+            "inout",
+            "wire",
+            "reg",
+            "logic",
+            "signed",
+            "unsigned",
+        }
+    ]
+    if not tokens:
+        return ""
+    return tokens[-1].split("=")[0].strip()
+
+
+def _strip_sv_comments(text: str) -> str:
+    without_block = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    return re.sub(r"//.*", "", without_block)
 
 
 def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:

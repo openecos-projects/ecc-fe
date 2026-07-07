@@ -100,7 +100,7 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
 
     if bool(entry.get("requires_filelist")):
         if str(entry.get("cpu_wrapper_generation", "")).strip() == "standard_alias_v1":
-            issues.extend(_require_value(entry, "cpu", entry_id, "cpu_standard_top", "ecos_user_cpu_top"))
+            issues.extend(_require_text(entry, "cpu", entry_id, "cpu_standard_top"))
         return issues
 
     filelist_path = _resolve_repo_path(root, str(entry.get("cpu_filelist", "")).strip())

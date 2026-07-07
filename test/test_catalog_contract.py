@@ -238,9 +238,13 @@ def _expected_soc_rtl_files(
     cpu_files: list,
 ) -> set[str]:
     parsed = PrepareStep._parse_sv_filelist(str(workspace["soc_filelist"]))
+    cpu_filelist_defines_alias = (
+        PrepareStep._filelist_defines_module(cpu_files, COMPATIBILITY_CPU_ALIAS_TOP)
+        or str(workspace.get("cpu_wrapper_generation", "")).strip() == "standard_alias_v1"
+    )
     filtered = PrepareStep._filter_soc_filelist_for_cpu_wrapper(
         parsed,
         workspace,
-        cpu_filelist_defines_alias=PrepareStep._filelist_defines_module(cpu_files, COMPATIBILITY_CPU_ALIAS_TOP),
+        cpu_filelist_defines_alias=cpu_filelist_defines_alias,
     )
     return {str(Path(item).resolve()) for item in filtered["rtl_files"]}

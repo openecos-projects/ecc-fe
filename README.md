@@ -101,16 +101,14 @@ CPU RTL -> CPU wrapper -> ysyx-axi-cpu-socket-v1
 ### User CPU Filelist Contract
 
 `ecc-fe` accepts a user-provided CPU RTL filelist through `custom-filelist`.
-The filelist must provide the SoC-facing CPU top module `ysyx_00000000`
-directly.  This keeps the user CPU and the selected SoC harness on the same
-explicit integration contract instead of relying on a hidden compatibility
-wrapper from the SoC resource.
+The filelist must provide exactly one CPU top module named `CL3Top`, with the
+same IO signal names as `examples/cl3_std/cl3_verilog/CL3Top.sv`.  During
+prepare, `ecc-fe` generates the SoC-facing `ysyx_00000000` compatibility wrapper
+and connects it to the selected SoC harness.
 
-The `ysyx_00000000` top must expose the AXI-like CPU socket used by
-`ysyx-axi-cpu-socket-v1`.  A runnable wrapper should also preserve the simulator
-MMIO convention used by CPU tests: UART writes to `0x1000_0000` are printed, and
-writes to `0x1000_000c` terminate the run as GOOD/BAD TRAP depending on the
-written value.
+The generated wrapper preserves the simulator MMIO convention used by CPU tests:
+UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate
+the run as GOOD/BAD TRAP depending on the written value.
 
 Before claiming a new adapter is runnable, run the static catalog check:
 
