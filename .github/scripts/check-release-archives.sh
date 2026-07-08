@@ -95,8 +95,7 @@ require_entry "${difftest_archive}" "ecc-fe-difftest-ref-latest/tools/riscv32-sp
 
 require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3/filelist.cpu.f"
 require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3/cl3_verilog/cpu_top.sv"
-require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3_std/filelist.cpu.f"
-require_entry "${examples_archive}" "ecc-fe-examples-latest/examples/cl3_std/cl3_verilog/cpu_top.sv"
+forbid_entry_prefix "${examples_archive}" "ecc-fe-examples-latest/examples/cl3_std/"
 
 if [[ "${failures}" -ne 0 ]]; then
   exit 1
