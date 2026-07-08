@@ -24,7 +24,7 @@ require_archive() {
 require_entry() {
   local archive="$1"
   local entry="$2"
-  if ! tar -tzf "${archive}" | grep -Fxq "${entry}"; then
+  if ! tar -tzf "${archive}" | grep -Fx "${entry}" >/dev/null; then
     fail "${archive} is missing required entry: ${entry}"
   fi
 }

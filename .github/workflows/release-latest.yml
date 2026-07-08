@@ -85,6 +85,9 @@ jobs:
               \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
               -type d -prune -exec rm -rf {} +
             find "${PACKAGE_ROOT}" \
+              -name '.git' \
+              -type f -delete
+            find "${PACKAGE_ROOT}" \
               \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
               -type f -delete
             find "${PACKAGE_ROOT}" \
