@@ -18,7 +18,12 @@ from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.soc.registry import soc_runtime_options
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
-from fecompiler.tools.common.rtl_inputs import slang_defines, verilator_lint_defines
+from fecompiler.tools.common.rtl_inputs import (
+    prepared_inputs_current,
+    slang_defines,
+    verilator_lint_defines,
+    workspace_input_fingerprint,
+)
 from fecompiler.tools.slang.runner import SlangElabStep, parse_slang_diagnostics, scan_rtl_structure
 from fecompiler.tools.verilator.runner import (
     build_lint_summary,
@@ -63,6 +68,24 @@ def test_generic_simulation_requires_explicit_good_trap():
     assert _sim_output_ok(0, "timeout after 10 cycles\n") is False
     assert _sim_output_ok(0, "HIT GOOD TRAP\nHIT BAD TRAP\n") is False
     assert _sim_output_ok(1, "HIT GOOD TRAP\n") is False
+
+
+def test_prepare_fingerprint_tracks_filelist_and_referenced_rtl_contents(tmp_path):
+    rtl = tmp_path / "cpu_top.sv"
+    filelist = tmp_path / "filelist.cpu.f"
+    rtl.write_text("module cpu_top; endmodule\n", encoding="utf-8")
+    filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+    workspace = {"cpu_filelist": str(filelist)}
+    prepared = {"source_fingerprint": workspace_input_fingerprint(workspace)}
+
+    assert prepared_inputs_current(workspace, prepared) is True
+
+    rtl.write_text("module cpu_top; wire changed; endmodule\n", encoding="utf-8")
+    assert prepared_inputs_current(workspace, prepared) is False
+
+    prepared = {"source_fingerprint": workspace_input_fingerprint(workspace)}
+    filelist.write_text("# changed filelist\ncpu_top.sv\n", encoding="utf-8")
+    assert prepared_inputs_current(workspace, prepared) is False
 
 
 def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:

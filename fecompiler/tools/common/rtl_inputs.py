@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -32,10 +34,81 @@ _FINGERPRINT_TEXT_FIELDS = (
 def workspace_input_fingerprint(workspace: dict[str, Any]) -> dict[str, str]:
     fingerprint: dict[str, str] = {}
     for field in _FINGERPRINT_PATH_FIELDS:
-        fingerprint[field] = _normalized_path_text(workspace.get(field, ""))
+        path = _normalized_path_text(workspace.get(field, ""))
+        fingerprint[field] = path
+        fingerprint[f"{field}_content_sha256"] = _input_content_sha256(field, path)
     for field in _FINGERPRINT_TEXT_FIELDS:
         fingerprint[field] = str(workspace.get(field, "") or "").strip()
     return fingerprint
+
+
+def _input_content_sha256(field: str, path_text: str) -> str:
+    if not path_text:
+        return ""
+    path = Path(path_text)
+    if field in {"cpu_filelist", "cpu_adapter_filelist", "soc_filelist", "filelist"}:
+        return _filelist_tree_sha256(path)
+    return _files_sha256([path])
+
+
+def _filelist_tree_sha256(root: Path) -> str:
+    files: list[Path] = []
+    visited: set[Path] = set()
+
+    def visit(filelist: Path) -> None:
+        path = filelist.expanduser().resolve()
+        if path in visited:
+            return
+        visited.add(path)
+        files.append(path)
+        if not path.is_file():
+            return
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            return
+        for raw_line in lines:
+            try:
+                tokens = shlex.split(raw_line, comments=True, posix=True)
+            except ValueError:
+                tokens = raw_line.split()
+            if not tokens:
+                continue
+            if tokens[0] in {"-f", "-F"} and len(tokens) > 1:
+                visit(_resolve_filelist_path(path.parent, tokens[1]))
+                continue
+            if (tokens[0].startswith("-f") or tokens[0].startswith("-F")) and len(tokens[0]) > 2:
+                visit(_resolve_filelist_path(path.parent, tokens[0][2:]))
+                continue
+            token = tokens[0].strip("\"'")
+            if Path(token).suffix.lower() in {".v", ".sv", ".vh", ".svh"}:
+                files.append(_resolve_filelist_path(path.parent, token))
+
+    visit(root)
+    return _files_sha256(files)
+
+
+def _resolve_filelist_path(base: Path, value: str) -> Path:
+    path = Path(value.strip("\"'")).expanduser()
+    return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+def _files_sha256(paths: list[Path]) -> str:
+    digest = hashlib.sha256()
+    seen: set[Path] = set()
+    for raw_path in paths:
+        path = raw_path.expanduser().resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        digest.update(str(path).encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def prepared_inputs_current(workspace: dict[str, Any], data: dict[str, Any] | None = None) -> bool:
