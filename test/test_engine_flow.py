@@ -2403,6 +2403,10 @@ def test_elab_check_result_rejects_20_errors_log(tmp_path):
         "Build failed: 20 errors, 0 warnings\nerror: something bad\n",
         encoding="utf-8",
     )
+    (tmp_path / "elab_summary.json").write_text(
+        json.dumps({"status": "fail", "returncode": 1}),
+        encoding="utf-8",
+    )
     assert SlangElabStep().check_result(step) is False
 
 
@@ -2412,7 +2416,22 @@ def test_elab_check_result_accepts_zero_errors_log(tmp_path):
         "Build succeeded: 0 errors, 0 warnings\n",
         encoding="utf-8",
     )
+    (tmp_path / "elab_summary.json").write_text(
+        json.dumps({"status": "pass", "returncode": 0}),
+        encoding="utf-8",
+    )
     assert SlangElabStep().check_result(step) is True
+
+
+def test_elab_check_result_rejects_nonzero_returncode_without_error_text(tmp_path):
+    step = SimpleNamespace(report={"dir": str(tmp_path)})
+    (tmp_path / "log.txt").write_text("slang terminated unexpectedly\n", encoding="utf-8")
+    (tmp_path / "elab_summary.json").write_text(
+        json.dumps({"status": "fail", "returncode": 2}),
+        encoding="utf-8",
+    )
+
+    assert SlangElabStep().check_result(step) is False
 
 
 def test_elab_parses_clickable_slang_diagnostics(tmp_path):

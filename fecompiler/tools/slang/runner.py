@@ -20,7 +20,7 @@ from fecompiler.tools.common.rtl_inputs import (
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.slang.subflow import SlangSubFlowEnum, init_slang_subflow
-from fecompiler.utility.json import json_write
+from fecompiler.utility.json import json_read, json_write
 
 
 # ── slang binary location ─────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ class SlangElabStep(BaseStep):
     """Run slang elaboration check on RTL.
 
     Sub-steps: elaborate → report
-    Success: log.txt exists and contains no 'error:'
+    Success: slang exits successfully and reports no elaboration errors.
     """
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
@@ -128,10 +128,18 @@ class SlangElabStep(BaseStep):
 
     def check_result(self, step: WorkspaceStep) -> bool:
         log_path = Path(step.report["dir"]) / "log.txt"
-        if not log_path.exists():
+        summary_path = Path(step.report["dir"]) / "elab_summary.json"
+        if not log_path.exists() or not summary_path.exists():
             return False
-        content = log_path.read_text(encoding="utf-8")
-        return self._is_elab_log_ok(content)
+        summary = json_read(summary_path)
+        if not isinstance(summary, dict):
+            return False
+        try:
+            returncode = int(summary.get("returncode", 1))
+        except (TypeError, ValueError):
+            return False
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+        return summary.get("status") == "pass" and returncode == 0 and self._is_elab_log_ok(content)
 
     def _run_elaborate(
         self,
@@ -192,7 +200,6 @@ class SlangElabStep(BaseStep):
     ) -> None:
         log_path = Path(step.report["dir"]) / "log.txt"
         content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        ok = self._is_elab_log_ok(content)
         summary_path = Path(step.report["dir"]) / "elab_summary.json"
         elab_summary = build_elab_summary(
             workspace,
@@ -201,6 +208,7 @@ class SlangElabStep(BaseStep):
             summary_path=summary_path,
         )
         json_write(summary_path, elab_summary)
+        ok = elab_summary["status"] == "pass" and self._is_elab_log_ok(content)
 
         json_write(step.report["step"], {
             "elaborate": "pass" if ok else "fail",
