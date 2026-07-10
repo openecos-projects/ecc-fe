@@ -1398,7 +1398,7 @@ class VerilatorSimStep(BaseStep):
 
     Requires workspace["testbench"] to point to a valid testbench file.
     Sub-steps: compile → simulate → report
-    Success condition: simulation binary ran and returned exit code 0.
+    Success condition: the selected suite reports an explicit success outcome.
     """
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
@@ -1726,7 +1726,14 @@ class VerilatorSimStep(BaseStep):
 
 
 def _sim_output_ok(returncode: int, output: str) -> bool:
-    return returncode == 0 and "FAILED" not in output and "%Error" not in output
+    return (
+        returncode == 0
+        and "HIT GOOD TRAP" in output
+        and "HIT BAD TRAP" not in output
+        and "FAILED" not in output
+        and "%Error" not in output
+        and "timeout after" not in output
+    )
 
 
 def _case_logs(case_root: Path, run_case_root: Path, output_cases_root: Path,

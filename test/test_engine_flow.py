@@ -28,6 +28,7 @@ from fecompiler.tools.verilator.runner import (
     _rtthread_prepare_helper,
     _sim_cases_from_images,
     _sim_cflags_args,
+    _sim_output_ok,
     _sim_run_args,
 )
 
@@ -54,6 +55,14 @@ def _build_engine(tmp_path: Path) -> tuple[EngineFlow, dict]:
         engine.load()
     engine.create_step_workspaces()
     return engine, ws
+
+
+def test_generic_simulation_requires_explicit_good_trap():
+    assert _sim_output_ok(0, "HIT GOOD TRAP\n") is True
+    assert _sim_output_ok(0, "finish after 10 cycles\n") is False
+    assert _sim_output_ok(0, "timeout after 10 cycles\n") is False
+    assert _sim_output_ok(0, "HIT GOOD TRAP\nHIT BAD TRAP\n") is False
+    assert _sim_output_ok(1, "HIT GOOD TRAP\n") is False
 
 
 def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:
@@ -1510,7 +1519,8 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
         run_calls.append(list(cmd))
         if _is_verilator_compile_cmd(cmd):
             _write_fake_sim_binary(cmd)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
 
@@ -1567,7 +1577,8 @@ def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkey
         run_calls.append(list(cmd))
         if _is_verilator_compile_cmd(cmd):
             _write_fake_sim_binary(cmd)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path))
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
@@ -1619,7 +1630,7 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
         image = ""
         if "--image" in cmd:
             image = cmd[cmd.index("--image") + 1]
-        return SimpleNamespace(returncode=0, stdout=f"ok:{image}\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout=f"ok:{image}\nHIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
 
@@ -1668,7 +1679,7 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
         if _is_verilator_compile_cmd(cmd):
             _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
-        return SimpleNamespace(returncode=0, stdout="ok-single\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="ok-single\nHIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
 
@@ -1731,12 +1742,12 @@ def test_rtthread_run_does_not_reuse_previous_cpu_tests_cases(tmp_path, monkeypa
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
             return SimpleNamespace(returncode=0, stdout="booted but no shell transcript\n", stderr="")
-        return SimpleNamespace(returncode=0, stdout="cpu ok\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="cpu ok\nHIT GOOD TRAP\n", stderr="")
 
     def _fake_sim_process(cmd, *, stream_output):
         if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
             return 0, "booted but no shell transcript\n"
-        return 0, "cpu ok\n"
+        return 0, "cpu ok\nHIT GOOD TRAP\n"
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
     monkeypatch.setattr("fecompiler.tools.verilator.runner._run_sim_process", _fake_sim_process)
@@ -1864,7 +1875,7 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
     monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
