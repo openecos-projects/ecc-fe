@@ -9,148 +9,197 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ecc-fe-release-latest
+  cancel-in-progress: false
+
 jobs:
-  release-latest:
+  package:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      any: ${{ steps.select.outputs.any }}
+      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select changed release packages
+        id: select
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          FORCE_ALL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: bash .github/scripts/select-release-packages.sh "${BEFORE_SHA}" "${GITHUB_SHA}"
+
+      - name: Test release package selection
+        shell: bash
+        run: bash .github/scripts/test-release-selection.sh
 
       - name: Check tracked waveform files
         shell: bash
         run: bash .github/scripts/check-no-tracked-waveforms.sh
 
-      - name: Package runtime
+      - name: Initialize CPU RTL submodules
+        if: steps.select.outputs.cpu_rtl == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Package selected resources
+        if: steps.select.outputs.any == 'true'
         shell: bash
+        env:
+          PACKAGES: ${{ steps.select.outputs.packages }}
         run: |
           set -euo pipefail
-
-          VERSION="latest"
-          ROOT="ecc-fe-${VERSION}"
-          ARCHIVE="ecc-fe-${VERSION}.tar.gz"
-          SHA_FILE="${ARCHIVE}.sha256"
-          METADATA="ecc-fe-${VERSION}.metadata.json"
-          SOC_VERSION="latest"
-          SOC_ROOT="ecc-fe-soc-ysyx-am-${SOC_VERSION}"
-          SOC_ARCHIVE="${SOC_ROOT}.tar.gz"
-          SOC_SHA_FILE="${SOC_ARCHIVE}.sha256"
-          SOC_METADATA="${SOC_ROOT}.metadata.json"
-          CPU_RTL_VERSION="latest"
-          CPU_RTL_ROOT="ecc-fe-cpu-rtl-${CPU_RTL_VERSION}"
-          CPU_RTL_ARCHIVE="${CPU_RTL_ROOT}.tar.gz"
-          CPU_RTL_SHA_FILE="${CPU_RTL_ARCHIVE}.sha256"
-          CPU_RTL_METADATA="${CPU_RTL_ROOT}.metadata.json"
-          DIFFTEST_REF_VERSION="latest"
-          DIFFTEST_REF_ROOT="ecc-fe-difftest-ref-${DIFFTEST_REF_VERSION}"
-          DIFFTEST_REF_ARCHIVE="${DIFFTEST_REF_ROOT}.tar.gz"
-          DIFFTEST_REF_SHA_FILE="${DIFFTEST_REF_ARCHIVE}.sha256"
-          DIFFTEST_REF_METADATA="${DIFFTEST_REF_ROOT}.metadata.json"
-          EXAMPLES_VERSION="latest"
-          EXAMPLES_ROOT="ecc-fe-examples-${EXAMPLES_VERSION}"
-          EXAMPLES_ARCHIVE="${EXAMPLES_ROOT}.tar.gz"
-          EXAMPLES_SHA_FILE="${EXAMPLES_ARCHIVE}.sha256"
-          EXAMPLES_METADATA="${EXAMPLES_ROOT}.metadata.json"
-
-          mkdir -p \
-            dist \
-            "${ROOT}" \
-            "${SOC_ROOT}" \
-            "${CPU_RTL_ROOT}/thirdparty" \
-            "${DIFFTEST_REF_ROOT}/tools" \
-            "${EXAMPLES_ROOT}"
-          cp -a bin fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${ROOT}/"
-          cp -a fecompiler/thirdparty/SoC/. "${SOC_ROOT}/"
-          cp -a \
-            fecompiler/thirdparty/README \
-            fecompiler/thirdparty/rtthread_prepare.py \
-            fecompiler/thirdparty/cv32e40p \
-            fecompiler/thirdparty/cva6 \
-            fecompiler/thirdparty/darkriscv \
-            fecompiler/thirdparty/ibex \
-            fecompiler/thirdparty/learn-fpga \
-            fecompiler/thirdparty/picorv32 \
-            fecompiler/thirdparty/rt-thread-am \
-            fecompiler/thirdparty/scr1 \
-            fecompiler/thirdparty/serv \
-            fecompiler/thirdparty/vexriscv \
-            "${CPU_RTL_ROOT}/thirdparty/"
-          cp -a fecompiler/thirdparty/SoC/tools/riscv32-spike-so "${DIFFTEST_REF_ROOT}/tools/"
-          cp -a examples "${EXAMPLES_ROOT}/"
-          rm -rf "${ROOT}/fecompiler/thirdparty"
-          rm -f "${SOC_ROOT}/tools/riscv32-spike-so"
-          for PACKAGE_ROOT in "${ROOT}" "${SOC_ROOT}" "${CPU_RTL_ROOT}" "${DIFFTEST_REF_ROOT}" "${EXAMPLES_ROOT}"; do
-            find "${PACKAGE_ROOT}" \
-              \( -name '.git' -o -name '.pytest_cache' -o -name '__pycache__' \) \
-              -type d -prune -exec rm -rf {} +
-            find "${PACKAGE_ROOT}" \
-              -name '.git' \
-              -type f -delete
-            find "${PACKAGE_ROOT}" \
-              \( -name '*.pyc' -o -name 'trace_hart_00.dasm' \) \
-              -type f -delete
-            find "${PACKAGE_ROOT}" \
-              \( -name '*.vcd' -o -name '*.vcd.gz' -o -name '*.fst' -o -name '*.fsdb' -o -name '*.vpd' -o -name '*.ghw' -o -name '*.wlf' -o -name '*.lxt' -o -name '*.lxt2' \) \
-              -type f -delete
-          done
-
-          tar -czf "dist/${ARCHIVE}" "${ROOT}"
-          SHA256="$(sha256sum "dist/${ARCHIVE}" | awk '{print $1}')"
-          SIZE="$(stat -c '%s' "dist/${ARCHIVE}")"
-          printf '%s  %s\n' "${SHA256}" "${ARCHIVE}" > "dist/${SHA_FILE}"
-          tar -czf "dist/${SOC_ARCHIVE}" "${SOC_ROOT}"
-          SOC_SHA256="$(sha256sum "dist/${SOC_ARCHIVE}" | awk '{print $1}')"
-          SOC_SIZE="$(stat -c '%s' "dist/${SOC_ARCHIVE}")"
-          printf '%s  %s\n' "${SOC_SHA256}" "${SOC_ARCHIVE}" > "dist/${SOC_SHA_FILE}"
-          tar -czf "dist/${CPU_RTL_ARCHIVE}" "${CPU_RTL_ROOT}"
-          CPU_RTL_SHA256="$(sha256sum "dist/${CPU_RTL_ARCHIVE}" | awk '{print $1}')"
-          CPU_RTL_SIZE="$(stat -c '%s' "dist/${CPU_RTL_ARCHIVE}")"
-          printf '%s  %s\n' "${CPU_RTL_SHA256}" "${CPU_RTL_ARCHIVE}" > "dist/${CPU_RTL_SHA_FILE}"
-          tar -czf "dist/${DIFFTEST_REF_ARCHIVE}" "${DIFFTEST_REF_ROOT}"
-          DIFFTEST_REF_SHA256="$(sha256sum "dist/${DIFFTEST_REF_ARCHIVE}" | awk '{print $1}')"
-          DIFFTEST_REF_SIZE="$(stat -c '%s' "dist/${DIFFTEST_REF_ARCHIVE}")"
-          printf '%s  %s\n' "${DIFFTEST_REF_SHA256}" "${DIFFTEST_REF_ARCHIVE}" > "dist/${DIFFTEST_REF_SHA_FILE}"
-          tar -czf "dist/${EXAMPLES_ARCHIVE}" "${EXAMPLES_ROOT}"
-          EXAMPLES_SHA256="$(sha256sum "dist/${EXAMPLES_ARCHIVE}" | awk '{print $1}')"
-          EXAMPLES_SIZE="$(stat -c '%s' "dist/${EXAMPLES_ARCHIVE}")"
-          printf '%s  %s\n' "${EXAMPLES_SHA256}" "${EXAMPLES_ARCHIVE}" > "dist/${EXAMPLES_SHA_FILE}"
-
-          export \
-            VERSION ROOT ARCHIVE SHA256 SIZE METADATA \
-            SOC_VERSION SOC_ROOT SOC_ARCHIVE SOC_SHA256 SOC_SIZE SOC_METADATA \
-            CPU_RTL_VERSION CPU_RTL_ROOT CPU_RTL_ARCHIVE CPU_RTL_SHA256 CPU_RTL_SIZE CPU_RTL_METADATA \
-            DIFFTEST_REF_VERSION DIFFTEST_REF_ROOT DIFFTEST_REF_ARCHIVE DIFFTEST_REF_SHA256 DIFFTEST_REF_SIZE DIFFTEST_REF_METADATA \
-            EXAMPLES_VERSION EXAMPLES_ROOT EXAMPLES_ARCHIVE EXAMPLES_SHA256 EXAMPLES_SIZE EXAMPLES_METADATA
-          node - <<'NODE'
-          const fs = require('node:fs')
-          const builtAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
-          const packages = [
-            ['ecc-fe', process.env.VERSION, process.env.ARCHIVE, process.env.SHA256, process.env.SIZE, process.env.ROOT, process.env.METADATA],
-            ['ecc-fe-soc-ysyx-am', process.env.SOC_VERSION, process.env.SOC_ARCHIVE, process.env.SOC_SHA256, process.env.SOC_SIZE, process.env.SOC_ROOT, process.env.SOC_METADATA],
-            ['ecc-fe-cpu-rtl', process.env.CPU_RTL_VERSION, process.env.CPU_RTL_ARCHIVE, process.env.CPU_RTL_SHA256, process.env.CPU_RTL_SIZE, process.env.CPU_RTL_ROOT, process.env.CPU_RTL_METADATA],
-            ['ecc-fe-difftest-ref', process.env.DIFFTEST_REF_VERSION, process.env.DIFFTEST_REF_ARCHIVE, process.env.DIFFTEST_REF_SHA256, process.env.DIFFTEST_REF_SIZE, process.env.DIFFTEST_REF_ROOT, process.env.DIFFTEST_REF_METADATA],
-            ['ecc-fe-examples', process.env.EXAMPLES_VERSION, process.env.EXAMPLES_ARCHIVE, process.env.EXAMPLES_SHA256, process.env.EXAMPLES_SIZE, process.env.EXAMPLES_ROOT, process.env.EXAMPLES_METADATA],
-          ]
-
-          for (const [name, version, archive, sha256, size, stripPrefix, metadataFile] of packages) {
-            const metadata = {
-              name,
-              version,
-              commit: process.env.GITHUB_SHA,
-              sha256,
-              size: Number(size),
-              built_at: builtAt,
-              archive,
-              strip_prefix: stripPrefix,
-            }
-            fs.writeFileSync(`dist/${metadataFile}`, `${JSON.stringify(metadata, null, 2)}\n`)
-          }
-          NODE
+          read -r -a packages <<< "${PACKAGES}"
+          bash .github/scripts/package-release-assets.sh dist "${packages[@]}"
 
       - name: Check release archive contents
+        if: steps.select.outputs.any == 'true'
         shell: bash
-        run: bash .github/scripts/check-release-archives.sh dist
+        env:
+          PACKAGES: ${{ steps.select.outputs.packages }}
+        run: |
+          set -euo pipefail
+          read -r -a packages <<< "${PACKAGES}"
+          bash .github/scripts/check-release-archives.sh dist "${packages[@]}"
+
+      - name: Upload runtime payload
+        if: steps.select.outputs.runtime == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-runtime
+          path: |
+            dist/ecc-fe-latest.tar.gz
+            dist/ecc-fe-latest.tar.gz.sha256
+            dist/ecc-fe-latest.metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload SoC payload
+        if: steps.select.outputs.soc == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-soc
+          path: |
+            dist/ecc-fe-soc-ysyx-am-latest.tar.gz
+            dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
+            dist/ecc-fe-soc-ysyx-am-latest.metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload CPU RTL payload
+        if: steps.select.outputs.cpu_rtl == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-cpu-rtl
+          path: |
+            dist/ecc-fe-cpu-rtl-latest.tar.gz
+            dist/ecc-fe-cpu-rtl-latest.tar.gz.sha256
+            dist/ecc-fe-cpu-rtl-latest.metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload difftest reference payload
+        if: steps.select.outputs.difftest_ref == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-difftest-ref
+          path: |
+            dist/ecc-fe-difftest-ref-latest.tar.gz
+            dist/ecc-fe-difftest-ref-latest.tar.gz.sha256
+            dist/ecc-fe-difftest-ref-latest.metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload examples payload
+        if: steps.select.outputs.examples == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-examples
+          path: |
+            dist/ecc-fe-examples-latest.tar.gz
+            dist/ecc-fe-examples-latest.tar.gz.sha256
+            dist/ecc-fe-examples-latest.metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: package
+    if: needs.package.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.package.outputs.matrix) }}
+    steps:
+      - name: Download release payloads
+        uses: actions/download-artifact@v4
+        with:
+          name: ecc-fe-release-${{ github.sha }}-${{ matrix.package }}
+          path: dist
+
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          case "${PACKAGE}" in
+            runtime)
+              tag="ecc-fe-latest"
+              title="ECC-FE latest"
+              archive="ecc-fe-latest.tar.gz"
+              metadata="ecc-fe-latest.metadata.json"
+              description="Mutable latest ECC-FE runtime package"
+              ;;
+            soc)
+              tag="ecc-fe-soc-ysyx-am-latest"
+              title="ECC-FE YSYX AM SoC Harness latest"
+              archive="ecc-fe-soc-ysyx-am-latest.tar.gz"
+              metadata="ecc-fe-soc-ysyx-am-latest.metadata.json"
+              description="Mutable latest ECC-FE YSYX AM SoC harness package"
+              ;;
+            cpu-rtl)
+              tag="ecc-fe-cpu-rtl-latest"
+              title="ECC-FE CPU RTL latest"
+              archive="ecc-fe-cpu-rtl-latest.tar.gz"
+              metadata="ecc-fe-cpu-rtl-latest.metadata.json"
+              description="Mutable latest ECC-FE CPU RTL package"
+              ;;
+            difftest-ref)
+              tag="ecc-fe-difftest-ref-latest"
+              title="ECC-FE Difftest Reference latest"
+              archive="ecc-fe-difftest-ref-latest.tar.gz"
+              metadata="ecc-fe-difftest-ref-latest.metadata.json"
+              description="Mutable latest ECC-FE difftest reference package"
+              ;;
+            examples)
+              tag="ecc-fe-examples-latest"
+              title="ECC-FE Examples latest"
+              archive="ecc-fe-examples-latest.tar.gz"
+              metadata="ecc-fe-examples-latest.metadata.json"
+              description="Mutable latest ECC-FE examples package"
+              ;;
+            *)
+              echo "Unknown release package: ${PACKAGE}" >&2
+              exit 2
+              ;;
+          esac
+          {
+            printf 'tag=%s\n' "${tag}"
+            printf 'title=%s\n' "${title}"
+            printf 'archive=%s\n' "${archive}"
+            printf 'metadata=%s\n' "${metadata}"
+            printf 'description=%s\n' "${description}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create resource release token
         id: app-token
@@ -161,87 +210,33 @@ jobs:
           owner: openecos-projects
           repositories: ecos-resource-assets
 
-      - name: Publish latest release
+      - name: Publish latest resource archive
         uses: softprops/action-gh-release@v2
         with:
           repository: openecos-projects/ecos-resource-assets
           token: ${{ steps.app-token.outputs.token }}
-          tag_name: ecc-fe-latest
-          name: ECC-FE latest
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.title }}
           body: |
-            Mutable latest ECC-FE runtime package generated from openecos-projects/ecc-fe `main`.
+            ${{ steps.release.outputs.description }} generated from openecos-projects/ecc-fe `main` at `${{ github.sha }}`.
           prerelease: false
           make_latest: false
           overwrite_files: true
           files: |
-            dist/ecc-fe-latest.tar.gz
-            dist/ecc-fe-latest.tar.gz.sha256
-            dist/ecc-fe-latest.metadata.json
+            dist/${{ steps.release.outputs.archive }}
+            dist/${{ steps.release.outputs.archive }}.sha256
 
-      - name: Publish latest SoC harness release
+      - name: Publish release metadata last
         uses: softprops/action-gh-release@v2
         with:
           repository: openecos-projects/ecos-resource-assets
           token: ${{ steps.app-token.outputs.token }}
-          tag_name: ecc-fe-soc-ysyx-am-latest
-          name: ECC-FE YSYX AM SoC Harness latest
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.title }}
           body: |
-            Mutable latest ECC-FE YSYX AM SoC harness package generated from openecos-projects/ecc-fe `main`.
+            ${{ steps.release.outputs.description }} generated from openecos-projects/ecc-fe `main` at `${{ github.sha }}`.
           prerelease: false
           make_latest: false
           overwrite_files: true
           files: |
-            dist/ecc-fe-soc-ysyx-am-latest.tar.gz
-            dist/ecc-fe-soc-ysyx-am-latest.tar.gz.sha256
-            dist/ecc-fe-soc-ysyx-am-latest.metadata.json
-
-      - name: Publish latest CPU RTL release
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: openecos-projects/ecos-resource-assets
-          token: ${{ steps.app-token.outputs.token }}
-          tag_name: ecc-fe-cpu-rtl-latest
-          name: ECC-FE CPU RTL latest
-          body: |
-            Mutable latest ECC-FE CPU RTL package generated from openecos-projects/ecc-fe `main`.
-          prerelease: false
-          make_latest: false
-          overwrite_files: true
-          files: |
-            dist/ecc-fe-cpu-rtl-latest.tar.gz
-            dist/ecc-fe-cpu-rtl-latest.tar.gz.sha256
-            dist/ecc-fe-cpu-rtl-latest.metadata.json
-
-      - name: Publish latest difftest reference release
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: openecos-projects/ecos-resource-assets
-          token: ${{ steps.app-token.outputs.token }}
-          tag_name: ecc-fe-difftest-ref-latest
-          name: ECC-FE Difftest Reference latest
-          body: |
-            Mutable latest ECC-FE difftest reference package generated from openecos-projects/ecc-fe `main`.
-          prerelease: false
-          make_latest: false
-          overwrite_files: true
-          files: |
-            dist/ecc-fe-difftest-ref-latest.tar.gz
-            dist/ecc-fe-difftest-ref-latest.tar.gz.sha256
-            dist/ecc-fe-difftest-ref-latest.metadata.json
-
-      - name: Publish latest examples release
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: openecos-projects/ecos-resource-assets
-          token: ${{ steps.app-token.outputs.token }}
-          tag_name: ecc-fe-examples-latest
-          name: ECC-FE Examples latest
-          body: |
-            Mutable latest ECC-FE examples package generated from openecos-projects/ecc-fe `main`.
-          prerelease: false
-          make_latest: false
-          overwrite_files: true
-          files: |
-            dist/ecc-fe-examples-latest.tar.gz
-            dist/ecc-fe-examples-latest.tar.gz.sha256
-            dist/ecc-fe-examples-latest.metadata.json
+            dist/${{ steps.release.outputs.metadata }}
