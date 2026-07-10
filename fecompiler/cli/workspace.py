@@ -1454,12 +1454,7 @@ def _default_cpu_tests_run_args(workspace: dict[str, Any]) -> list[str]:
 
 def _default_rtthread_run_args(workspace: dict[str, Any]) -> list[str]:
     if not _supports_difftest(workspace):
-        raise WorkspaceCliError(
-            "run_step",
-            "failed",
-            f"{_workspace_core_label(workspace)} with {_workspace_soc_label(workspace)} does not support RT-Thread in the current ECOS adapter.",
-            data={"core_id": str(workspace.get("cpu_wrapper_id", "")).strip(), "test_suite_id": "rtthread"},
-        )
+        return ["--max-cycles", "10000000", "--timeout-ok"]
     soc_root = _workspace_soc_root(workspace)
     args = ["--max-cycles", "10000000"]
     if not soc_root:
@@ -1598,7 +1593,7 @@ def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     if raw is not None:
         return _normalize_bool(raw)
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv", "standard-cpu-filelist"}:
+    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv", "custom-filelist", "standard-cpu-filelist"}:
         return False
     return True
 

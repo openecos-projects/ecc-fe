@@ -116,9 +116,6 @@ def _supported_test_suites(
     soc_suites = _entry_supported_test_suites(soc, implemented)
     common = [suite_id for suite_id in implemented if suite_id in core_suites and suite_id in soc_suites]
 
-    if not (_supports_difftest(core) and _supports_difftest(soc)):
-        common = [suite_id for suite_id in common if suite_id != "rtthread"]
-
     return common
 
 
@@ -174,10 +171,6 @@ def _summary(
 
 def _issue(code: str, message: str) -> dict[str, str]:
     return {"code": code, "message": message}
-
-
-def _supports_difftest(entry: CatalogEntry) -> bool:
-    return bool(entry.data.get("supports_difftest", True))
 
 
 def _cpu_socket_compatible(core: CatalogEntry, soc: CatalogEntry) -> bool:

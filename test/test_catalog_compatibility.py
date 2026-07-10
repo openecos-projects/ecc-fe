@@ -60,6 +60,7 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     })
     assert result.ok is True
     assert result.normalized["core_sim_coremark_use_difftest"] is False
+    assert result.normalized["cpu_supports_difftest"] is False
     assert result.normalized["required_cpu_top_module"] == "cpu_top"
     assert result.normalized["cpu_wrapper_top"] == "ysyx_00000000"
     assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"

@@ -56,7 +56,7 @@
     ],
     "integration_level": "sim_ready",
     "status": "stable",
-    "supports_difftest": true,
+    "supports_difftest": false,
     "supported_test_suites": ["smoke", "cpu-tests", "rtthread", "coremark"],
     "sim_coremark_use_difftest": false,
     "license": "user-provided",

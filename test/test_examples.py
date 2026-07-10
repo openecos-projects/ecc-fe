@@ -65,3 +65,10 @@ def test_cl3_cpu_filelist_does_not_ship_generated_wrapper() -> None:
 
 def test_cl3_is_the_only_shipped_example_tree() -> None:
     assert not (REPO_ROOT / "examples" / "cl3_std").exists()
+
+
+def test_cl3_difftest_wrapper_calls_dpi_bridge() -> None:
+    source = (CL3_ROOT / "cl3_verilog" / "difftest_wrapper.sv").read_text(encoding="utf-8")
+
+    assert 'import "DPI-C" function int difftest_step' in source
+    assert "difftest_result = difftest_step(" in source

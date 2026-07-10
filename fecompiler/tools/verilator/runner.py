@@ -132,13 +132,20 @@ def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
 
 def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
     args = [str(arg) for arg in workspace.get("sim_run_args", []) or []]
-    if _rtthread_requested(workspace) and not _arg_present(args, "--diff"):
+    if _rtthread_requested(workspace) and _sim_difftest_supported(workspace) and not _arg_present(args, "--diff"):
         args = _append_rtthread_difftest_args(workspace, args)
     return args
 
 
+def _sim_difftest_supported(workspace: dict[str, Any]) -> bool:
+    return (
+        _bool_workspace_value(workspace.get("cpu_supports_difftest"), True)
+        and _bool_workspace_value(workspace.get("soc_supports_difftest"), True)
+    )
+
+
 def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
-    return "--diff" in _sim_run_args(workspace)
+    return _sim_difftest_supported(workspace) and "--diff" in _sim_run_args(workspace)
 
 
 def _run_sim_process(cmd: list[str], *, stream_output: bool) -> tuple[int, str]:

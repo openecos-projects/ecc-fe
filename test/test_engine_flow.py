@@ -2123,6 +2123,17 @@ def test_rtthread_program_enables_default_difftest_args(tmp_path):
     assert "--timeout-ok" in args
 
 
+def test_rtthread_program_omits_difftest_for_generic_cpu():
+    args = _sim_run_args({
+        "sim_program_names": ["rtthread"],
+        "cpu_supports_difftest": False,
+        "soc_supports_difftest": True,
+        "sim_run_args": ["--max-cycles", "10000000", "--timeout-ok"],
+    })
+
+    assert args == ["--max-cycles", "10000000", "--timeout-ok"]
+
+
 def test_rtthread_program_uses_external_difftest_ref_when_soc_ref_is_split(tmp_path, monkeypatch):
     soc_root = tmp_path / "SoC"
     ref_root = tmp_path / "ecc-fe-difftest-ref"
