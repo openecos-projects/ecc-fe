@@ -62,6 +62,10 @@ _STR_PARAMETER_FIELDS = (
     "cpu_wrapper_top",
     "cpu_standard_top",
     "cpu_wrapper_generation",
+    "cpu_reset_vector",
+    "soc_cpu_reset_vector",
+    "soc_default_program_link_base",
+    "soc_bootloader_payload_link_base",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",

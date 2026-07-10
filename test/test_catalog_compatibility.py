@@ -75,6 +75,10 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"
     assert len(result.normalized["required_cpu_top_ports"]) == 39
     assert len(result.normalized["required_cpu_top_port_contract"]) == 39
+    assert result.normalized["required_cpu_reset_vector"] == "0x20000000"
+    assert result.normalized["soc_cpu_reset_vector"] == "0x20000000"
+    assert result.normalized["core_sim_program_link_base"] == "0x20000000"
+    assert result.normalized["soc_bootloader_payload_link_base"] == "0x80000000"
 
 
 def test_custom_filelist_requires_cpu_top(tmp_path):

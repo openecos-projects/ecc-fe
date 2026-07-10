@@ -110,6 +110,13 @@ The generated wrapper preserves the simulator MMIO convention used by CPU tests:
 UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate
 the run as GOOD/BAD TRAP depending on the written value.
 
+The CPU must reset its first instruction fetch to `0x2000_0000`. Normal CPU
+tests are linked at that address. RT-Thread uses the SoC bootloader at
+`0x2000_0000`, which loads and jumps to the payload at `0x8000_0000`. These
+addresses are part of the catalog contract and are stored in every workspace;
+changing them requires a matching CPU wrapper, SoC harness, linker, and
+difftest configuration.
+
 Before claiming a new adapter is runnable, run the static catalog check:
 
 ```bash

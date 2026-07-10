@@ -99,6 +99,7 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
     issues.extend(_require_nonempty_list(entry, "cpu", entry_id, "supported_test_suites"))
 
     if bool(entry.get("requires_filelist")):
+        issues.extend(_require_text(entry, "cpu", entry_id, "cpu_reset_vector"))
         if str(entry.get("cpu_wrapper_generation", "")).strip() == "standard_alias_v1":
             issues.extend(_require_text(entry, "cpu", entry_id, "cpu_standard_top"))
         return issues
@@ -148,6 +149,9 @@ def _check_soc_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
     issues.extend(_require_value(entry, "soc", entry_id, "wrapper_contract", SOC_WRAPPER_CONTRACT))
     issues.extend(_require_value(entry, "soc", entry_id, "wrapper_top", SOC_WRAPPER_TOP))
     issues.extend(_require_value(entry, "soc", entry_id, "cpu_socket_contract", CPU_SOCKET_CONTRACT))
+    issues.extend(_require_text(entry, "soc", entry_id, "cpu_reset_vector"))
+    issues.extend(_require_text(entry, "soc", entry_id, "default_program_link_base"))
+    issues.extend(_require_text(entry, "soc", entry_id, "bootloader_payload_link_base"))
     issues.extend(_require_nonempty_list(entry, "soc", entry_id, "supported_test_suites"))
 
     directory = _resolve_repo_path(root, str(entry.get("directory", "")).strip())

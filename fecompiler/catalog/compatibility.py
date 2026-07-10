@@ -64,6 +64,14 @@ def compatibility_for_pair(
             )
         )
 
+    if not _reset_vector_compatible(core, soc):
+        issues.append(
+            _issue(
+                "reset_vector_not_compatible",
+                "CPU reset vector does not match the SoC harness boot address contract.",
+            )
+        )
+
     if not core.sim_ready:
         issues.append(
             _issue(
@@ -177,6 +185,12 @@ def _cpu_socket_compatible(core: CatalogEntry, soc: CatalogEntry) -> bool:
     core_socket = str(core.data.get("cpu_socket_contract", "")).strip()
     soc_socket = str(soc.data.get("cpu_socket_contract", "")).strip()
     return not core_socket or not soc_socket or core_socket == soc_socket
+
+
+def _reset_vector_compatible(core: CatalogEntry, soc: CatalogEntry) -> bool:
+    core_reset = str(core.data.get("cpu_reset_vector", "")).strip().lower()
+    soc_reset = str(soc.data.get("cpu_reset_vector", "")).strip().lower()
+    return not core_reset or not soc_reset or core_reset == soc_reset
 
 
 def _isa_compatible(core: CatalogEntry, soc: CatalogEntry) -> bool:

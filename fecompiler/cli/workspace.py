@@ -364,6 +364,7 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
     parameters["cpu_standard_top"] = validation.normalized.get("cpu_standard_top", "")
     parameters["cpu_wrapper_generation"] = validation.normalized.get("cpu_wrapper_generation", "")
+    parameters["cpu_reset_vector"] = validation.normalized.get("required_cpu_reset_vector", "")
     if validation.normalized.get("cpu_adapter_filelist"):
         parameters["cpu_adapter_filelist"] = validation.normalized["cpu_adapter_filelist"]
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
@@ -375,6 +376,9 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
     parameters["soc_wrapper_contract"] = validation.normalized.get("soc_wrapper_contract", "")
     parameters["soc_wrapper_top"] = validation.normalized.get("soc_wrapper_top", "")
+    parameters["soc_cpu_reset_vector"] = validation.normalized.get("soc_cpu_reset_vector", "")
+    parameters["soc_default_program_link_base"] = validation.normalized.get("soc_default_program_link_base", "")
+    parameters["soc_bootloader_payload_link_base"] = validation.normalized.get("soc_bootloader_payload_link_base", "")
     parameters["soc_supports_difftest"] = bool(validation.normalized.get("soc_supports_difftest", True))
     parameters["soc_supported_test_suites"] = validation.normalized.get("soc_supported_test_suites", [])
     parameters["toolchain_id"] = validation.normalized["toolchain_id"]
@@ -875,6 +879,14 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
         request["cpu_standard_top"] = normalized["cpu_standard_top"]
     if normalized.get("cpu_wrapper_generation"):
         request["cpu_wrapper_generation"] = normalized["cpu_wrapper_generation"]
+    if normalized.get("required_cpu_reset_vector"):
+        request["cpu_reset_vector"] = normalized["required_cpu_reset_vector"]
+    if normalized.get("soc_cpu_reset_vector"):
+        request["soc_cpu_reset_vector"] = normalized["soc_cpu_reset_vector"]
+    if normalized.get("soc_default_program_link_base"):
+        request["soc_default_program_link_base"] = normalized["soc_default_program_link_base"]
+    if normalized.get("soc_bootloader_payload_link_base"):
+        request["soc_bootloader_payload_link_base"] = normalized["soc_bootloader_payload_link_base"]
     request["cpu_supports_difftest"] = bool(normalized.get("cpu_supports_difftest", True))
     request["soc_supports_difftest"] = bool(normalized.get("soc_supports_difftest", True))
     request["core_supported_test_suites"] = normalized.get("core_supported_test_suites", [])

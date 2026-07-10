@@ -12,6 +12,9 @@
   "wrapper_contract": "ecos-sim-wrapper-v1",
   "wrapper_top": "ecos_sim_top",
   "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
+  "cpu_reset_vector": "0x20000000",
+  "default_program_link_base": "0x20000000",
+  "bootloader_payload_link_base": "0x80000000",
   "supports_difftest": true,
   "supported_test_suites": [
     "smoke",
