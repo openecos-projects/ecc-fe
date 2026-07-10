@@ -212,6 +212,7 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
         "required_cpu_top_module": _required_user_cpu_top_module(core),
         "required_cpu_top_ports": _required_user_cpu_top_ports(core),
+        "required_cpu_top_port_contract": _required_user_cpu_top_port_contract(core),
         "cpu_standard_top": str(core.data.get("cpu_standard_top", "")) if core is not None else "",
         "cpu_wrapper_generation": str(core.data.get("cpu_wrapper_generation", "")) if core is not None else "",
         "cpu_supports_difftest": _core_supports_difftest(core),
@@ -447,7 +448,8 @@ def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path
 
     required_ports = _required_user_cpu_top_ports(core)
     if required_ports:
-        found_ports = _filelist_module_ports(parsed["files"], required_top)
+        found_contract = _filelist_module_port_contract(parsed["files"], required_top)
+        found_ports = [str(port.get("name", "")) for port in found_contract]
         missing = [port for port in required_ports if port not in found_ports]
         extra = [port for port in found_ports if port not in required_ports]
         if missing or extra:
@@ -464,6 +466,36 @@ def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path
                     "cpu_filelist",
                 )
             )
+        else:
+            expected_contract = {
+                str(port["name"]): port
+                for port in _required_user_cpu_top_port_contract(core)
+            }
+            actual_contract = {str(port["name"]): port for port in found_contract}
+            mismatches = []
+            for name in required_ports:
+                expected = expected_contract.get(name)
+                actual = actual_contract.get(name)
+                if expected is None or actual is None:
+                    continue
+                expected_direction = str(expected.get("direction", ""))
+                actual_direction = str(actual.get("direction", ""))
+                expected_width = int(expected.get("width", 0))
+                actual_width = int(actual.get("width", 0))
+                if expected_direction != actual_direction or expected_width != actual_width:
+                    mismatches.append(
+                        f"{name}: expected {expected_direction}[{expected_width}], "
+                        f"found {actual_direction or 'unknown'}[{actual_width or 'unknown'}]"
+                    )
+            if mismatches:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "cpu_top_port_contract_mismatch",
+                        f"CPU top module {required_top} port direction/width mismatch ({'; '.join(mismatches)}).",
+                        "cpu_filelist",
+                    )
+                )
     return issues
 
 
@@ -490,6 +522,27 @@ def _required_user_cpu_top_ports(core: CatalogEntry | None) -> list[str]:
     if not isinstance(ports, list):
         return []
     return [str(port).strip() for port in ports if str(port).strip()]
+
+
+def _required_user_cpu_top_port_contract(core: CatalogEntry | None) -> list[dict[str, Any]]:
+    if core is None or not bool(core.data.get("requires_filelist")):
+        return []
+    raw_ports = core.data.get("required_cpu_top_port_contract")
+    if not isinstance(raw_ports, list):
+        return []
+    ports: list[dict[str, Any]] = []
+    for raw_port in raw_ports:
+        if not isinstance(raw_port, dict):
+            continue
+        name = str(raw_port.get("name", "")).strip()
+        direction = str(raw_port.get("direction", "")).strip().lower()
+        try:
+            width = int(raw_port.get("width", 0))
+        except (TypeError, ValueError):
+            width = 0
+        if name and direction in {"input", "output", "inout"} and width > 0:
+            ports.append({"name": name, "direction": direction, "width": width})
+    return ports
 
 
 def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = None) -> dict[str, list[Path]]:
@@ -578,9 +631,13 @@ def _filelist_module_count(files: list[Path], module_name: str) -> int:
 
 
 def _filelist_module_ports(files: list[Path], module_name: str) -> list[str]:
+    return [str(port.get("name", "")) for port in _filelist_module_port_contract(files, module_name)]
+
+
+def _filelist_module_port_contract(files: list[Path], module_name: str) -> list[dict[str, Any]]:
     for path in files:
         try:
-            ports = _module_port_names(path.read_text(encoding="utf-8", errors="ignore"), module_name)
+            ports = _module_port_contract(path.read_text(encoding="utf-8", errors="ignore"), module_name)
         except OSError:
             continue
         if ports:
@@ -589,21 +646,93 @@ def _filelist_module_ports(files: list[Path], module_name: str) -> list[str]:
 
 
 def _module_port_names(text: str, module_name: str) -> list[str]:
+    return [str(port.get("name", "")) for port in _module_port_contract(text, module_name)]
+
+
+def _module_port_contract(text: str, module_name: str) -> list[dict[str, Any]]:
     stripped = _strip_sv_comments(text)
-    pattern = re.compile(
-        rf"\bmodule\s+{re.escape(module_name)}\b\s*(?:#\s*\([\s\S]*?\)\s*)?\((?P<ports>[\s\S]*?)\)\s*;",
-        re.MULTILINE,
-    )
-    match = pattern.search(stripped)
-    if not match:
+    header = _module_port_header(stripped, module_name)
+    if header is None:
         return []
 
-    ports: list[str] = []
-    for raw_port in match.group("ports").split(","):
+    ports: list[dict[str, Any]] = []
+    direction = ""
+    width = 1
+    for raw_port in _split_top_level_sv_list(header):
+        direction_match = re.search(r"\b(input|output|inout)\b", raw_port)
+        if direction_match:
+            direction = direction_match.group(1)
+            width = _packed_width(raw_port)
         name = _port_decl_name(raw_port)
         if name:
-            ports.append(name)
+            ports.append({"name": name, "direction": direction, "width": width})
     return ports
+
+
+def _module_port_header(text: str, module_name: str) -> str | None:
+    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
+    if match is None:
+        return None
+    index = match.end()
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index < len(text) and text[index] == "#":
+        index += 1
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] != "(":
+            return None
+        end = _matching_delimiter(text, index, "(", ")")
+        if end is None:
+            return None
+        index = end + 1
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] != "(":
+        return "" if index < len(text) and text[index] == ";" else None
+    end = _matching_delimiter(text, index, "(", ")")
+    return text[index + 1:end] if end is not None else None
+
+
+def _matching_delimiter(text: str, start: int, opening: str, closing: str) -> int | None:
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _split_top_level_sv_list(text: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depths = {"(": 0, "[": 0, "{": 0}
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for index, char in enumerate(text):
+        if char in depths:
+            depths[char] += 1
+        elif char in pairs:
+            opening = pairs[char]
+            depths[opening] = max(0, depths[opening] - 1)
+        elif char == "," and not any(depths.values()):
+            parts.append(text[start:index])
+            start = index + 1
+    parts.append(text[start:])
+    return parts
+
+
+def _packed_width(port_declaration: str) -> int:
+    ranges = re.findall(r"\[\s*([0-9]+)\s*:\s*([0-9]+)\s*\]", port_declaration)
+    if not ranges:
+        return 1
+    width = 1
+    for upper, lower in ranges:
+        width *= abs(int(upper) - int(lower)) + 1
+    return width
 
 
 def _port_decl_name(raw_port: str) -> str:

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fecompiler.catalog.registry import catalog_payload, validate_frontend_config
@@ -27,8 +29,15 @@ def _custom_filelist_core() -> dict:
 
 
 def _cl3_top_source(ports: list[str] | None = None) -> str:
-    selected_ports = ports or list(_custom_filelist_core()["required_cpu_top_ports"])
-    port_lines = [f"  input {port}" for port in selected_ports]
+    core = _custom_filelist_core()
+    selected_ports = ports or list(core["required_cpu_top_ports"])
+    contract = {str(port["name"]): port for port in core["required_cpu_top_port_contract"]}
+    port_lines = []
+    for name in selected_ports:
+        port = contract.get(name, {"direction": "input", "width": 1})
+        width = int(port["width"])
+        packed = f" [{width - 1}:0]" if width > 1 else ""
+        port_lines.append(f"  {port['direction']}{packed} {name}")
     return "module cpu_top(\n" + ",\n".join(port_lines) + "\n);\nendmodule\n"
 
 
@@ -65,6 +74,7 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     assert result.normalized["cpu_wrapper_top"] == "ysyx_00000000"
     assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"
     assert len(result.normalized["required_cpu_top_ports"]) == 39
+    assert len(result.normalized["required_cpu_top_port_contract"]) == 39
 
 
 def test_custom_filelist_requires_cpu_top(tmp_path):
@@ -100,6 +110,45 @@ def test_custom_filelist_requires_cpu_top_ports(tmp_path):
 
     assert result.ok is False
     assert any(issue.code == "cpu_top_ports_mismatch" for issue in result.issues)
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("output [31:0] io_master_aw_bits_awaddr", "input [31:0] io_master_aw_bits_awaddr"),
+        ("output [31:0] io_master_aw_bits_awaddr", "output [15:0] io_master_aw_bits_awaddr"),
+    ],
+)
+def test_custom_filelist_rejects_wrong_cpu_top_direction_or_width(tmp_path, before, after):
+    cpu_top = tmp_path / "cpu_top.sv"
+    cpu_top.write_text(_cl3_top_source().replace(before, after), encoding="utf-8")
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+    })
+
+    assert result.ok is False
+    assert any(issue.code == "cpu_top_port_contract_mismatch" for issue in result.issues)
+
+
+def test_shipped_cl3_cpu_top_matches_structured_port_contract():
+    filelist = Path(__file__).resolve().parents[1] / "examples" / "cl3" / "filelist.cpu.f"
+
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(filelist),
+    })
+
+    assert result.ok is True
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
