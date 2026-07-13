@@ -35,7 +35,6 @@ _BOOL_PARAMETER_FIELDS = (
 )
 _STR_PARAMETER_FIELDS = (
     "cpu_filelist",
-    "cpu_adapter_filelist",
     "soc_filelist",
     "prepared_manifest",
     "testbench",
@@ -60,8 +59,6 @@ _STR_PARAMETER_FIELDS = (
     "cpu_wrapper_contract",
     "cpu_socket_contract",
     "cpu_wrapper_top",
-    "cpu_standard_top",
-    "cpu_wrapper_generation",
     "cpu_reset_vector",
     "soc_cpu_reset_vector",
     "soc_default_program_link_base",
@@ -69,7 +66,6 @@ _STR_PARAMETER_FIELDS = (
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",
-    "cpu_adapter_filelist",
     "soc_filelist",
     "testbench",
     *_LIST_PARAMETER_FIELDS,
@@ -139,7 +135,6 @@ class CreateWorkspaceData:
     origin_verilog: str = ""
     filelist: str = ""
     cpu_filelist: str = ""
-    cpu_adapter_filelist: str = ""
     soc_filelist: str = ""
     testbench: str = ""
     sim_cpp_sources: list[str] = field(default_factory=list)
@@ -270,7 +265,6 @@ def save_flow(flow_path: Path, flow: dict[str, Any]) -> None:
 def build_parameter_overrides(
     *,
     cpu_filelist: str = "",
-    cpu_adapter_filelist: str = "",
     soc_filelist: str = "",
     testbench: str = "",
     sim_cpp_sources: list[str] | None = None,
@@ -309,7 +303,6 @@ def build_parameter_overrides(
 
     for field in (
         "cpu_filelist",
-        "cpu_adapter_filelist",
         "soc_filelist",
         "testbench",
         "sim_tests_dir",

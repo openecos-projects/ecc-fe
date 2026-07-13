@@ -45,7 +45,6 @@ SOC_LIST="${ROOT}/filelist.soc.f"
 
 {
   echo "ysyxSoCFull.v"
-  echo "ysyx_00000000.sv"
   find "${ROOT}/perip" -type f -name '*.v' | sort | sed "s#^${ROOT}/##"
 } > "${SOC_LIST}"
 

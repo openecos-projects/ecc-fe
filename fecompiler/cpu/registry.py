@@ -23,7 +23,7 @@ class CpuWrapper:
     name: str
     socket_contract: str = DEFAULT_CPU_SOCKET
     wrapper_contract: str = "ecos-cpu-wrapper-v1"
-    wrapper_top: str = "ysyx_00000000"
+    wrapper_top: str = "cpu_top"
     sim_ready: bool = False
     supports_difftest: bool = True
 
@@ -56,7 +56,7 @@ def get_cpu_wrapper(config: dict[str, Any] | str | None) -> CpuWrapper | None:
     if wrapper_id == "custom-filelist":
         return CpuWrapper(
             id="custom-filelist",
-            name="My CPU Filelist",
+            name="My CPU Top",
             sim_ready=True,
         )
     if wrapper_id == "scr1":
@@ -98,7 +98,7 @@ def _wrapper_from_manifest(data: dict[str, Any]) -> CpuWrapper:
         name=str(data.get("name", "")).strip(),
         socket_contract=str(data.get("socket_contract", DEFAULT_CPU_SOCKET)).strip() or DEFAULT_CPU_SOCKET,
         wrapper_contract=str(data.get("wrapper_contract", "ecos-cpu-wrapper-v1")).strip() or "ecos-cpu-wrapper-v1",
-        wrapper_top=str(data.get("wrapper_top", "ysyx_00000000")).strip() or "ysyx_00000000",
+        wrapper_top=str(data.get("wrapper_top", "cpu_top")).strip() or "cpu_top",
         sim_ready=bool(data.get("sim_ready", False)),
         supports_difftest=bool(data.get("supports_difftest", True)),
     )

@@ -16,3 +16,4 @@
 ../../thirdparty/serv/rtl/serv_aligner.v
 ../../thirdparty/serv/rtl/serv_compdec.v
 ecos_serv_cpu_wrapper.v
+../cpu_top_bridge.v

@@ -12,7 +12,7 @@ Current support:
 - selected RTL: `VexRiscv_Min.v`,
 - upstream bus: separate instruction/data Wishbone ports,
 - ECOS wrapper: `ecos_vexriscv_cpu_wrapper`,
-- SoC-facing compatibility module: `ysyx_00000000`,
+- SoC-facing module: `cpu_top` via the bundled legacy bridge,
 - supported suites: `smoke`, `cpu-tests`,
 - difftest/RT-Thread: not supported.
 

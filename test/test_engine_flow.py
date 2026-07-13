@@ -465,7 +465,7 @@ def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
     assert ws["sim_run_args"] == ["--max-cycles", "50000000"]
 
 
-def test_frontend_create_with_catalog_cpu_and_user_filelist_adds_adapter_wrapper(tmp_path):
+def test_frontend_create_rejects_user_filelist_for_builtin_cpu(tmp_path):
     user_cpu_root = tmp_path / "user_cpu"
     user_cpu_root.mkdir()
     user_cpu_rtl = user_cpu_root / "picorv32_user.v"
@@ -494,29 +494,8 @@ def test_frontend_create_with_catalog_cpu_and_user_filelist_adds_adapter_wrapper
         encoding="utf-8",
     )
 
-    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
-    ws = load_workspace(str(tmp_path / "ws_frontend_user_cpu"))
-
-    assert ws["cpu_filelist"] == str(user_cpu_filelist.resolve())
-    assert ws["cpu_adapter_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
-    assert ws["cpu_wrapper_top"] == "ecos_picorv32_cpu_wrapper"
-
-    engine = EngineFlow(workspace=ws)
-    engine.create_step_workspaces()
-    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
-
-    manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
-    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
-    prepared = json.loads(manifest.read_text(encoding="utf-8"))
-    prepare_report = json.loads(report.read_text(encoding="utf-8"))
-    rtl_files = {str(Path(item).resolve()) for item in prepared["rtl_files"]}
-
-    assert str(user_cpu_rtl.resolve()) in rtl_files
-    assert any(path.endswith("ecos_picorv32_cpu_wrapper.v") for path in rtl_files)
-    assert not any(path.endswith("/SoC/ysyx_00000000.sv") for path in rtl_files)
-    assert prepare_report["inputs"]["cpu_filelist"]["path"] == str(user_cpu_filelist.resolve())
-    assert prepare_report["inputs"]["cpu_adapter_filelist"]["path"] == ws["cpu_adapter_filelist"]
-    assert prepare_report["inputs"]["soc_filelist"]["filtered_rtl_files"] == 1
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 1
+    assert load_workspace(str(tmp_path / "ws_frontend_user_cpu")) is None
 
 
 def test_frontend_create_applies_catalog_coremark_profile(tmp_path, monkeypatch):
@@ -865,7 +844,7 @@ def test_run_step_refreshes_stale_prepare_manifest(tmp_path):
     cpu_rtl = tmp_path / "cpu.v"
     old_rtl.write_text("module old_soc(); endmodule\n", encoding="utf-8")
     new_rtl.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
-    cpu_rtl.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    cpu_rtl.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
     old_soc.write_text(str(old_rtl) + "\n", encoding="utf-8")
     new_soc.write_text(str(new_rtl) + "\n", encoding="utf-8")
     cpu.write_text(str(cpu_rtl) + "\n", encoding="utf-8")
@@ -874,7 +853,7 @@ def test_run_step_refreshes_stale_prepare_manifest(tmp_path):
         parameters={
             "Design": "chip",
             "Top module": "ecos_sim_top",
-            "cpu_wrapper_top": "ysyx_00000000",
+            "required_cpu_top_module": "cpu_top",
             "soc_wrapper_id": "ysyx-am-soc",
         },
         cpu_filelist=str(cpu),
@@ -1333,19 +1312,19 @@ def test_prepare_merges_cpu_and_soc_filelists(tmp_path):
     assert prepared["defines"] == ["CPU_CFG=1", "SOC_CFG=1"]
 
 
-def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_path):
+def test_prepare_keeps_soc_entries_without_compatibility_filtering(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
     soc_root.mkdir()
 
-    cpu_alias = cpu_root / "ecos_cpu_wrapper.v"
-    soc_alias = soc_root / "ysyx_00000000.sv"
+    cpu_top = cpu_root / "cpu_top.v"
+    soc_legacy = soc_root / "ysyx_00000000.sv"
     soc_top = soc_root / "ecos_sim_top.v"
-    cpu_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
-    soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    soc_legacy.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
     soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
-    (cpu_root / "filelist.cpu.f").write_text("ecos_cpu_wrapper.v\n", encoding="utf-8")
+    (cpu_root / "filelist.cpu.f").write_text("cpu_top.v\n", encoding="utf-8")
     (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
@@ -1353,7 +1332,7 @@ def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_pa
         parameters={
             "Design": "chip",
             "Top module": "ecos_sim_top",
-            "cpu_wrapper_top": "ecos_cpu_wrapper",
+            "required_cpu_top_module": "cpu_top",
         },
         cpu_filelist=str(cpu_root / "filelist.cpu.f"),
         soc_filelist=str(soc_root / "filelist.soc.f"),
@@ -1366,40 +1345,33 @@ def test_prepare_filters_soc_cpu_alias_when_cpu_filelist_provides_adapter(tmp_pa
     state = engine.run_step("prepare", rerun=True)
 
     manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
-    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
     prepared = json.loads(manifest.read_text(encoding="utf-8"))
-    prepare_report = json.loads(report.read_text(encoding="utf-8"))
 
     assert state == StateEnum.Success
-    assert str(cpu_alias.resolve()) in prepared["rtl_files"]
+    assert str(cpu_top.resolve()) in prepared["rtl_files"]
     assert str(soc_top.resolve()) in prepared["rtl_files"]
-    assert str(soc_alias.resolve()) not in prepared["rtl_files"]
-    assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
+    assert str(soc_legacy.resolve()) in prepared["rtl_files"]
 
 
-def test_prepare_generates_cpu_alias_for_cpu_top_filelist(tmp_path):
+def test_prepare_does_not_generate_cpu_alias_for_cpu_top_filelist(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
     soc_root.mkdir()
 
     cpu_top = cpu_root / "cpu_top.v"
-    soc_alias = soc_root / "ysyx_00000000.sv"
     soc_top = soc_root / "ecos_sim_top.v"
     cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
-    soc_alias.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
     soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
     (cpu_root / "filelist.cpu.f").write_text("cpu_top.v\n", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_prepare_generated_alias"),
         parameters={
             "Design": "chip",
             "Top module": "ecos_sim_top",
-            "cpu_wrapper_top": "ysyx_00000000",
-            "cpu_standard_top": "cpu_top",
-            "cpu_wrapper_generation": "standard_alias_v1",
+            "required_cpu_top_module": "cpu_top",
         },
         cpu_filelist=str(cpu_root / "filelist.cpu.f"),
         soc_filelist=str(soc_root / "filelist.soc.f"),
@@ -1412,37 +1384,24 @@ def test_prepare_generates_cpu_alias_for_cpu_top_filelist(tmp_path):
     state = engine.run_step("prepare", rerun=True)
 
     manifest = Path(ws["directory"]) / "prepare_fe" / "output" / "prepared_inputs.json"
-    report = Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
     prepared = json.loads(manifest.read_text(encoding="utf-8"))
-    prepare_report = json.loads(report.read_text(encoding="utf-8"))
-    generated = Path(ws["directory"]) / "prepare_fe" / "output" / "generated_standard_cpu_wrapper.sv"
-    generated_text = generated.read_text(encoding="utf-8")
 
     assert state == StateEnum.Success
-    assert generated.is_file()
-    assert "cpu_top cl3_top" in generated_text
-    assert ".io_extIrq" in generated_text
-    assert ".io_master_aw_ready" in generated_text
-    assert ".io_master_aw_bits_awaddr" in generated_text
-    assert ".io_interrupt" not in generated_text
-    assert ".io_master_awready" not in generated_text
     assert str(cpu_top.resolve()) in prepared["rtl_files"]
-    assert str(generated.resolve()) in prepared["rtl_files"]
-    assert str(soc_alias.resolve()) not in prepared["rtl_files"]
-    assert prepare_report["inputs"]["generated_cpu_wrapper"]["generated"] is True
-    assert prepare_report["inputs"]["soc_filelist"]["filtered"] == [str(soc_alias.resolve())]
+    assert str(soc_top.resolve()) in prepared["rtl_files"]
+    assert not (Path(ws["directory"]) / "prepare_fe" / "output" / "generated_standard_cpu_wrapper.sv").exists()
 
 
-def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path):
+def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     cpu_root = tmp_path / "cpu"
     soc_root = tmp_path / "soc"
     cpu_root.mkdir()
     soc_root.mkdir()
 
-    (cpu_root / "cpu_alias.v").write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
-    (soc_root / "soc_alias.v").write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    (cpu_root / "cpu_top_a.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    (soc_root / "cpu_top_b.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
     (cpu_root / "filelist.cpu.f").write_text(
-        f"cpu_alias.v\n{soc_root / 'soc_alias.v'}\n",
+        f"cpu_top_a.v\n{soc_root / 'cpu_top_b.v'}\n",
         encoding="utf-8",
     )
 
@@ -1451,7 +1410,7 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path)
         parameters={
             "Design": "chip",
             "Top module": "ecos_sim_top",
-            "cpu_wrapper_top": "ysyx_00000000",
+            "required_cpu_top_module": "cpu_top",
             "soc_wrapper_id": "ysyx-am-soc",
         },
         cpu_filelist=str(cpu_root / "filelist.cpu.f"),
@@ -1465,7 +1424,7 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_alias(tmp_path)
 
     assert state == StateEnum.Incomplete
     prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
-    assert "requires exactly one ysyx_00000000 compatibility module" in prepare_subflow
+    assert "requires exactly one cpu_top module" in prepare_subflow
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):

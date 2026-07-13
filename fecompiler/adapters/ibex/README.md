@@ -10,8 +10,8 @@ Current ECOS scope:
 
 - `filelist.cpu.f` lists the minimal Ibex RTL dependencies needed by the ECOS
   adapter.
-- `ecos_ibex_cpu_wrapper.sv` exposes the stable ECOS CPU wrapper contract and a
-  `ysyx_00000000` compatibility module for existing SoC harnesses.
+- `ecos_ibex_cpu_wrapper.sv` exposes the legacy adapter implementation; the
+  filelist adds the bridge that exposes the fixed `cpu_top` SoC contract.
 - CPU tests and smoke tests are declared as supported without difftest.
 
 Known limitations:

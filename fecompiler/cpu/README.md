@@ -20,9 +20,10 @@ AM SoC harness.  A compatible CPU wrapper should expose:
   - `io_master_r*`
 - Optional slave channels, tied off by wrappers that do not use them.
 
-The current CL3 integration uses `ysyx_00000000` as the reference CPU wrapper.
-It adapts `cpu_top` to the YSYX AM SoC CPU socket and also provides the existing
-UART/trap side effects used by CPU tests.
+The current CL3 integration uses `cpu_top` as the only public CPU entrypoint.
+The fixed SoC socket instantiates it directly and provides the UART/trap side
+effects used by CPU tests. Bundled legacy adapters use an internal bridge; user
+CPU filelists must not provide that implementation detail.
 
 ## Integration Rule
 

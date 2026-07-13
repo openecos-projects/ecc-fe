@@ -14,9 +14,7 @@ from fecompiler.resources import resolve_thirdparty_path
 from fecompiler.utility.json import json_read, json_write
 
 
-COMPATIBILITY_CPU_ALIAS_TOP = "ysyx_00000000"
-STANDARD_CPU_TOP = "cpu_top"
-STANDARD_CPU_WRAPPER_GENERATION = "standard_alias_v1"
+ECOS_CPU_TOP = "cpu_top"
 
 
 class PrepareStep(BaseStep):
@@ -27,7 +25,7 @@ class PrepareStep(BaseStep):
         self.write_standard_outputs(step)
 
         prepared, source_info = self._collect_inputs(step, workspace)
-        alias_info = self._validate_frontend_cpu_alias(step, workspace, prepared["rtl_files"])
+        self._validate_frontend_cpu_top(step, workspace, prepared["rtl_files"])
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
         manifest_path = self._write_prepared_manifest(step, prepared)
         self._persist_workspace_input_filelist(workspace, merged_path, manifest_path)
@@ -50,8 +48,6 @@ class PrepareStep(BaseStep):
             "defines": len(prepared["defines"]),
             "inputs": source_info,
         }
-        if alias_info:
-            report["compatibility_alias"] = alias_info
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
         self._update_substep(step, PrepareSubFlowEnum.report.value, ok=True)
@@ -69,7 +65,6 @@ class PrepareStep(BaseStep):
 
     def _collect_inputs(self, step: WorkspaceStep, workspace: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, Any]]:
         cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
-        cpu_adapter_filelist = str(workspace.get("cpu_adapter_filelist", "")).strip()
         soc_filelist = str(workspace.get("soc_filelist", "")).strip()
         filelist = str(workspace.get("input_filelist", "")).strip()
         origin_verilog = str(workspace.get("origin_verilog", "")).strip()
@@ -81,8 +76,6 @@ class PrepareStep(BaseStep):
         seen_define: set[str] = set()
         incdirs: list[Path] = []
         defines: list[str] = []
-        cpu_filelist_defines_alias = False
-
         def _add_unique(items: list[Any], target: list[Any], seen: set[str]) -> None:
             for item in items:
                 key = str(item)
@@ -91,31 +84,7 @@ class PrepareStep(BaseStep):
                     target.append(item)
 
         def _add_filelist(label: str, path: str) -> None:
-            nonlocal cpu_filelist_defines_alias
             data = self._parse_sv_filelist(path)
-            if label == "cpu_filelist":
-                cpu_filelist_defines_alias = self._filelist_defines_module(
-                    data["rtl_files"],
-                    COMPATIBILITY_CPU_ALIAS_TOP,
-                )
-            if label == "cpu_adapter_filelist":
-                data = self._filter_cpu_adapter_filelist(
-                    data,
-                    workspace,
-                    existing_rtl_files=merged,
-                    cpu_filelist_defines_alias=cpu_filelist_defines_alias,
-                )
-                if data["rtl_files"]:
-                    cpu_filelist_defines_alias = (
-                        cpu_filelist_defines_alias
-                        or self._filelist_defines_module(data["rtl_files"], COMPATIBILITY_CPU_ALIAS_TOP)
-                    )
-            if label == "soc_filelist":
-                data = self._filter_soc_filelist_for_cpu_wrapper(
-                    data,
-                    workspace,
-                    cpu_filelist_defines_alias=cpu_filelist_defines_alias,
-                )
             _add_unique(data["rtl_files"], merged, seen_rtl)
             _add_unique(data["incdirs"], incdirs, seen_incdir)
             _add_unique(data["defines"], defines, seen_define)
@@ -125,41 +94,8 @@ class PrepareStep(BaseStep):
         if cpu_filelist or soc_filelist:
             if cpu_filelist:
                 _add_filelist("cpu_filelist", cpu_filelist)
-                if self._requires_direct_cpu_filelist_alias(workspace, cpu_adapter_filelist):
-                    self._validate_direct_cpu_filelist_alias(
-                        step,
-                        cpu_filelist,
-                        cpu_filelist_defines_alias,
-                    )
             else:
                 inputs["cpu_filelist"] = {"path": "", "rtl_files": 0, "skipped": "not provided"}
-
-            if self._uses_generated_standard_cpu_wrapper(workspace):
-                generated = self._maybe_generate_standard_cpu_wrapper(
-                    step,
-                    workspace,
-                    cpu_rtl_files=merged,
-                    alias_already_present=cpu_filelist_defines_alias,
-                )
-                if generated is not None:
-                    _add_unique([generated], merged, seen_rtl)
-                    inputs["generated_cpu_wrapper"] = {
-                        "path": str(generated),
-                        "rtl_files": 1,
-                        "standard_top": self._standard_cpu_top(workspace),
-                        "generated": True,
-                    }
-                    cpu_filelist_defines_alias = True
-                else:
-                    inputs["generated_cpu_wrapper"] = {
-                        "path": "",
-                        "rtl_files": 0,
-                        "standard_top": self._standard_cpu_top(workspace),
-                        "skipped": "compatibility alias already provided",
-                    }
-
-            if cpu_adapter_filelist:
-                _add_filelist("cpu_adapter_filelist", cpu_adapter_filelist)
 
             if soc_filelist:
                 _add_filelist("soc_filelist", soc_filelist)
@@ -203,42 +139,39 @@ class PrepareStep(BaseStep):
         }
         return prepared, inputs
 
-    def _validate_frontend_cpu_alias(
+    def _validate_frontend_cpu_top(
         self,
         step: WorkspaceStep,
         workspace: dict[str, Any],
         rtl_files: list[str],
-    ) -> dict[str, Any]:
-        if not self._requires_frontend_cpu_alias(workspace):
-            return {}
+    ) -> None:
+        if not self._requires_frontend_cpu_top(workspace):
+            return
+
+        required_top = str(workspace.get("required_cpu_top_module", "")).strip() or ECOS_CPU_TOP
 
         matches = [
             str(Path(path))
             for path in rtl_files
-            if self._file_defines_module(Path(path), COMPATIBILITY_CPU_ALIAS_TOP)
+            if self._file_defines_module(Path(path), required_top)
         ]
-        info: dict[str, Any] = {
-            "module": COMPATIBILITY_CPU_ALIAS_TOP,
-            "count": len(matches),
-            "files": matches,
-        }
         if len(matches) == 1:
-            return info
+            return
 
         message = (
             "frontend prepare requires exactly one "
-            f"{COMPATIBILITY_CPU_ALIAS_TOP} compatibility module, found {len(matches)}"
+            f"{required_top} module, found {len(matches)}"
         )
         self._update_substep(
             step,
             PrepareSubFlowEnum.collect_inputs.value,
             ok=False,
-            info={"error": message, **info},
+            info={"error": message, "module": required_top, "count": len(matches), "files": matches},
         )
         raise RuntimeError(f"prepare failed: {message}")
 
     @staticmethod
-    def _requires_frontend_cpu_alias(workspace: dict[str, Any]) -> bool:
+    def _requires_frontend_cpu_top(workspace: dict[str, Any]) -> bool:
         return any(
             str(workspace.get(field, "")).strip() == value
             for field, value in (
@@ -248,187 +181,17 @@ class PrepareStep(BaseStep):
             )
         ) or any(
             str(workspace.get(field, "")).strip()
-            for field in ("soc_wrapper_id", "soc_harness_id")
+            for field in ("soc_wrapper_id", "soc_harness_id", "required_cpu_top_module")
         )
-
-    @staticmethod
-    def _requires_direct_cpu_filelist_alias(workspace: dict[str, Any], cpu_adapter_filelist: str) -> bool:
-        if str(cpu_adapter_filelist).strip():
-            return False
-        if str(workspace.get("cpu_wrapper_generation", "")).strip() == STANDARD_CPU_WRAPPER_GENERATION:
-            return False
-        if not PrepareStep._requires_frontend_cpu_alias(workspace):
-            return False
-
-        required_top = str(workspace.get("required_cpu_top_module", "")).strip()
-        if required_top:
-            return required_top == COMPATIBILITY_CPU_ALIAS_TOP
-
-        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
-        return not wrapper_top or wrapper_top == COMPATIBILITY_CPU_ALIAS_TOP
-
-    def _validate_direct_cpu_filelist_alias(
-        self,
-        step: WorkspaceStep,
-        cpu_filelist: str,
-        cpu_filelist_defines_alias: bool,
-    ) -> None:
-        if cpu_filelist_defines_alias:
-            return
-
-        message = (
-            "CPU filelist must define the SoC-facing CPU top module "
-            f"{COMPATIBILITY_CPU_ALIAS_TOP}; do not rely on the SoC filelist "
-            "to provide the CPU compatibility wrapper."
-        )
-        self._update_substep(
-            step,
-            PrepareSubFlowEnum.collect_inputs.value,
-            ok=False,
-            info={
-                "error": message,
-                "cpu_filelist": cpu_filelist,
-                "required_top": COMPATIBILITY_CPU_ALIAS_TOP,
-            },
-        )
-        raise RuntimeError(f"prepare failed: {message}")
-
-    @staticmethod
-    def _uses_generated_standard_cpu_wrapper(workspace: dict[str, Any]) -> bool:
-        return (
-            str(workspace.get("cpu_wrapper_generation", "")).strip()
-            == STANDARD_CPU_WRAPPER_GENERATION
-        )
-
-    @staticmethod
-    def _standard_cpu_top(workspace: dict[str, Any]) -> str:
-        return str(workspace.get("cpu_standard_top", "")).strip() or STANDARD_CPU_TOP
-
-    def _maybe_generate_standard_cpu_wrapper(
-        self,
-        step: WorkspaceStep,
-        workspace: dict[str, Any],
-        *,
-        cpu_rtl_files: list[Any],
-        alias_already_present: bool,
-    ) -> Path | None:
-        if alias_already_present:
-            return None
-
-        standard_top = self._standard_cpu_top(workspace)
-        matches = [
-            str(Path(path))
-            for path in cpu_rtl_files
-            if self._file_defines_module(Path(path), standard_top)
-        ]
-        if len(matches) != 1:
-            message = (
-                "standard CPU filelist requires exactly one "
-                f"{standard_top} module, found {len(matches)}"
-            )
-            self._update_substep(
-                step,
-                PrepareSubFlowEnum.collect_inputs.value,
-                ok=False,
-                info={"error": message, "standard_top": standard_top, "matches": matches},
-            )
-            raise RuntimeError(f"prepare failed: {message}")
-
-        wrapper_path = Path(step.output["dir"]) / "generated_standard_cpu_wrapper.sv"
-        wrapper_path.write_text(
-            _standard_cpu_wrapper_source(standard_top),
-            encoding="utf-8",
-        )
-        return wrapper_path
 
     @staticmethod
     def _filelist_info(path: str, data: dict[str, list[Any]]) -> dict[str, Any]:
-        info = {
+        return {
             "path": path,
             "rtl_files": len(data["rtl_files"]),
             "incdirs": len(data["incdirs"]),
             "defines": len(data["defines"]),
         }
-        if data.get("filtered_rtl_files"):
-            info["filtered_rtl_files"] = len(data["filtered_rtl_files"])
-            info["filtered"] = [str(item) for item in data["filtered_rtl_files"]]
-        return info
-
-    @staticmethod
-    def _filter_soc_filelist_for_cpu_wrapper(
-        data: dict[str, list[Any]],
-        workspace: dict[str, Any],
-        *,
-        cpu_filelist_defines_alias: bool = False,
-    ) -> dict[str, list[Any]]:
-        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
-        if not cpu_filelist_defines_alias and (not wrapper_top or wrapper_top == COMPATIBILITY_CPU_ALIAS_TOP):
-            return data
-
-        kept: list[Path] = []
-        filtered: list[Path] = []
-        for path in data["rtl_files"]:
-            p = Path(path)
-            if PrepareStep._file_defines_module(p, COMPATIBILITY_CPU_ALIAS_TOP):
-                filtered.append(p)
-                continue
-            kept.append(p)
-
-        if not filtered:
-            return data
-        return {
-            "rtl_files": kept,
-            "incdirs": data["incdirs"],
-            "defines": data["defines"],
-            "filtered_rtl_files": filtered,
-        }
-
-    @staticmethod
-    def _filter_cpu_adapter_filelist(
-        data: dict[str, list[Any]],
-        workspace: dict[str, Any],
-        *,
-        existing_rtl_files: list[Any],
-        cpu_filelist_defines_alias: bool = False,
-    ) -> dict[str, list[Any]]:
-        if cpu_filelist_defines_alias:
-            return {
-                "rtl_files": [],
-                "incdirs": [],
-                "defines": [],
-                "filtered_rtl_files": list(data["rtl_files"]),
-            }
-
-        wrapper_top = str(workspace.get("cpu_wrapper_top", "")).strip()
-        module_names = {COMPATIBILITY_CPU_ALIAS_TOP}
-        if wrapper_top:
-            module_names.add(wrapper_top)
-
-        existing_paths = {str(Path(path).resolve()) for path in existing_rtl_files}
-        kept: list[Path] = []
-        filtered: list[Path] = []
-        for path in data["rtl_files"]:
-            p = Path(path)
-            if str(p.resolve()) in existing_paths:
-                filtered.append(p)
-                continue
-            if any(PrepareStep._file_defines_module(p, module_name) for module_name in module_names):
-                kept.append(p)
-            else:
-                filtered.append(p)
-
-        if not filtered:
-            return data
-        return {
-            "rtl_files": kept,
-            "incdirs": data["incdirs"],
-            "defines": data["defines"],
-            "filtered_rtl_files": filtered,
-        }
-
-    @staticmethod
-    def _filelist_defines_module(files: list[Any], module_name: str) -> bool:
-        return any(PrepareStep._file_defines_module(Path(path), module_name) for path in files)
 
     @staticmethod
     def _file_defines_module(path: Path, module_name: str) -> bool:
@@ -582,206 +345,3 @@ class PrepareStep(BaseStep):
         path = step.subflow.get("path", "")
         if path:
             json_write(path, step.subflow)
-
-def _standard_cpu_wrapper_source(standard_top: str) -> str:
-    top = standard_top.strip() or STANDARD_CPU_TOP
-    return f"""// Generated by ecc-fe prepare.
-// User-facing contract: provide module {top} with this AXI-like CPU socket.
-// SoC-facing compatibility contract: module {COMPATIBILITY_CPU_ALIAS_TOP}.
-
-module {COMPATIBILITY_CPU_ALIAS_TOP} (
-  input         clock,
-  input         reset,
-  input         io_interrupt,
-  input         io_master_awready,
-  output        io_master_awvalid,
-  output [31:0] io_master_awaddr,
-  output [3:0]  io_master_awid,
-  output [7:0]  io_master_awlen,
-  output [2:0]  io_master_awsize,
-  output [1:0]  io_master_awburst,
-  output        io_master_awlock,
-  output [3:0]  io_master_awcache,
-  output [2:0]  io_master_awprot,
-  output [3:0]  io_master_awqos,
-  output [3:0]  io_master_awregion,
-  input         io_master_wready,
-  output        io_master_wvalid,
-  output [31:0] io_master_wdata,
-  output [3:0]  io_master_wstrb,
-  output        io_master_wlast,
-  output        io_master_bready,
-  input         io_master_bvalid,
-  input  [1:0]  io_master_bresp,
-  input  [3:0]  io_master_bid,
-  input         io_master_arready,
-  output        io_master_arvalid,
-  output [31:0] io_master_araddr,
-  output [3:0]  io_master_arid,
-  output [7:0]  io_master_arlen,
-  output [2:0]  io_master_arsize,
-  output [1:0]  io_master_arburst,
-  output        io_master_arlock,
-  output [3:0]  io_master_arcache,
-  output [2:0]  io_master_arprot,
-  output [3:0]  io_master_arqos,
-  output [3:0]  io_master_arregion,
-  output        io_master_rready,
-  input         io_master_rvalid,
-  input  [1:0]  io_master_rresp,
-  input  [31:0] io_master_rdata,
-  input         io_master_rlast,
-  input  [3:0]  io_master_rid,
-  output        io_slave_awready,
-  input         io_slave_awvalid,
-  input  [31:0] io_slave_awaddr,
-  input  [3:0]  io_slave_awid,
-  input  [7:0]  io_slave_awlen,
-  input  [2:0]  io_slave_awsize,
-  input  [1:0]  io_slave_awburst,
-  input         io_slave_awlock,
-  input  [3:0]  io_slave_awcache,
-  input  [2:0]  io_slave_awprot,
-  input  [3:0]  io_slave_awqos,
-  input  [3:0]  io_slave_awregion,
-  output        io_slave_wready,
-  input         io_slave_wvalid,
-  input  [31:0] io_slave_wdata,
-  input  [3:0]  io_slave_wstrb,
-  input         io_slave_wlast,
-  input         io_slave_bready,
-  output        io_slave_bvalid,
-  output [1:0]  io_slave_bresp,
-  output [3:0]  io_slave_bid,
-  output        io_slave_arready,
-  input         io_slave_arvalid,
-  input  [31:0] io_slave_araddr,
-  input  [3:0]  io_slave_arid,
-  input  [7:0]  io_slave_arlen,
-  input  [2:0]  io_slave_arsize,
-  input  [1:0]  io_slave_arburst,
-  input         io_slave_arlock,
-  input  [3:0]  io_slave_arcache,
-  input  [2:0]  io_slave_arprot,
-  input  [3:0]  io_slave_arqos,
-  input  [3:0]  io_slave_arregion,
-  input         io_slave_rready,
-  output        io_slave_rvalid,
-  output [1:0]  io_slave_rresp,
-  output [31:0] io_slave_rdata,
-  output        io_slave_rlast,
-  output [3:0]  io_slave_rid
-);
-
-  localparam [31:0] HALT_ADDR = 32'h1000_000c;
-  localparam [31:0] UART_ADDR = 32'h1000_0000;
-
-  reg        aw_pending_q;
-  reg [31:0] aw_addr_q;
-
-  wire aw_fire = io_master_awvalid & io_master_awready;
-  wire w_fire  = io_master_wvalid & io_master_wready;
-
-  wire [31:0] write_addr = aw_fire ? io_master_awaddr : aw_addr_q;
-  wire halt_write_fire = w_fire & (aw_pending_q | aw_fire) & (write_addr == HALT_ADDR);
-  wire uart_write_fire = w_fire & (aw_pending_q | aw_fire) & (write_addr == UART_ADDR);
-
-  function automatic [7:0] axi_wstrb_byte;
-    input [31:0] data;
-    input [3:0] strb;
-    begin
-      casez (strb)
-        4'b???1: axi_wstrb_byte = data[7:0];
-        4'b??10: axi_wstrb_byte = data[15:8];
-        4'b?100: axi_wstrb_byte = data[23:16];
-        4'b1000: axi_wstrb_byte = data[31:24];
-        default: axi_wstrb_byte = data[7:0];
-      endcase
-    end
-  endfunction
-
-  {top} cl3_top (
-    .clock                  (clock),
-    .reset                  (reset),
-    .io_extIrq              (io_interrupt),
-    .io_timerIrq            (1'b0),
-    .io_master_aw_ready     (io_master_awready),
-    .io_master_aw_valid     (io_master_awvalid),
-    .io_master_aw_bits_awaddr(io_master_awaddr),
-    .io_master_aw_bits_awid (io_master_awid),
-    .io_master_aw_bits_awlen(io_master_awlen),
-    .io_master_aw_bits_awsize(io_master_awsize),
-    .io_master_aw_bits_awburst(io_master_awburst),
-    .io_master_aw_bits_awlock(io_master_awlock),
-    .io_master_aw_bits_awcache(io_master_awcache),
-    .io_master_aw_bits_awprot(io_master_awprot),
-    .io_master_w_ready      (io_master_wready),
-    .io_master_w_valid      (io_master_wvalid),
-    .io_master_w_bits_wdata (io_master_wdata),
-    .io_master_w_bits_wstrb (io_master_wstrb),
-    .io_master_w_bits_wlast (io_master_wlast),
-    .io_master_b_ready      (io_master_bready),
-    .io_master_b_valid      (io_master_bvalid),
-    .io_master_b_bits_bresp (io_master_bresp),
-    .io_master_b_bits_bid   (io_master_bid),
-    .io_master_ar_ready     (io_master_arready),
-    .io_master_ar_valid     (io_master_arvalid),
-    .io_master_ar_bits_araddr(io_master_araddr),
-    .io_master_ar_bits_arid (io_master_arid),
-    .io_master_ar_bits_arlen(io_master_arlen),
-    .io_master_ar_bits_arsize(io_master_arsize),
-    .io_master_ar_bits_arburst(io_master_arburst),
-    .io_master_ar_bits_arlock(io_master_arlock),
-    .io_master_ar_bits_arcache(io_master_arcache),
-    .io_master_ar_bits_arprot(io_master_arprot),
-    .io_master_r_ready      (io_master_rready),
-    .io_master_r_valid      (io_master_rvalid),
-    .io_master_r_bits_rresp (io_master_rresp),
-    .io_master_r_bits_rdata (io_master_rdata),
-    .io_master_r_bits_rlast (io_master_rlast),
-    .io_master_r_bits_rid   (io_master_rid)
-  );
-
-  assign io_slave_awready = 1'b0;
-  assign io_slave_wready = 1'b0;
-  assign io_slave_bvalid = 1'b0;
-  assign io_slave_bresp = 2'b00;
-  assign io_slave_bid = 4'b0000;
-  assign io_slave_arready = 1'b0;
-  assign io_slave_rvalid = 1'b0;
-  assign io_slave_rresp = 2'b00;
-  assign io_slave_rdata = 32'b0;
-  assign io_slave_rlast = 1'b0;
-  assign io_slave_rid = 4'b0000;
-
-  always @(posedge clock) begin
-    if (reset) begin
-      aw_pending_q <= 1'b0;
-      aw_addr_q <= 32'b0;
-    end else begin
-      if (aw_fire) begin
-        aw_pending_q <= 1'b1;
-        aw_addr_q <= io_master_awaddr;
-      end
-      if (w_fire) begin
-        aw_pending_q <= 1'b0;
-      end
-`ifndef SYNTHESIS
-      if (uart_write_fire) begin
-        $write("%c", axi_wstrb_byte(io_master_wdata, io_master_wstrb));
-        $fflush();
-      end
-`endif
-      if (halt_write_fire) begin
-        if (io_master_wdata == 32'b0) begin
-          $display("HIT GOOD TRAP");
-          $finish;
-        end else begin
-          $fatal(1, "HIT BAD TRAP, code=%0d", io_master_wdata);
-        end
-      end
-    end
-  end
-
-endmodule
-"""

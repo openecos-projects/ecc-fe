@@ -94,19 +94,20 @@ the shared ECOS contracts:
 The high-level shape is:
 
 ```text
-CPU RTL -> CPU wrapper -> ysyx-axi-cpu-socket-v1
-       -> SoC wrapper/harness -> ecos_sim_top -> Verilator main.cpp / GUI
+User CPU RTL -> cpu_top -> fixed ECOS SoC wrapper/harness -> ecos_sim_top
+Bundled CPU RTL -> bundled adapter -> cpu_top bridge -> fixed ECOS SoC wrapper/harness
+                                                       -> Verilator main.cpp / GUI
 ```
 
 ### User CPU Filelist Contract
 
-`ecc-fe` accepts a user-provided CPU RTL filelist through `custom-filelist`.
-The filelist must provide exactly one CPU top module named `cpu_top`, with the
-same IO signal names as `examples/cl3/cl3_verilog/cpu_top.sv`.  During
-prepare, `ecc-fe` generates the SoC-facing `ysyx_00000000` compatibility wrapper
-and connects it to the selected SoC harness.
+`ecc-fe` exposes `custom-filelist` as **My CPU Top** in the GUI. The selected
+RTL filelist may include the CPU's implementation files, but it must provide
+exactly one CPU top module named `cpu_top`, with the same IO signal names as
+`examples/cl3/cl3_verilog/cpu_top.sv`. The fixed ECOS SoC instantiates that
+module directly; users must not provide a `ysyx_00000000` compatibility module.
 
-The generated wrapper preserves the simulator MMIO convention used by CPU tests:
+The fixed SoC wrapper preserves the simulator MMIO convention used by CPU tests:
 UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate
 the run as GOOD/BAD TRAP depending on the written value.
 

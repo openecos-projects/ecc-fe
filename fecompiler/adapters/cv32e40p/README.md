@@ -9,7 +9,7 @@ Upstream repository: https://github.com/openhwgroup/cv32e40p
 Current ECOS integration:
 
 - Wrapper top: `ecos_cv32e40p_cpu_wrapper`
-- Compatibility top: `ysyx_00000000`
+- SoC-facing module: `cpu_top` via the bundled legacy bridge
 - CPU socket: `ysyx-axi-cpu-socket-v1`
 - Filelist: `filelist.cpu.f`
 - Supported suites: `cpu-tests`, `smoke`

@@ -14,7 +14,6 @@ _SLANG_ELAB_DEFAULT_DEFINES = ("SYNTHESIS",)
 _VERILATOR_LINT_DEFAULT_DEFINES = ("SYNTHESIS",)
 _FINGERPRINT_PATH_FIELDS = (
     "cpu_filelist",
-    "cpu_adapter_filelist",
     "soc_filelist",
     "filelist",
     "origin_verilog",
@@ -26,8 +25,7 @@ _FINGERPRINT_TEXT_FIELDS = (
     "soc_wrapper_top",
     "top_module",
     "cpu_socket_contract",
-    "cpu_standard_top",
-    "cpu_wrapper_generation",
+    "required_cpu_top_module",
 )
 
 
@@ -46,7 +44,7 @@ def _input_content_sha256(field: str, path_text: str) -> str:
     if not path_text:
         return ""
     path = Path(path_text)
-    if field in {"cpu_filelist", "cpu_adapter_filelist", "soc_filelist", "filelist"}:
+    if field in {"cpu_filelist", "soc_filelist", "filelist"}:
         return _filelist_tree_sha256(path)
     return _files_sha256([path])
 
@@ -253,7 +251,7 @@ def verilator_lint_define_args(workspace: dict[str, Any]) -> list[str]:
 def _uses_explicit_frontend_inputs(workspace: dict[str, Any]) -> bool:
     return any(
         str(workspace.get(field, "") or "").strip()
-        for field in ("cpu_filelist", "cpu_adapter_filelist", "soc_filelist")
+        for field in ("cpu_filelist", "soc_filelist")
     )
 
 

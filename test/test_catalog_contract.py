@@ -15,10 +15,7 @@ from fecompiler.data.workspace import load_workspace
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.soc import soc_runtime_options
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
-from fecompiler.tools.prepare.runner import (
-    COMPATIBILITY_CPU_ALIAS_TOP,
-    PrepareStep,
-)
+from fecompiler.tools.prepare.runner import PrepareStep
 
 
 def test_sim_ready_catalog_entries_have_adapter_collateral():
@@ -81,7 +78,7 @@ def test_obi_cpu_wrappers_register_local_mmio_write_response():
         assert "data_rvalid_q || local_write)" not in text
 
 
-def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
+def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
     payload = catalog_payload()
     cores = {str(item["id"]): item for item in payload["cores"]}
     creatable = [
@@ -141,9 +138,12 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_alias(tmp_path):
         if prepare_errors:
             failures.extend(f"{core_id}+{soc_id}: {error}" for error in prepare_errors)
 
-        alias = report.get("compatibility_alias", {})
-        if alias.get("count") != 1:
-            failures.append(f"{core_id}+{soc_id}: alias count={alias.get('count')}")
+        cpu_tops = [
+            path for path in manifest.get("rtl_files", [])
+            if PrepareStep._file_defines_module(Path(path), "cpu_top")
+        ]
+        if len(cpu_tops) != 1:
+            failures.append(f"{core_id}+{soc_id}: cpu_top count={len(cpu_tops)}")
 
     assert failures == []
 
@@ -199,10 +199,7 @@ def _prepare_mismatches(
         cpu_filelist = str(workspace.get("cpu_filelist", ""))
     cpu_parsed = PrepareStep._parse_sv_filelist(cpu_filelist)
     expected_cpu = {str(Path(item).resolve()) for item in cpu_parsed["rtl_files"]}
-    expected_soc = _expected_soc_rtl_files(
-        workspace,
-        cpu_parsed["rtl_files"],
-    )
+    expected_soc = _expected_soc_rtl_files(workspace)
     missing_cpu = sorted(expected_cpu - rtl_files)
     missing_soc = sorted(expected_soc - rtl_files)
 
@@ -233,18 +230,6 @@ def _cpu_filelist_for_required_core(tmp_path: Path, core_id: str) -> str:
     return str(Path(__file__).resolve().parent.parent / "examples/cl3/filelist.cpu.f")
 
 
-def _expected_soc_rtl_files(
-    workspace: dict,
-    cpu_files: list,
-) -> set[str]:
+def _expected_soc_rtl_files(workspace: dict) -> set[str]:
     parsed = PrepareStep._parse_sv_filelist(str(workspace["soc_filelist"]))
-    cpu_filelist_defines_alias = (
-        PrepareStep._filelist_defines_module(cpu_files, COMPATIBILITY_CPU_ALIAS_TOP)
-        or str(workspace.get("cpu_wrapper_generation", "")).strip() == "standard_alias_v1"
-    )
-    filtered = PrepareStep._filter_soc_filelist_for_cpu_wrapper(
-        parsed,
-        workspace,
-        cpu_filelist_defines_alias=cpu_filelist_defines_alias,
-    )
-    return {str(Path(item).resolve()) for item in filtered["rtl_files"]}
+    return {str(Path(item).resolve()) for item in parsed["rtl_files"]}

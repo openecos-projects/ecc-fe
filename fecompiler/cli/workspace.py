@@ -61,7 +61,6 @@ _PATH_FIELDS = {
     "origin_verilog",
     "filelist",
     "cpu_filelist",
-    "cpu_adapter_filelist",
     "soc_filelist",
     "testbench",
     "sim_tests_dir",
@@ -111,7 +110,6 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--origin-verilog", default="")
     create.add_argument("--filelist", default="")
     create.add_argument("--cpu-filelist", default="")
-    create.add_argument("--cpu-adapter-filelist", default="")
     create.add_argument("--soc-filelist", default="")
     create.add_argument("--testbench", default="")
     create.add_argument("--sim-cpp", action="append", default=[])
@@ -362,11 +360,7 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
     parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
-    parameters["cpu_standard_top"] = validation.normalized.get("cpu_standard_top", "")
-    parameters["cpu_wrapper_generation"] = validation.normalized.get("cpu_wrapper_generation", "")
     parameters["cpu_reset_vector"] = validation.normalized.get("required_cpu_reset_vector", "")
-    if validation.normalized.get("cpu_adapter_filelist"):
-        parameters["cpu_adapter_filelist"] = validation.normalized["cpu_adapter_filelist"]
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
     if validation.normalized.get("core_sim_program_link_base"):
@@ -393,7 +387,6 @@ def _create(args: argparse.Namespace) -> CliResult:
         origin_verilog=str(normalized.get("origin_verilog", "")),
         filelist=str(normalized.get("filelist", "")),
         cpu_filelist=str(normalized.get("cpu_filelist", "")),
-        cpu_adapter_filelist=str(normalized.get("cpu_adapter_filelist", "")),
         soc_filelist=str(normalized.get("soc_filelist", "")),
         testbench=str(normalized.get("testbench", "")),
         sim_cpp_sources=_normalize_str_list(normalized.get("sim_cpp_sources", [])),
@@ -714,7 +707,6 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("origin_verilog", "origin_verilog"),
         ("filelist", "filelist"),
         ("cpu_filelist", "cpu_filelist"),
-        ("cpu_adapter_filelist", "cpu_adapter_filelist"),
         ("soc_filelist", "soc_filelist"),
         ("testbench", "testbench"),
         ("sim_tests_dir", "sim_tests_dir"),
@@ -873,12 +865,6 @@ def _apply_catalog_defaults(request: dict[str, Any], normalized: dict[str, Any])
         request["top_module"] = normalized["soc_wrapper_top"]
     if normalized.get("cpu_filelist"):
         request["cpu_filelist"] = normalized["cpu_filelist"]
-    if normalized.get("cpu_adapter_filelist"):
-        request["cpu_adapter_filelist"] = normalized["cpu_adapter_filelist"]
-    if normalized.get("cpu_standard_top"):
-        request["cpu_standard_top"] = normalized["cpu_standard_top"]
-    if normalized.get("cpu_wrapper_generation"):
-        request["cpu_wrapper_generation"] = normalized["cpu_wrapper_generation"]
     if normalized.get("required_cpu_reset_vector"):
         request["cpu_reset_vector"] = normalized["required_cpu_reset_vector"]
     if normalized.get("soc_cpu_reset_vector"):
@@ -947,7 +933,6 @@ def _validate_create_request_paths(normalized: dict[str, Any]) -> None:
     missing: list[str] = []
     file_fields = (
         "cpu_filelist",
-        "cpu_adapter_filelist",
         "soc_filelist",
         "filelist",
         "origin_verilog",
@@ -2184,12 +2169,10 @@ def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) 
     inputs = report.get("inputs", {})
     inputs = inputs if isinstance(inputs, dict) else {}
     cpu_input = inputs.get("cpu_filelist", {})
-    cpu_adapter_input = inputs.get("cpu_adapter_filelist", {})
     soc_input = inputs.get("soc_filelist", {})
     input_filelist = inputs.get("input_filelist", {})
     origin_verilog = inputs.get("origin_verilog", {})
     cpu_input = cpu_input if isinstance(cpu_input, dict) else {}
-    cpu_adapter_input = cpu_adapter_input if isinstance(cpu_adapter_input, dict) else {}
     soc_input = soc_input if isinstance(soc_input, dict) else {}
     input_filelist = input_filelist if isinstance(input_filelist, dict) else {}
     origin_verilog = origin_verilog if isinstance(origin_verilog, dict) else {}
@@ -2207,11 +2190,6 @@ def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) 
                 "label": "CPU Filelist",
                 "status": "OK" if cpu_input.get("rtl_files") else "Missing",
                 "detail": _prepare_contract_detail(cpu_input, workspace.get("cpu_filelist", "")),
-            },
-            {
-                "label": "CPU Adapter",
-                "status": "OK" if cpu_adapter_input.get("rtl_files") else "Disabled",
-                "detail": _prepare_contract_detail(cpu_adapter_input, workspace.get("cpu_adapter_filelist", ""), empty="Adapter not required"),
             },
             {
                 "label": "SoC Harness",
@@ -2259,7 +2237,6 @@ def _prepare_input_sources(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for key, label in (
         ("cpu_filelist", "CPU RTL"),
-        ("cpu_adapter_filelist", "CPU Adapter"),
         ("soc_filelist", "SoC Harness"),
         ("input_filelist", "Custom Filelist"),
         ("origin_verilog", "Single RTL"),

@@ -48,6 +48,15 @@ def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
     assert len(payload["compatibility"]) == len(payload["cores"]) * len(payload["soc_harnesses"])
 
 
+def test_custom_cpu_entry_exposes_only_the_cpu_top_contract():
+    cores = catalog_payload()["cores"]
+    custom = next(item for item in cores if item["id"] == "custom-filelist")
+
+    assert custom["name"] == "My CPU Top"
+    assert custom["required_cpu_top_module"] == "cpu_top"
+    assert "standard-cpu-filelist" not in {item["id"] for item in cores}
+
+
 def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     item = _compatibility_by_pair()[("custom-filelist", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
@@ -71,8 +80,8 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
     assert result.normalized["core_sim_coremark_use_difftest"] is False
     assert result.normalized["cpu_supports_difftest"] is False
     assert result.normalized["required_cpu_top_module"] == "cpu_top"
-    assert result.normalized["cpu_wrapper_top"] == "ysyx_00000000"
-    assert result.normalized["cpu_wrapper_generation"] == "standard_alias_v1"
+    assert result.normalized["cpu_wrapper_top"] == "cpu_top"
+    assert "cpu_wrapper_generation" not in result.normalized
     assert len(result.normalized["required_cpu_top_ports"]) == 39
     assert len(result.normalized["required_cpu_top_port_contract"]) == 39
     assert result.normalized["required_cpu_reset_vector"] == "0x20000000"
@@ -163,7 +172,7 @@ def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
     assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
 
-def test_selected_catalog_cpu_keeps_user_filelist_and_adds_adapter_filelist(tmp_path):
+def test_builtin_catalog_cpu_rejects_user_filelist_override(tmp_path):
     user_filelist = tmp_path / "filelist.cpu.f"
     user_filelist.write_text("picorv32_user.v\n", encoding="utf-8")
 
@@ -175,10 +184,10 @@ def test_selected_catalog_cpu_keeps_user_filelist_and_adds_adapter_filelist(tmp_
         "cpu_filelist": str(user_filelist),
     })
 
-    assert result.ok is True
-    assert result.normalized["cpu_filelist"] == str(user_filelist)
+    assert result.ok is False
+    assert any(issue.code == "builtin_core_does_not_accept_cpu_filelist" for issue in result.issues)
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
-    assert result.normalized["cpu_adapter_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
+    assert result.normalized["cpu_filelist"].endswith("fecompiler/adapters/picorv32/filelist.cpu.f")
 
 
 def test_selected_catalog_cpu_rejects_missing_user_filelist(tmp_path):
@@ -246,7 +255,7 @@ def test_cva6_adapter_can_create_basic_cpu_test_workspace():
     assert result.ok is True
     assert result.support_level == "experimental"
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/cva6/filelist.cpu.f")
-    assert result.normalized["cpu_wrapper_top"] == "ecos_cva6_cpu_wrapper"
+    assert result.normalized["cpu_wrapper_top"] == "cpu_top"
 
     coremark = validate_frontend_config({
         "core_id": "cva6",
@@ -274,7 +283,7 @@ def test_vexriscv_adapter_can_create_basic_cpu_test_workspace():
     assert result.ok is True
     assert result.support_level == "experimental"
     assert result.normalized["core_cpu_filelist"].endswith("fecompiler/adapters/vexriscv/filelist.cpu.f")
-    assert result.normalized["cpu_wrapper_top"] == "ecos_vexriscv_cpu_wrapper"
+    assert result.normalized["cpu_wrapper_top"] == "cpu_top"
     assert result.normalized["core_sim_compile_march"] == "rv32i_zicsr"
     assert result.normalized["core_sim_coremark_has_float"] is False
 

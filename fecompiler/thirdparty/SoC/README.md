@@ -3,7 +3,7 @@
 This directory contains all non-CPU assets for CL3/SoC simulation:
 
 - `ysyxSoCFull.v`: fixed SoC top RTL
-- `ysyx_00000000.sv`: CPU-to-SoC adapter
+- `perip/easy_box/easy_box_core_wrapper.v`: fixed CPU socket that instantiates `cpu_top`
 - `perip/`: fixed SoC peripheral RTL
 - `filelist.soc.f`: SoC-side RTL file list
 - `driver/`: Verilator C++ driver (`main.cpp`, `dpi_mem.*`)

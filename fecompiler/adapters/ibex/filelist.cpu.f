@@ -36,3 +36,4 @@
 ../../thirdparty/ibex/rtl/ibex_wb_stage.sv
 ../../thirdparty/ibex/rtl/ibex_core.sv
 ecos_ibex_cpu_wrapper.sv
+../cpu_top_bridge.v

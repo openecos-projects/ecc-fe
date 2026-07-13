@@ -29,3 +29,4 @@
 ../../thirdparty/cv32e40p/rtl/cv32e40p_sleep_unit.sv
 ../../thirdparty/cv32e40p/rtl/cv32e40p_core.sv
 ecos_cv32e40p_cpu_wrapper.sv
+../cpu_top_bridge.v

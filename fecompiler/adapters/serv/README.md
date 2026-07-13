@@ -10,7 +10,7 @@ Current support:
 
 - CPU socket: `ysyx-axi-cpu-socket-v1`
 - Wrapper top: `ecos_serv_cpu_wrapper`
-- Compatibility module: `ysyx_00000000`
+- SoC-facing module: `cpu_top` via the bundled legacy bridge
 - Supported suites: `smoke`, `cpu-tests`
 - Default CPU test case: `add`
 - Difftest: not supported

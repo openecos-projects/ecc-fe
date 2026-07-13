@@ -16,7 +16,7 @@ CPU_WRAPPER_CONTRACT = "ecos-cpu-wrapper-v1"
 CPU_SOCKET_CONTRACT = "ysyx-axi-cpu-socket-v1"
 SOC_WRAPPER_CONTRACT = "ecos-sim-wrapper-v1"
 SOC_WRAPPER_TOP = "ecos_sim_top"
-COMPATIBILITY_CPU_ALIAS_TOP = "ysyx_00000000"
+ECOS_CPU_TOP = "cpu_top"
 
 _RTL_SUFFIXES = (".v", ".sv", ".vh", ".svh")
 
@@ -100,8 +100,6 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
 
     if bool(entry.get("requires_filelist")):
         issues.extend(_require_text(entry, "cpu", entry_id, "cpu_reset_vector"))
-        if str(entry.get("cpu_wrapper_generation", "")).strip() == "standard_alias_v1":
-            issues.extend(_require_text(entry, "cpu", entry_id, "cpu_standard_top"))
         return issues
 
     filelist_path = _resolve_repo_path(root, str(entry.get("cpu_filelist", "")).strip())
@@ -126,12 +124,12 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
                 str(filelist_path),
             )
         )
-    if not _filelist_defines_module(parsed.files, COMPATIBILITY_CPU_ALIAS_TOP):
+    if not _filelist_defines_module(parsed.files, ECOS_CPU_TOP):
         issues.append(
             _issue(
                 "error",
-                "cpu_compatibility_alias_not_in_filelist",
-                f"sim-ready CPU filelist must define the SoC-facing compatibility module: {COMPATIBILITY_CPU_ALIAS_TOP}",
+                "cpu_top_not_in_filelist",
+                f"sim-ready CPU filelist must define the ECOS CPU top module: {ECOS_CPU_TOP}",
                 "cpu",
                 entry_id,
                 str(filelist_path),
