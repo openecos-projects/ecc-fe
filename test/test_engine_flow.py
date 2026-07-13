@@ -33,6 +33,7 @@ from fecompiler.tools.verilator.runner import (
     _rtthread_prepare_helper,
     _sim_cases_from_images,
     _sim_cflags_args,
+    _sim_cpp_sources,
     _sim_output_ok,
     _sim_run_args,
 )
@@ -2114,6 +2115,43 @@ def test_rtthread_program_omits_difftest_for_generic_cpu():
     })
 
     assert args == ["--max-cycles", "10000000", "--timeout-ok"]
+
+
+def test_legacy_custom_cpu_workspace_forces_difftest_stub(tmp_path):
+    soc_root = tmp_path / "SoC"
+    driver = soc_root / "driver"
+    driver.mkdir(parents=True)
+    main_cpp = driver / "main.cpp"
+    dpi_cpp = driver / "dpi_mem.cpp"
+    difftest_cpp = driver / "difftest.cpp"
+    stub_cpp = driver / "difftest_stub.cpp"
+    for path in (main_cpp, dpi_cpp, difftest_cpp, stub_cpp):
+        path.write_text("int placeholder() { return 0; }\n", encoding="utf-8")
+
+    workspace = {
+        "testbench": str(main_cpp),
+        "sim_cpp_sources": [str(dpi_cpp), str(difftest_cpp)],
+        "sim_run_args": [
+            "--max-cycles",
+            "50000000",
+            "--diff",
+            "--ref",
+            "/tmp/ref.so",
+            "--diff-image-offset",
+            "0x100",
+            "--diff-reset-vector",
+            "0x80000000",
+        ],
+        "cpu_wrapper_id": "custom-filelist",
+        "frontend_core_id": "custom-filelist",
+        "cpu_supports_difftest": True,
+        "soc_supports_difftest": True,
+    }
+
+    assert _sim_cpp_sources(workspace) == [str(main_cpp), str(dpi_cpp), str(stub_cpp)]
+    assert _sim_run_args(workspace) == ["--max-cycles", "50000000"]
+    contracts = workspace_cli._build_prepare_contracts(workspace, {"inputs": {}})
+    assert any(item["label"] == "Difftest" and item["status"] == "Stub" for item in contracts)
 
 
 def test_rtthread_program_uses_external_difftest_ref_when_soc_ref_is_split(tmp_path, monkeypatch):

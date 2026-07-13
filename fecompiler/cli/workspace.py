@@ -1586,12 +1586,12 @@ def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
 
 
 def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
-    raw = workspace.get("cpu_supports_difftest")
-    if raw is not None:
-        return _normalize_bool(raw)
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv", "custom-filelist", "standard-cpu-filelist"}:
         return False
+    raw = workspace.get("cpu_supports_difftest")
+    if raw is not None:
+        return _normalize_bool(raw)
     return True
 
 
@@ -2206,8 +2206,8 @@ def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) 
         },
         {
             "label": "Difftest",
-            "status": "OK" if _normalize_bool(workspace.get("cpu_supports_difftest", True)) and _normalize_bool(workspace.get("soc_supports_difftest", True)) else "Stub",
-            "detail": "Enabled" if _normalize_bool(workspace.get("cpu_supports_difftest", True)) and _normalize_bool(workspace.get("soc_supports_difftest", True)) else "Using stub or disabled for this CPU/SoC.",
+            "status": "OK" if _supports_difftest(workspace) else "Stub",
+            "detail": "Enabled" if _supports_difftest(workspace) else "Using stub or disabled for this CPU/SoC.",
         },
         {
             "label": "Test Suite",

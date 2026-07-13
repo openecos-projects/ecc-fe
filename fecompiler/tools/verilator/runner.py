@@ -72,6 +72,22 @@ _RTTHREAD_REQUIRED_LOG_MARKERS = (
     "RT-Thread shell commands:",
     "[soc-sim] timeout after",
 )
+_DIFFTEST_SOURCE_NAME = "difftest.cpp"
+_DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
+_DIFFTEST_UNSUPPORTED_CPU_IDS = {
+    "custom-filelist",
+    "standard-cpu-filelist",
+    "picorv32",
+    "scr1",
+    "ibex",
+    "cv32e40p",
+    "cva6",
+    "serv",
+    "femtorv32",
+    "vexriscv",
+    "darkriscv",
+}
+_DIFFTEST_ARG_VALUE_OPTIONS = {"--ref", "--diff-image-offset", "--diff-reset-vector"}
 
 
 def _verilator_cmd() -> str:
@@ -98,7 +114,25 @@ def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
         if s and s not in seen:
             seen.add(s)
             ordered.append(s)
-    return ordered
+    return _adapt_sim_cpp_sources_for_difftest(workspace, ordered)
+
+
+def _adapt_sim_cpp_sources_for_difftest(workspace: dict[str, Any], sources: list[str]) -> list[str]:
+    if _sim_difftest_supported(workspace):
+        return _replace_sim_cpp_source(sources, _DIFFTEST_STUB_SOURCE_NAME, _DIFFTEST_SOURCE_NAME)
+    return _replace_sim_cpp_source(sources, _DIFFTEST_SOURCE_NAME, _DIFFTEST_STUB_SOURCE_NAME)
+
+
+def _replace_sim_cpp_source(sources: list[str], old_name: str, new_name: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        path = Path(source)
+        candidate = str(path.with_name(new_name)) if path.name == old_name else source
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    return out
 
 
 def _sim_cflags_args(workspace: dict[str, Any]) -> list[str]:
@@ -132,16 +166,37 @@ def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
 
 def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
     args = [str(arg) for arg in workspace.get("sim_run_args", []) or []]
+    if not _sim_difftest_supported(workspace):
+        return _strip_difftest_args(args)
     if _rtthread_requested(workspace) and _sim_difftest_supported(workspace) and not _arg_present(args, "--diff"):
         args = _append_rtthread_difftest_args(workspace, args)
     return args
 
 
 def _sim_difftest_supported(workspace: dict[str, Any]) -> bool:
+    cpu_id = _workspace_cpu_id(workspace)
+    if cpu_id in _DIFFTEST_UNSUPPORTED_CPU_IDS:
+        return False
     return (
         _bool_workspace_value(workspace.get("cpu_supports_difftest"), True)
         and _bool_workspace_value(workspace.get("soc_supports_difftest"), True)
     )
+
+
+def _strip_difftest_args(args: list[str]) -> list[str]:
+    stripped: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--diff":
+            continue
+        if arg in _DIFFTEST_ARG_VALUE_OPTIONS:
+            skip_next = True
+            continue
+        stripped.append(arg)
+    return stripped
 
 
 def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
