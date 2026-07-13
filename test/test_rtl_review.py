@@ -131,12 +131,12 @@ def test_rtl_review_requires_yosys_precheck(tmp_path: Path, monkeypatch):
 def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp_path: Path, monkeypatch):
     leaf = tmp_path / "leaf.v"
     cpu_top = tmp_path / "CpuTop.v"
-    soc_wrapper = tmp_path / "ysyx_00000000.v"
+    soc_wrapper = tmp_path / "SocWrapper.v"
     cpu_filelist = tmp_path / "filelist.cpu.f"
     soc_filelist = tmp_path / "filelist.soc.f"
     leaf.write_text("module Leaf(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
     cpu_top.write_text("module CpuTop(input clk, output y); Leaf u_leaf(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
-    soc_wrapper.write_text("module ysyx_00000000(input clk, output y); CpuTop u_cpu(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
+    soc_wrapper.write_text("module SocWrapper(input clk, output y); CpuTop u_cpu(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
     cpu_filelist.write_text(f"{leaf}\n{cpu_top}\n", encoding="utf-8")
     soc_filelist.write_text(f"{soc_wrapper}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
@@ -146,7 +146,7 @@ def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp
         script = Path(cmd[cmd.index("-s") + 1])
         script_text = script.read_text(encoding="utf-8")
         assert "hierarchy -top CpuTop -check" in script_text
-        assert "hierarchy -top ysyx_00000000 -check" not in script_text
+        assert "hierarchy -top SocWrapper -check" not in script_text
         assert str(cpu_top) in script_text
         assert str(soc_wrapper) not in script_text
         stat_path = _stat_path_from_script(script_text)
@@ -168,7 +168,7 @@ def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp
 
     loaded = load_workspace(str(tmp_path / "ws_cpu_wrapper_outside_filelist"))
     assert loaded is not None
-    loaded["cpu_wrapper_top"] = "ysyx_00000000"
+    loaded["cpu_wrapper_top"] = "SocWrapper"
     loaded["top_module"] = "ecos_sim_top"
     engine = EngineFlow(workspace=loaded)
     engine.create_step_workspaces()

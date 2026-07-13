@@ -1319,13 +1319,13 @@ def test_prepare_keeps_soc_entries_without_compatibility_filtering(tmp_path):
     soc_root.mkdir()
 
     cpu_top = cpu_root / "cpu_top.v"
-    soc_legacy = soc_root / "ysyx_00000000.sv"
+    soc_helper = soc_root / "soc_helper.sv"
     soc_top = soc_root / "ecos_sim_top.v"
     cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
-    soc_legacy.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    soc_helper.write_text("module soc_helper(); endmodule\n", encoding="utf-8")
     soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
     (cpu_root / "filelist.cpu.f").write_text("cpu_top.v\n", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nysyx_00000000.sv\n", encoding="utf-8")
+    (soc_root / "filelist.soc.f").write_text("ecos_sim_top.v\nsoc_helper.sv\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_prepare_filter"),
@@ -1350,7 +1350,7 @@ def test_prepare_keeps_soc_entries_without_compatibility_filtering(tmp_path):
     assert state == StateEnum.Success
     assert str(cpu_top.resolve()) in prepared["rtl_files"]
     assert str(soc_top.resolve()) in prepared["rtl_files"]
-    assert str(soc_legacy.resolve()) in prepared["rtl_files"]
+    assert str(soc_helper.resolve()) in prepared["rtl_files"]
 
 
 def test_prepare_does_not_generate_cpu_alias_for_cpu_top_filelist(tmp_path):

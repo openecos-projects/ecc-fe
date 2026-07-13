@@ -1557,7 +1557,7 @@ def _fallback_core_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool,
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
     if core_id == "darkriscv":
         return True, []
-    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "custom-filelist", "standard-cpu-filelist", "ysyx_00000000", ""}), _fallback_core_supported_test_suites(workspace)
+    return bool(core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "custom-filelist", "standard-cpu-filelist", ""}), _fallback_core_supported_test_suites(workspace)
 
 
 def _fallback_soc_test_suite_contract(workspace: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -1571,7 +1571,7 @@ def _fallback_core_supported_test_suites(workspace: dict[str, Any]) -> list[str]
         return ["cpu-tests", "smoke", "coremark"]
     if core_id == "cva6":
         return ["cpu-tests", "smoke"]
-    if core_id in {"custom-filelist", "ysyx_00000000", ""}:
+    if core_id in {"custom-filelist", ""}:
         return ["smoke", "cpu-tests", "rtthread", "coremark"]
     if core_id == "standard-cpu-filelist":
         return ["smoke", "cpu-tests", "coremark"]

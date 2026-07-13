@@ -320,7 +320,7 @@ module ecos_cva6_cpu_wrapper (
   };
 endmodule
 
-module ysyx_00000000 (
+module ecos_internal_cpu_socket (
   `ECOS_CVA6_CPU_SOCKET_PORTS
 );
   ecos_cva6_cpu_wrapper cpu (

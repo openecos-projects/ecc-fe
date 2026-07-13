@@ -57,10 +57,15 @@ def test_cl3_has_exactly_one_cpu_top() -> None:
     assert matches == ["cl3_verilog/cpu_top.sv"]
 
 
-def test_cl3_cpu_filelist_does_not_ship_generated_wrapper() -> None:
+def test_cl3_cpu_filelist_only_exposes_cpu_top_entrypoint() -> None:
     entries = _filelist_entries(CPU_FILELIST)
 
-    assert "cl3_verilog/ysyx_00000000.sv" not in entries
+    assert entries.count("cl3_verilog/cpu_top.sv") == 1
+    assert [
+        entry for entry in entries
+        if entry != "cl3_verilog/cpu_top.sv"
+        and "module cpu_top" in (CL3_ROOT / entry).read_text(encoding="utf-8", errors="ignore")
+    ] == []
 
 
 def test_cl3_is_the_only_shipped_example_tree() -> None:

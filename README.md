@@ -105,7 +105,7 @@ Bundled CPU RTL -> bundled adapter -> cpu_top bridge -> fixed ECOS SoC wrapper/h
 RTL filelist may include the CPU's implementation files, but it must provide
 exactly one CPU top module named `cpu_top`, with the same IO signal names as
 `examples/cl3/cl3_verilog/cpu_top.sv`. The fixed ECOS SoC instantiates that
-module directly; users must not provide a `ysyx_00000000` compatibility module.
+module directly; users do not provide any SoC compatibility alias.
 
 The fixed SoC wrapper preserves the simulator MMIO convention used by CPU tests:
 UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate

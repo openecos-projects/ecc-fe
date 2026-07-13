@@ -63,8 +63,9 @@ Supporting ecc-fe integration lives outside the submodule:
 - `fecompiler/thirdparty/SoC*/scripts/build_test.sh` recognizes program name
   `rtthread`, builds `rt-thread-am/bsp/abstract-machine` with
   `ARCH=riscv32-nemu`, and enables `-DECC_FE_SOC`.
-- `fecompiler/thirdparty/SoC*/ysyx_00000000.sv` captures AXI writes to
-  `0x10000000` and prints the byte to the Verilator log.
+- `fecompiler/thirdparty/SoC*/perip/easy_box/easy_box_core_wrapper.v`
+  instantiates `cpu_top`, captures AXI writes to `0x10000000`, and prints the
+  byte to the Verilator log.
 - `fecompiler/thirdparty/SoC*/driver/difftest.cpp` skips UART MMIO stores in
   difftest so the Spike reference model is not asked to execute SoC-specific
   UART accesses.

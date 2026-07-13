@@ -1,8 +1,8 @@
-// ECOS PicoRV32 adapter for the ysyx AXI CPU socket.
+// ECOS PicoRV32 adapter for the ECOS AXI-like CPU socket.
 //
-// The YSYX AM SoC instantiates a module named ysyx_00000000 with this AXI-like
-// socket.  The public adapter name remains ecos_picorv32_cpu_wrapper, and the
-// compatibility module at the bottom wires that adapter into the existing SoC.
+// The public adapter name remains ecos_picorv32_cpu_wrapper. The private
+// ecos_internal_cpu_socket module at the bottom is consumed only by the
+// bundled cpu_top bridge.
 
 module ecos_picorv32_cpu_wrapper (
   input         clock,
@@ -340,7 +340,7 @@ module ecos_picorv32_cpu_wrapper (
 
 endmodule
 
-module ysyx_00000000 (
+module ecos_internal_cpu_socket (
   input         clock,
   input         reset,
   input         io_interrupt,

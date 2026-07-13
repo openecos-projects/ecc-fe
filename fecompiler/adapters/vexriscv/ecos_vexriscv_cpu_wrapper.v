@@ -2,8 +2,8 @@
 //
 // The selected LiteX Hub VexRiscv_Min snapshot exposes separate instruction
 // and data Wishbone ports.  This adapter arbitrates those ports, maps them onto
-// the ECOS AXI-like CPU socket, and provides the ysyx_00000000 compatibility
-// module expected by the frontend SoC harnesses.
+// the ECOS AXI-like CPU socket, and provides a private socket module consumed
+// only by the bundled cpu_top bridge.
 
 `define ECOS_CPU_SOCKET_PORTS \
   input         clock, \
@@ -423,7 +423,7 @@ module ecos_vexriscv_cpu_wrapper (
 
 endmodule
 
-module ysyx_00000000 (
+module ecos_internal_cpu_socket (
   `ECOS_CPU_SOCKET_PORTS
 );
   ecos_vexriscv_cpu_wrapper adapter (

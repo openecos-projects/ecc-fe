@@ -91,10 +91,10 @@ def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
 
 
 def test_custom_filelist_requires_cpu_top(tmp_path):
-    cpu_top = tmp_path / "ysyx_00000000.sv"
-    cpu_top.write_text("module ysyx_00000000(); endmodule\n", encoding="utf-8")
+    cpu_top = tmp_path / "wrong_cpu_top.sv"
+    cpu_top.write_text("module wrong_cpu_top(); endmodule\n", encoding="utf-8")
     user_filelist = tmp_path / "filelist.f"
-    user_filelist.write_text("ysyx_00000000.sv\n", encoding="utf-8")
+    user_filelist.write_text("wrong_cpu_top.sv\n", encoding="utf-8")
     result = validate_frontend_config({
         "core_id": "custom-filelist",
         "soc_harness_id": "ysyx-am-soc",

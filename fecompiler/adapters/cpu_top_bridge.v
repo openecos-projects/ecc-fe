@@ -1,9 +1,9 @@
-// Internal bridge for bundled legacy CPU adapters.
+// Internal bridge for bundled CPU adapters.
 //
-// ECOS SoC always instantiates cpu_top.  Older bundled adapters still expose
-// the historical ysyx_00000000 socket internally, so this file adapts that
-// implementation to the public cpu_top contract.  User CPU filelists do not
-// include this file and must provide cpu_top directly.
+// ECOS SoC always instantiates cpu_top. Bundled adapters expose a private ECOS
+// CPU socket internally; this file adapts that implementation to the public
+// cpu_top contract. User CPU filelists do not include this file and must
+// provide cpu_top directly.
 
 module cpu_top (
   input         clock,
@@ -49,7 +49,7 @@ module cpu_top (
 
   wire combined_interrupt = io_extIrq | io_timerIrq;
 
-  ysyx_00000000 legacy_cpu (
+  ecos_internal_cpu_socket internal_cpu (
     .clock(clock),
     .reset(reset),
     .io_interrupt(combined_interrupt),

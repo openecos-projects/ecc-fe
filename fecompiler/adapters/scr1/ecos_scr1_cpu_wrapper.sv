@@ -425,7 +425,7 @@ module ecos_scr1_cpu_wrapper (
 
 endmodule
 
-module ysyx_00000000 (
+module ecos_internal_cpu_socket (
   input         clock,
   input         reset,
   input         io_interrupt,
