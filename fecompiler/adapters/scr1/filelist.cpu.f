@@ -23,4 +23,3 @@
 ../../thirdparty/scr1/src/core/scr1_dmi.sv
 ../../thirdparty/scr1/src/core/scr1_scu.sv
 ecos_scr1_cpu_wrapper.sv
-../cpu_top_bridge.v

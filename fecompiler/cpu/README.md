@@ -22,8 +22,8 @@ AM SoC harness.  A compatible CPU wrapper should expose:
 
 The current CL3 integration uses `cpu_top` as the only public CPU entrypoint.
 The fixed SoC socket instantiates it directly and provides the UART/trap side
-effects used by CPU tests. Bundled legacy adapters use an internal bridge; user
-CPU filelists must not provide that implementation detail.
+effects used by CPU tests. Bundled adapters now expose the same `cpu_top`
+entrypoint in their own adapter filelists.
 
 ## Integration Rule
 

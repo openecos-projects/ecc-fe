@@ -112,4 +112,3 @@
 ../../thirdparty/cva6/core/mmu_sv32/cva6_tlb_sv32.sv
 
 ecos_cva6_cpu_wrapper.sv
-../cpu_top_bridge.v

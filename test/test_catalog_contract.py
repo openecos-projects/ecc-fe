@@ -78,6 +78,38 @@ def test_obi_cpu_wrappers_register_local_mmio_write_response():
         assert "data_rvalid_q || local_write)" not in text
 
 
+def test_builtin_cpu_adapters_expose_cpu_top_without_bridge_file():
+    root = Path(__file__).resolve().parent.parent
+    payload = catalog_payload()
+    failures: list[str] = []
+
+    for core in payload["cores"]:
+        core_id = str(core["id"])
+        if core_id == "custom-filelist" or core.get("integration_level") != "sim_ready":
+            continue
+        filelist_text = str(core.get("cpu_filelist", "")).strip()
+        if not filelist_text:
+            failures.append(f"{core_id}: missing cpu_filelist")
+            continue
+
+        filelist = root / filelist_text
+        raw_filelist = filelist.read_text(encoding="utf-8")
+        bridge_marker = "cpu_top" "_bridge"
+        if bridge_marker in raw_filelist:
+            failures.append(f"{core_id}: still depends on removed bridge file")
+
+        parsed = PrepareStep._parse_sv_filelist(str(filelist))
+        cpu_top_files = [
+            str(path.relative_to(root))
+            for path in parsed["rtl_files"]
+            if PrepareStep._file_defines_module(path, "cpu_top")
+        ]
+        if len(cpu_top_files) != 1:
+            failures.append(f"{core_id}: cpu_top files={cpu_top_files}")
+
+    assert failures == []
+
+
 def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
     payload = catalog_payload()
     cores = {str(item["id"]): item for item in payload["cores"]}

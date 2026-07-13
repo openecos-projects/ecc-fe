@@ -16,7 +16,7 @@ Current status:
 - Upstream origin: https://github.com/openhwgroup/cva6
 - Filelist: `filelist.cpu.f`
 - Wrapper top: `ecos_cva6_cpu_wrapper`
-- SoC-facing module: `cpu_top` via the bundled private bridge
+- SoC-facing module: `cpu_top`
 - Test suites: `smoke`, `cpu-tests`
 - Difftest and RT-Thread are not supported by this adapter.
 

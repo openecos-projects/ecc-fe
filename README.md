@@ -95,8 +95,8 @@ The high-level shape is:
 
 ```text
 User CPU RTL -> cpu_top -> fixed ECOS SoC wrapper/harness -> ecos_sim_top
-Bundled CPU RTL -> bundled adapter -> cpu_top bridge -> fixed ECOS SoC wrapper/harness
-                                                       -> Verilator main.cpp / GUI
+Bundled CPU RTL -> bundled adapter-owned cpu_top -> fixed ECOS SoC wrapper/harness
+                                                   -> Verilator main.cpp / GUI
 ```
 
 ### User CPU Filelist Contract
