@@ -8,6 +8,7 @@ import shutil
 import shlex
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from fecompiler.tools.common.rtl_inputs import (
     verilator_incdir_args,
     verilator_lint_define_args,
 )
+from fecompiler.tools.common.rtl_ownership import RTL_OWNERSHIPS, rtl_ownership_map, rtl_source_ownership
 from fecompiler.tools.fe.subflow import update_substep_ok
 
 from fecompiler.tools.verilator.subflow import (
@@ -1206,6 +1208,8 @@ class VerilatorLintStep(BaseStep):
             "summary": str(lint_summary_path),
             "errors": lint_summary["summary"]["errors"],
             "warnings": lint_summary["summary"]["warnings"],
+            "cpu_errors": lint_summary["summary"]["cpu_errors"],
+            "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
             "rules": lint_summary["summary"]["rules"],
             "files": lint_summary["summary"]["files"],
         })
@@ -1217,6 +1221,8 @@ class VerilatorLintStep(BaseStep):
                 "summary": str(lint_summary_path),
                 "errors": lint_summary["summary"]["errors"],
                 "warnings": lint_summary["summary"]["warnings"],
+                "cpu_errors": lint_summary["summary"]["cpu_errors"],
+                "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
                 "rules": lint_summary["summary"]["rules"],
                 "files": lint_summary["summary"]["files"],
             },
@@ -1244,12 +1250,27 @@ def build_lint_summary(
             "raw": _first_nonempty_log_line(log_content),
             "category": "tool",
         })
+    ownership_by_path = rtl_ownership_map(workspace)
+    for diagnostic in diagnostics:
+        ownership = (
+            "tool"
+            if diagnostic.get("category") == "tool"
+            else rtl_source_ownership(
+                workspace,
+                str(diagnostic.get("source", "")),
+                ownership_by_path,
+            )
+        )
+        diagnostic["ownership"] = ownership
+        diagnostic["actionable"] = ownership == "cpu"
     errors = len([item for item in diagnostics if item.get("severity") == "error"])
     warnings = len([item for item in diagnostics if item.get("severity") == "warning"])
     status = "pass" if int(run_info.get("returncode", 1)) == 0 and errors == 0 else "fail"
     top_module = str(run_info.get("top_module") or workspace.get("top_module") or "top")
     rules = _lint_rule_breakdown(diagnostics)
     file_hotspots = _lint_file_hotspots(diagnostics)
+    ownership = _lint_ownership_breakdown(diagnostics)
+    cpu_diagnostics = [item for item in diagnostics if item.get("ownership") == "cpu"]
 
     return {
         "path": str(summary_path),
@@ -1273,10 +1294,14 @@ def build_lint_summary(
             "files": len(file_hotspots),
             "rtl_files": len(files),
             "top_module": top_module,
+            "cpu_errors": len([item for item in cpu_diagnostics if item.get("severity") == "error"]),
+            "cpu_warnings": len([item for item in cpu_diagnostics if item.get("severity") == "warning"]),
+            "actionable_diagnostics": len(cpu_diagnostics),
         },
         "diagnostics": diagnostics,
         "rules": rules,
         "files": file_hotspots,
+        "ownership": ownership,
         "reports": {
             "log": str(run_info.get("log_path", "")),
             "summary": str(summary_path),
@@ -1367,6 +1392,7 @@ def _lint_rule_breakdown(diagnostics: list[dict[str, Any]]) -> list[dict[str, An
                 "warnings": 0,
                 "total": 0,
                 "example": str(item.get("message", "")),
+                "ownership": Counter(),
             },
         )
         if item.get("severity") == "error":
@@ -1374,6 +1400,10 @@ def _lint_rule_breakdown(diagnostics: list[dict[str, Any]]) -> list[dict[str, An
         elif item.get("severity") == "warning":
             record["warnings"] += 1
         record["total"] += 1
+        record["ownership"][str(item.get("ownership", "unknown"))] += 1
+
+    for record in by_code.values():
+        record["ownership"] = dict(sorted(record["ownership"].items()))
 
     return sorted(
         by_code.values(),
@@ -1395,6 +1425,7 @@ def _lint_file_hotspots(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any
                 "warnings": 0,
                 "total": 0,
                 "rules": set(),
+                "ownership": str(item.get("ownership", "unknown")),
             },
         )
         if item.get("severity") == "error":
@@ -1413,11 +1444,29 @@ def _lint_file_hotspots(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any
             "warnings": int(record["warnings"]),
             "total": int(record["total"]),
             "rules": sorted(record["rules"]),
+            "ownership": str(record["ownership"]),
+            "actionable": record["ownership"] == "cpu",
         })
     return sorted(
         hotspots,
         key=lambda item: (-int(item.get("errors", 0)), -int(item.get("warnings", 0)), str(item.get("path", ""))),
     )
+
+
+def _lint_ownership_breakdown(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for ownership in RTL_OWNERSHIPS:
+        owned = [item for item in diagnostics if item.get("ownership") == ownership]
+        if not owned:
+            continue
+        records.append({
+            "ownership": ownership,
+            "errors": len([item for item in owned if item.get("severity") == "error"]),
+            "warnings": len([item for item in owned if item.get("severity") == "warning"]),
+            "total": len(owned),
+            "actionable": ownership == "cpu",
+        })
+    return records
 
 
 def _lint_category(code: str, message: str) -> str:

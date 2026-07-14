@@ -18,6 +18,7 @@ from fecompiler.tools.common.rtl_inputs import (
     slang_defines,
     slang_incdir_args,
 )
+from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
 from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.slang.subflow import SlangSubFlowEnum, init_slang_subflow
 from fecompiler.utility.json import json_read, json_write
@@ -258,6 +259,19 @@ def build_elab_summary(
     files = [str(path) for path in run_info.get("rtl_files", [])]
     structure = scan_rtl_structure(files)
     diagnostics = parse_slang_diagnostics(log_content)
+    ownership_by_path = rtl_ownership_map(workspace)
+    for diagnostic in diagnostics:
+        diagnostic["ownership"] = rtl_source_ownership(
+            workspace,
+            str(diagnostic.get("source", "")),
+            ownership_by_path,
+        )
+    for module in structure["modules"]:
+        module["ownership"] = rtl_source_ownership(
+            workspace,
+            str(module.get("path", "")),
+            ownership_by_path,
+        )
     errors = _diagnostic_count(log_content, diagnostics, "error")
     warnings = _diagnostic_count(log_content, diagnostics, "warning")
     status = "pass" if int(run_info.get("returncode", 1)) == 0 and errors == 0 else "fail"

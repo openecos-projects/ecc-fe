@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
+
 _SOURCE_EXTENSIONS = {".v", ".sv", ".vh", ".svh"}
 _KEYWORDS = {
     "always",
@@ -55,6 +57,7 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
     metrics = _metrics(sources, workspace)
     issues = _issues(sources, metrics, workspace)
     summary = _summary(issues, metrics)
+    ownership_by_path = rtl_ownership_map(workspace)
 
     return {
         "schema_version": 2,
@@ -68,6 +71,7 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
                 "path": str(source.path),
                 "label": _source_label(source.path, workspace),
                 "lines": _line_count(source.text),
+                "ownership": rtl_source_ownership(workspace, source.path, ownership_by_path),
             }
             for source in sources
         ],
@@ -126,14 +130,15 @@ def finalize_review_report(
     workspace: dict[str, Any],
 ) -> dict[str, Any]:
     """Annotate issues with stable identities, run delta, confidence, and waivers."""
+    ownership_by_path = rtl_ownership_map(workspace)
     previous_issues = [
-        _decorate_issue(issue, workspace)
+        _decorate_issue(issue, workspace, ownership_by_path)
         for issue in (previous_report or {}).get("issues", [])
         if isinstance(issue, dict)
     ]
     previous_by_id = {str(issue["fingerprint"]): issue for issue in previous_issues}
     current_issues = [
-        _decorate_issue(issue, workspace)
+        _decorate_issue(issue, workspace, ownership_by_path)
         for issue in report.get("issues", [])
         if isinstance(issue, dict)
     ]
@@ -170,7 +175,7 @@ def finalize_review_report(
     actionable = [
         issue
         for issue in current_issues
-        if not issue.get("waived") and issue.get("ownership") != "tool"
+        if not issue.get("waived") and issue.get("ownership") == "cpu"
     ]
     actionable_counts = Counter(str(issue.get("severity", "info")) for issue in actionable)
     summary = dict(report.get("summary", {}))
@@ -600,11 +605,21 @@ def _normalize_probe_issue(issue: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _decorate_issue(issue: dict[str, Any], workspace: dict[str, Any]) -> dict[str, Any]:
+def _decorate_issue(
+    issue: dict[str, Any],
+    workspace: dict[str, Any],
+    ownership_by_path: dict[str, str],
+) -> dict[str, Any]:
     decorated = dict(issue)
     decorated.setdefault("origin", "source_heuristic")
     decorated.setdefault("confidence", "low" if decorated.get("severity") == "info" else "medium")
     decorated.setdefault("ownership", "cpu")
+    if decorated.get("source") and decorated.get("ownership") != "tool":
+        decorated["ownership"] = rtl_source_ownership(
+            workspace,
+            str(decorated["source"]),
+            ownership_by_path,
+        )
     decorated["fingerprint"] = _issue_fingerprint(decorated, workspace)
     return decorated
 

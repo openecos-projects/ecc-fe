@@ -8,6 +8,7 @@ from typing import Any
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
+from fecompiler.tools.common.rtl_ownership import classify_rtl_source, ownership_summary
 from fecompiler.tools.common.sv_module import (
     compare_port_contracts,
     module_definitions,
@@ -53,6 +54,7 @@ class PrepareStep(BaseStep):
             "defines": len(prepared["defines"]),
             "inputs": source_info,
             "contracts": [cpu_top_contract],
+            "ownership": prepared["ownership"],
         }
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
@@ -69,7 +71,7 @@ class PrepareStep(BaseStep):
         manifest = self._manifest_path(step)
         return len(lines) > 0 and manifest.exists()
 
-    def _collect_inputs(self, step: WorkspaceStep, workspace: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, Any]]:
+    def _collect_inputs(self, step: WorkspaceStep, workspace: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
         soc_filelist = str(workspace.get("soc_filelist", "")).strip()
         filelist = str(workspace.get("input_filelist", "")).strip()
@@ -80,6 +82,7 @@ class PrepareStep(BaseStep):
         seen_rtl: set[str] = set()
         seen_incdir: set[str] = set()
         seen_define: set[str] = set()
+        rtl_source_by_path: dict[str, dict[str, str]] = {}
         incdirs: list[Path] = []
         defines: list[str] = []
         def _add_unique(items: list[Any], target: list[Any], seen: set[str]) -> None:
@@ -95,6 +98,13 @@ class PrepareStep(BaseStep):
             _add_unique(data["incdirs"], incdirs, seen_incdir)
             _add_unique(data["defines"], defines, seen_define)
             inputs[label] = self._filelist_info(path, data)
+            for rtl_path in data["rtl_files"]:
+                key = str(rtl_path)
+                rtl_source_by_path.setdefault(key, {
+                    "path": key,
+                    "ownership": classify_rtl_source(rtl_path, label, workspace),
+                    "source": label,
+                })
 
         # Frontend integration path: explicit CPU + SoC filelists.
         if cpu_filelist or soc_filelist:
@@ -117,6 +127,11 @@ class PrepareStep(BaseStep):
             p = Path(origin_verilog).resolve()
             _add_unique([p], merged, seen_rtl)
             inputs["origin_verilog"] = {"path": str(p), "rtl_files": 1}
+            rtl_source_by_path[str(p)] = {
+                "path": str(p),
+                "ownership": classify_rtl_source(p, "origin_verilog", workspace),
+                "source": "origin_verilog",
+            }
 
         if not merged:
             self._update_substep(
@@ -137,8 +152,18 @@ class PrepareStep(BaseStep):
                 "total_defines": len(defines),
             },
         )
+        rtl_sources = [
+            rtl_source_by_path.get(str(path), {
+                "path": str(path),
+                "ownership": classify_rtl_source(path, workspace=workspace),
+                "source": "unknown",
+            })
+            for path in merged
+        ]
         prepared = {
             "rtl_files": [str(p) for p in merged],
+            "rtl_sources": rtl_sources,
+            "ownership": ownership_summary(rtl_sources),
             "incdirs": [str(p) for p in incdirs],
             "defines": defines,
             "source_fingerprint": workspace_input_fingerprint(workspace),
@@ -275,7 +300,7 @@ class PrepareStep(BaseStep):
         )
         return merged_path
 
-    def _write_prepared_manifest(self, step: WorkspaceStep, prepared: dict[str, list[str]]) -> Path:
+    def _write_prepared_manifest(self, step: WorkspaceStep, prepared: dict[str, Any]) -> Path:
         manifest_path = self._manifest_path(step)
         json_write(manifest_path, prepared)
         return manifest_path

@@ -24,6 +24,7 @@ from fecompiler.tools.common.rtl_inputs import (
     verilator_lint_defines,
     workspace_input_fingerprint,
 )
+from fecompiler.tools.common.rtl_ownership import classify_rtl_source
 from fecompiler.tools.slang.runner import (
     SlangElabStep,
     build_elab_summary,
@@ -1409,6 +1410,11 @@ def test_prepare_merges_cpu_and_soc_filelists(tmp_path):
     assert set(prepared["rtl_files"]) == set(lines)
     assert set(prepared["incdirs"]) == {str(cpu_inc.resolve()), str(soc_inc.resolve())}
     assert prepared["defines"] == ["CPU_CFG=1", "SOC_CFG=1"]
+    assert prepared["ownership"] == {"cpu": 1, "soc": 1}
+    assert {item["path"]: item["ownership"] for item in prepared["rtl_sources"]} == {
+        str((cpu_root / "cpu_top.sv").resolve()): "cpu",
+        str((soc_root / "soc_top.v").resolve()): "soc",
+    }
 
 
 def test_prepare_keeps_soc_entries_without_compatibility_filtering(tmp_path):
@@ -2668,6 +2674,61 @@ def test_lint_summary_groups_rules_and_files(tmp_path):
     assert [rule["code"] for rule in summary["rules"]] == ["UNSUPPORTED", "WIDTH"]
     assert summary["files"][0]["path"] == str(source)
     assert summary["files"][0]["total"] == 2
+
+
+def test_lint_summary_separates_actionable_cpu_and_soc_diagnostics(tmp_path):
+    cpu_source = tmp_path / "cpu" / "cpu_top.sv"
+    soc_source = tmp_path / "soc" / "ecos_sim_top.sv"
+    cpu_source.parent.mkdir()
+    soc_source.parent.mkdir()
+    cpu_source.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    soc_source.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
+    manifest = tmp_path / "prepared_inputs.json"
+    manifest.write_text(json.dumps({
+        "rtl_files": [str(cpu_source), str(soc_source)],
+        "rtl_sources": [
+            {"path": str(cpu_source), "ownership": "cpu", "source": "cpu_filelist"},
+            {"path": str(soc_source), "ownership": "soc", "source": "soc_filelist"},
+        ],
+    }), encoding="utf-8")
+    log = "\n".join([
+        f"%Warning-WIDTH: {cpu_source}:12:7: Operator ASSIGN expects 32 bits",
+        f"%Warning-UNUSEDSIGNAL: {soc_source}:20:1: Signal is not used",
+    ])
+
+    summary = build_lint_summary(
+        {"top_module": "ecos_sim_top", "prepared_manifest": str(manifest)},
+        {
+            "returncode": 0,
+            "rtl_files": [str(cpu_source), str(soc_source)],
+            "top_module": "ecos_sim_top",
+            "command": ["verilator", "--lint-only"],
+            "log_path": str(tmp_path / "log.txt"),
+        },
+        log,
+        summary_path=tmp_path / "lint_summary.json",
+    )
+
+    assert summary["summary"]["warnings"] == 2
+    assert summary["summary"]["cpu_warnings"] == 1
+    assert summary["summary"]["actionable_diagnostics"] == 1
+    assert {item["ownership"]: item["total"] for item in summary["ownership"]} == {
+        "cpu": 1,
+        "soc": 1,
+    }
+    diagnostics = {item["source"]: item for item in summary["diagnostics"]}
+    assert diagnostics[str(cpu_source)]["actionable"] is True
+    assert diagnostics[str(soc_source)]["actionable"] is False
+    files = {item["path"]: item for item in summary["files"]}
+    assert files[str(cpu_source)]["ownership"] == "cpu"
+    assert files[str(soc_source)]["ownership"] == "soc"
+
+
+def test_rtl_ownership_recognizes_bundled_adapters_and_third_party_sources():
+    root = Path(__file__).resolve().parents[1]
+
+    assert classify_rtl_source(root / "fecompiler/adapters/picorv32/ecos_picorv32_cpu_wrapper.v") == "adapter"
+    assert classify_rtl_source(root / "fecompiler/thirdparty/picorv32/picorv32.v") == "third_party"
 
 
 def test_elab_scans_module_inventory_and_unresolved_modules(tmp_path):
