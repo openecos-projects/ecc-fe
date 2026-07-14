@@ -64,6 +64,19 @@ _VERILATOR_DIAGNOSTIC_RE = re.compile(
     r"(?P<source>.+?):(?P<line>\d+):(?:(?P<column>\d+):)?\s*(?P<message>.*)$"
 )
 _SIM_CYCLE_RE = re.compile(r"\b(?:after|timeout after)\s+([0-9]+)\s+cycles\b")
+_SIM_BAD_TRAP_RE = re.compile(
+    r"HIT BAD TRAP(?:,\s*code=(?P<code>0x[0-9a-fA-F]+|[0-9]+))?",
+    re.IGNORECASE,
+)
+_DIFFTEST_MISMATCH_RE = re.compile(
+    r"^\s*\[DIFFTEST\]\s+(?P<message>.*?mismatch.*?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_DIFFTEST_PROGRESS_RE = re.compile(
+    r"\[soc-sim\]\[difftest\]\s+progress:.*?\blast_pc=(?P<last_pc>0x[0-9a-fA-F]+)"
+    r"(?:.*?\blast_npc=(?P<last_npc>0x[0-9a-fA-F]+))?",
+    re.IGNORECASE,
+)
 _COREMARK_ITERATIONS_RE = re.compile(r"^\s*Iterations\s*:\s*(?P<value>[0-9]+)\s*$", re.MULTILINE)
 _COREMARK_ITERATIONS_PER_SEC_RE = re.compile(r"^\s*Iterations/Sec\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
 _COREMARK_PER_MHZ_RE = re.compile(r"^\s*CoreMark/MHz\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
@@ -511,6 +524,257 @@ def _sim_cycles_from_output(output: str) -> int | None:
         return int(matches[-1].group(1))
     except ValueError:
         return None
+
+
+def _sim_int_option(args: list[str], option: str) -> int | None:
+    value = _option_value(args, option)
+    if not value:
+        return None
+    try:
+        return int(value, 0)
+    except ValueError:
+        return None
+
+
+def _sim_case_metrics(
+    args: list[str],
+    returncode: int,
+    output: str,
+    ok: bool,
+) -> dict[str, Any]:
+    mismatch = _DIFFTEST_MISMATCH_RE.search(output)
+    bad_trap = _SIM_BAD_TRAP_RE.search(output)
+    timed_out = "timeout after" in output
+    has_good_trap = "HIT GOOD TRAP" in output
+
+    if mismatch:
+        termination = "difftest_mismatch"
+    elif bad_trap:
+        termination = "bad_trap"
+    elif timed_out:
+        termination = "timeout"
+    elif returncode != 0:
+        termination = "process_error"
+    elif has_good_trap or ok:
+        termination = "good_trap"
+    else:
+        termination = "unknown"
+
+    trap_code: int | None = 0 if termination == "good_trap" else None
+    if bad_trap and bad_trap.group("code"):
+        try:
+            trap_code = int(bad_trap.group("code"), 0)
+        except ValueError:
+            trap_code = None
+
+    difftest_enabled = _arg_present(args, "--diff") or "[difftest] enabled" in output.lower()
+    if mismatch:
+        difftest_status = "mismatch"
+    elif not difftest_enabled:
+        difftest_status = "disabled"
+    elif ok:
+        difftest_status = "passed"
+    else:
+        difftest_status = "incomplete"
+
+    progress_matches = list(_DIFFTEST_PROGRESS_RE.finditer(output))
+    progress = progress_matches[-1] if progress_matches else None
+    first_mismatch: dict[str, Any] | None = None
+    if mismatch:
+        message = mismatch.group("message").strip()
+        pc_match = re.search(r"\bpc=(0x[0-9a-fA-F]+)", message, re.IGNORECASE)
+        first_mismatch = {
+            "message": message,
+            "pc": pc_match.group(1) if pc_match else None,
+        }
+
+    return {
+        "cycles": _sim_cycles_from_output(output),
+        "max_cycles": _sim_int_option(args, "--max-cycles"),
+        "termination": termination,
+        "trap_code": trap_code,
+        "timeout_accepted": timed_out and _arg_present(args, "--timeout-ok"),
+        "difftest": {
+            "enabled": difftest_enabled,
+            "status": difftest_status,
+            "last_pc": progress.group("last_pc") if progress else None,
+            "last_npc": progress.group("last_npc") if progress else None,
+            "first_mismatch": first_mismatch,
+        },
+    }
+
+
+def _first_sim_error(output: str) -> str:
+    markers = (
+        "mismatch",
+        "HIT BAD TRAP",
+        "timeout after",
+        "image not found",
+        "%Error",
+        "ERROR!",
+        "FAILED",
+    )
+    for line in output.splitlines():
+        text = line.strip()
+        if text and any(marker.lower() in text.lower() for marker in markers):
+            return text
+    return ""
+
+
+def _simulation_failure(
+    *,
+    returncode: int,
+    output: str,
+    validation: dict[str, Any],
+    metrics: dict[str, Any],
+    wave: str,
+) -> dict[str, Any]:
+    termination = str(metrics.get("termination", "unknown"))
+    if termination == "difftest_mismatch":
+        kind = "difftest_mismatch"
+        message = "Difftest found an architectural mismatch."
+    elif termination == "bad_trap":
+        kind = "bad_trap"
+        message = "The program terminated with a bad trap."
+    elif termination == "timeout":
+        kind = "timeout"
+        message = "The simulation reached its cycle limit."
+    elif termination == "process_error":
+        kind = "process_error"
+        message = f"The simulator process exited with return code {returncode}."
+    elif validation:
+        kind = "validation_failed"
+        message = "The simulator completed, but suite validation failed."
+    else:
+        kind = "simulation_failed"
+        message = "The simulation did not produce an accepted success result."
+
+    nonempty_lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    return {
+        "kind": kind,
+        "message": message,
+        "first_error": _first_sim_error(output),
+        "log_tail": "\n".join(nonempty_lines[-20:]),
+        "wave": wave,
+    }
+
+
+def _previous_simulation_run(runs_root: Path, suite: str) -> dict[str, Any]:
+    if not runs_root.exists():
+        return {}
+    for run_dir in sorted((path for path in runs_root.iterdir() if path.is_dir()), reverse=True):
+        payload = json_read(run_dir / "cases.json")
+        if payload.get("suite") == suite and isinstance(payload.get("cases"), list):
+            return payload
+    return {}
+
+
+def _case_cycles(case: dict[str, Any]) -> int | None:
+    metrics = case.get("metrics", {})
+    cycles = metrics.get("cycles") if isinstance(metrics, dict) else None
+    return cycles if isinstance(cycles, int) and not isinstance(cycles, bool) else None
+
+
+def _simulation_regression(
+    previous: dict[str, Any],
+    current_cases: list[dict[str, Any]],
+) -> dict[str, Any]:
+    previous_cases = previous.get("cases", []) if isinstance(previous, dict) else []
+    previous_by_name = {
+        str(case.get("name", "")): case
+        for case in previous_cases
+        if isinstance(case, dict) and str(case.get("name", ""))
+    }
+    current_by_name = {
+        str(case.get("name", "")): case
+        for case in current_cases
+        if str(case.get("name", ""))
+    }
+    if not previous:
+        return {
+            "has_baseline": False,
+            "baseline_run_id": "",
+            "new_failures": [],
+            "persistent_failures": [],
+            "fixed": [],
+            "added": [],
+            "removed": [],
+            "cycle_changes": [],
+        }
+
+    new_failures = sorted(
+        name
+        for name, case in current_by_name.items()
+        if not bool(case.get("ok"))
+        and (name not in previous_by_name or bool(previous_by_name[name].get("ok")))
+    )
+    persistent_failures = sorted(
+        name
+        for name, case in current_by_name.items()
+        if not bool(case.get("ok"))
+        and name in previous_by_name
+        and not bool(previous_by_name[name].get("ok"))
+    )
+    fixed = sorted(
+        name
+        for name, case in current_by_name.items()
+        if bool(case.get("ok"))
+        and name in previous_by_name
+        and not bool(previous_by_name[name].get("ok"))
+    )
+    cycle_changes: list[dict[str, Any]] = []
+    for name in sorted(current_by_name.keys() & previous_by_name.keys()):
+        previous_cycles = _case_cycles(previous_by_name[name])
+        current_cycles = _case_cycles(current_by_name[name])
+        if previous_cycles is None or current_cycles is None:
+            continue
+        delta = current_cycles - previous_cycles
+        cycle_changes.append({
+            "name": name,
+            "previous": previous_cycles,
+            "current": current_cycles,
+            "delta": delta,
+            "delta_percent": (delta / previous_cycles * 100) if previous_cycles else None,
+        })
+
+    return {
+        "has_baseline": bool(previous),
+        "baseline_run_id": str(previous.get("run_id", "")) if previous else "",
+        "new_failures": new_failures,
+        "persistent_failures": persistent_failures,
+        "fixed": fixed,
+        "added": sorted(current_by_name.keys() - previous_by_name.keys()) if previous else [],
+        "removed": sorted(previous_by_name.keys() - current_by_name.keys()) if previous else [],
+        "cycle_changes": cycle_changes,
+    }
+
+
+def _simulation_history(runs_root: Path, latest_run_id: str) -> dict[str, Any]:
+    runs: list[dict[str, Any]] = []
+    if runs_root.exists():
+        run_dirs = sorted((path for path in runs_root.iterdir() if path.is_dir()), reverse=True)[:100]
+        for run_dir in run_dirs:
+            payload = json_read(run_dir / "cases.json")
+            cases = payload.get("cases", []) if isinstance(payload, dict) else []
+            if not isinstance(cases, list):
+                continue
+            failed_cases = [
+                str(case.get("name", ""))
+                for case in cases
+                if isinstance(case, dict) and not bool(case.get("ok"))
+            ]
+            runs.append({
+                "run_id": str(payload.get("run_id", run_dir.name)),
+                "suite": str(payload.get("suite", "")),
+                "ok": bool(cases) and not failed_cases,
+                "cases": len(cases),
+                "failed_cases": failed_cases,
+                "regression": payload.get("regression", {}),
+            })
+    return {
+        "latest_run_id": latest_run_id,
+        "runs": runs,
+    }
 
 
 def _coremark_metrics(workspace: dict[str, Any], output: str, ok: bool) -> dict[str, Any]:
@@ -1646,6 +1910,7 @@ class VerilatorSimStep(BaseStep):
         cases_json = Path(step.report["dir"]) / "cases.json"
         case_root = Path(step.report["dir"]) / "cases"
         runs_root = Path(step.report["dir"]) / "runs"
+        history_json = Path(step.report["dir"]) / "history.json"
         output_cases_root = Path(step.output["dir"]) / "cases"
         suite = _sim_suite_name(workspace)
 
@@ -1720,7 +1985,9 @@ class VerilatorSimStep(BaseStep):
                 )
 
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
-            metrics = _coremark_metrics(workspace, output, case_ok) if _is_coremark_case(case_name, image) else {}
+            metrics = _sim_case_metrics(run_args, rc, output, case_ok)
+            if _is_coremark_case(case_name, image):
+                metrics.update(_coremark_metrics(workspace, output, case_ok))
             terminal_output = _case_terminal_output(
                 suite=suite,
                 case_name=case_name,
@@ -1755,6 +2022,14 @@ class VerilatorSimStep(BaseStep):
                 case_report["validation"] = validation
             if metrics:
                 case_report["metrics"] = metrics
+            if not case_ok:
+                case_report["failure"] = _simulation_failure(
+                    returncode=rc,
+                    output=output,
+                    validation=validation,
+                    metrics=metrics,
+                    wave=wave,
+                )
             cases_report.append(case_report)
             summary_lines.append(
                 f"[{case_name}] status={'PASS' if case_ok else 'FAIL'} rc={rc} suite={suite} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
@@ -1763,8 +2038,17 @@ class VerilatorSimStep(BaseStep):
         summary_text = "\n".join(summary_lines) + "\n"
         sim_log.write_text(summary_text, encoding="utf-8")
         (run_root / "log.txt").write_text(summary_text, encoding="utf-8")
-        json_write(str(cases_json), {"suite": suite, "run_id": run_id, "cases": cases_report})
-        json_write(str(run_root / "cases.json"), {"suite": suite, "run_id": run_id, "cases": cases_report})
+        previous_run = _previous_simulation_run(runs_root, suite)
+        regression = _simulation_regression(previous_run, cases_report)
+        cases_payload = {
+            "suite": suite,
+            "run_id": run_id,
+            "cases": cases_report,
+            "regression": regression,
+        }
+        json_write(str(cases_json), cases_payload)
+        json_write(str(run_root / "cases.json"), cases_payload)
+        json_write(str(history_json), _simulation_history(runs_root, run_id))
         update_substep_ok(
             step,
             SimSubFlowEnum.simulate.value,
@@ -1775,6 +2059,7 @@ class VerilatorSimStep(BaseStep):
                 "run_id": run_id,
                 "run_dir": str(run_root),
                 "suite": suite,
+                "regression": regression,
             },
         )
 
@@ -1821,6 +2106,8 @@ class VerilatorSimStep(BaseStep):
             payload["suite"] = str(cases_payload.get("suite"))
         if isinstance(cases_payload, dict) and cases_payload.get("run_id"):
             payload["run_id"] = str(cases_payload.get("run_id"))
+        if isinstance(cases_payload, dict) and cases_payload.get("regression"):
+            payload["regression"] = cases_payload.get("regression")
         if total_cases > 0:
             payload["cases"] = total_cases
             payload["failed_cases"] = failed_cases

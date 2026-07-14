@@ -41,6 +41,7 @@ from fecompiler.tools.verilator.runner import (
     _sim_cases_from_images,
     _sim_cflags_args,
     _sim_cpp_sources,
+    _sim_case_metrics,
     _sim_output_ok,
     _sim_run_args,
 )
@@ -76,6 +77,32 @@ def test_generic_simulation_requires_explicit_good_trap():
     assert _sim_output_ok(0, "timeout after 10 cycles\n") is False
     assert _sim_output_ok(0, "HIT GOOD TRAP\nHIT BAD TRAP\n") is False
     assert _sim_output_ok(1, "HIT GOOD TRAP\n") is False
+
+
+def test_sim_metrics_capture_difftest_mismatch_and_progress():
+    metrics = _sim_case_metrics(
+        ["--diff", "--max-cycles", "0x1000"],
+        1,
+        "\n".join([
+            "[soc-sim][difftest] progress: cycles=32 last_pc=0x80000010 last_npc=0x80000014",
+            "[DIFFTEST] GPR mismatch at pc=0x80000014 x1 dut=0x1 ref=0x2",
+        ]),
+        False,
+    )
+
+    assert metrics["cycles"] is None
+    assert metrics["max_cycles"] == 4096
+    assert metrics["termination"] == "difftest_mismatch"
+    assert metrics["difftest"] == {
+        "enabled": True,
+        "status": "mismatch",
+        "last_pc": "0x80000010",
+        "last_npc": "0x80000014",
+        "first_mismatch": {
+            "message": "GPR mismatch at pc=0x80000014 x1 dut=0x1 ref=0x2",
+            "pc": "0x80000014",
+        },
+    }
 
 
 def test_prepare_fingerprint_tracks_filelist_and_referenced_rtl_contents(tmp_path):
@@ -1812,7 +1839,11 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
         if _is_verilator_compile_cmd(cmd):
             _write_fake_sim_binary(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
-        return SimpleNamespace(returncode=0, stdout="ok-single\nHIT GOOD TRAP\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="ok-single\nHIT GOOD TRAP\n[soc-sim] finish after 42 cycles\n",
+            stderr="",
+        )
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
 
@@ -1834,6 +1865,75 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
         Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / "single.soc" / "wave.vcd"
     ).resolve()
     assert Path(simulate_cmd[simulate_cmd.index("--wave") + 1]) == expected_wave
+    payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    metrics = payload["cases"][0]["metrics"]
+    assert metrics["cycles"] == 42
+    assert metrics["max_cycles"] == 100
+    assert metrics["termination"] == "good_trap"
+    assert metrics["trap_code"] == 0
+    assert metrics["timeout_accepted"] is False
+    assert metrics["difftest"]["status"] == "disabled"
+
+
+def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypatch):
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    tb = tmp_path / "tb_main.cpp"
+    img = tmp_path / "tests" / "out" / "single.soc.bin"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"\x01")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_sim_history"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(rtl),
+        testbench=str(tb),
+        sim_run_args=["--image", str(img), "--max-cycles", "100"],
+    )
+    create_workspace(spec)
+    ws = load_workspace(str(tmp_path / "ws_sim_history"))
+    outputs = iter([
+        (0, "HIT GOOD TRAP\n[soc-sim] finish after 40 cycles\n"),
+        (1, "[DIFFTEST] PC mismatch at DUT pc=0x80000010\n[soc-sim] finish after 43 cycles\n"),
+        (0, "HIT GOOD TRAP\n[soc-sim] finish after 44 cycles\n"),
+    ])
+
+    def _fake_run(cmd, capture_output=True, text=True):
+        if _is_verilator_compile_cmd(cmd):
+            _write_fake_sim_binary(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        returncode, stdout = next(outputs)
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    engine = EngineFlow(workspace=ws)
+    engine.create_step_workspaces()
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    first = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert first["regression"]["has_baseline"] is False
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Incomplete
+    second = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert second["regression"]["new_failures"] == ["single.soc"]
+    assert second["cases"][0]["failure"]["kind"] == "difftest_mismatch"
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    third = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert third["regression"]["fixed"] == ["single.soc"]
+    assert third["regression"]["cycle_changes"] == [{
+        "name": "single.soc",
+        "previous": 43,
+        "current": 44,
+        "delta": 1,
+        "delta_percent": 1 / 43 * 100,
+    }]
+
+    history = json.loads((report_dir / "history.json").read_text(encoding="utf-8"))
+    assert history["latest_run_id"] == third["run_id"]
+    assert [run["ok"] for run in history["runs"][:3]] == [True, False, True]
 
 
 def test_rtthread_run_does_not_reuse_previous_cpu_tests_cases(tmp_path, monkeypatch):
