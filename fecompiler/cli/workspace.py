@@ -1795,11 +1795,15 @@ def _build_frontend_step_detail(
         "report": str(_step_section(step, "report").get("step", "")),
         "subflow": str(_step_section(step, "subflow").get("path", "")),
         "home_page": str(workspace.get("home_path", "")),
+        "info": dict((flow_step or {}).get("info", {}) or {}),
+        "provenance": dict((flow_step or {}).get("provenance", {}) or {}),
     }
 
     if step_name == "sim":
-        cases = _build_frontend_sim_cases(step)
+        sim = _build_frontend_sim_payload(step)
+        cases = sim["cases"]
         detail["cases"] = cases
+        detail["sim"] = sim
         passed = len([case for case in cases if case.get("ok") is True])
         failed = len([case for case in cases if case.get("ok") is False])
         detail["summary"].update(
@@ -1807,7 +1811,9 @@ def _build_frontend_step_detail(
                 "total_cases": len(cases),
                 "passed_cases": passed,
                 "failed_cases": failed,
-                "run_id": _sim_run_id(step),
+                "run_id": sim.get("run_id", ""),
+                "regression": sim.get("regression", {}),
+                "history_runs": len(sim.get("history", [])),
                 "test_suite": _sim_suite_label(workspace, cases),
                 "suite_id": _sim_suite_id(workspace, cases),
                 "cpu_test_mode": _sim_cpu_test_mode(workspace, cases),
@@ -1893,6 +1899,7 @@ def _build_frontend_step_reports(step: Any) -> list[dict[str, str]]:
         _existing_path_item(report_dir / "rtl_review.json" if report_dir else "", "RTL review"),
         _existing_path_item(_first_existing(report_dir, ("yosys_precheck.json", "structural_probe.json")) if report_dir else "", "Yosys precheck"),
         _existing_path_item(report_dir / "cases.json" if report_dir else "", "Simulation cases"),
+        _existing_path_item(report_dir / "history.json" if report_dir else "", "Simulation history"),
         _existing_path_item(report_dir / "build_programs.log.txt" if report_dir else "", "Build programs log"),
     ):
         if item:
@@ -1956,6 +1963,9 @@ def _build_frontend_review_payload(step: Any) -> dict[str, Any]:
         "yosys_precheck": data.get("yosys_precheck", data.get("structural_probe", {})),
         "profiles": data.get("profiles", []),
         "next_analyzers": data.get("next_analyzers", []),
+        "delta": data.get("delta", {}),
+        "resolved_issues": data.get("resolved_issues", []),
+        "waivers": data.get("waivers", {}),
     }
 
 
@@ -2166,7 +2176,10 @@ def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dic
             "sources": _prepare_input_sources(inputs),
             "manifest": str(workspace.get("prepared_manifest", "")),
             "merged_filelist": str(workspace.get("prepared_filelist", "")),
+            "rtl_sources": manifest.get("rtl_sources", []),
         },
+        "ownership": manifest.get("ownership", report.get("ownership", {})),
+        "cpu_top_contract": manifest.get("cpu_top_contract", {}),
         "contracts": contracts,
         "runtime": [
             {"label": "Workdir", "value": str(workspace.get("directory", "")), "mono": True},
@@ -2390,14 +2403,18 @@ def _cpu_source_relative_path(source: Path, cpu_root: Path) -> str:
 
 
 def _build_frontend_sim_cases(step: Any) -> list[dict[str, Any]]:
+    return _build_frontend_sim_payload(step)["cases"]
+
+
+def _build_frontend_sim_payload(step: Any) -> dict[str, Any]:
     report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
     if not report_dir:
-        return []
+        return {"cases": [], "regression": {}, "history": [], "run_id": "", "suite": ""}
     cases_json = report_dir / "cases.json"
     data = _json_read(cases_json)
     raw_cases = data.get("cases", []) if isinstance(data, dict) else []
     if not isinstance(raw_cases, list):
-        return []
+        raw_cases = []
 
     cases: list[dict[str, Any]] = []
     for raw_case in raw_cases:
@@ -2416,17 +2433,20 @@ def _build_frontend_sim_cases(step: Any) -> list[dict[str, Any]]:
                 "wave": str(raw_case.get("wave", "")),
                 "run_id": str(raw_case.get("run_id", "")),
                 "validation": raw_case.get("validation", {}) if isinstance(raw_case.get("validation"), dict) else {},
+                "metrics": raw_case.get("metrics", {}) if isinstance(raw_case.get("metrics"), dict) else {},
+                "failure": raw_case.get("failure", {}) if isinstance(raw_case.get("failure"), dict) else {},
             }
         )
-    return cases
-
-
-def _sim_run_id(step: Any) -> str:
-    report_dir = _optional_path(_step_section(step, "report").get("dir", ""))
-    if not report_dir:
-        return ""
-    data = _json_read(report_dir / "cases.json")
-    return str(data.get("run_id", "")) if isinstance(data, dict) else ""
+    history_data = _json_read(report_dir / "history.json")
+    history = history_data.get("runs", []) if isinstance(history_data, dict) else []
+    return {
+        "cases": cases,
+        "regression": data.get("regression", {}) if isinstance(data, dict) and isinstance(data.get("regression"), dict) else {},
+        "history": history if isinstance(history, list) else [],
+        "run_id": str(data.get("run_id", "")) if isinstance(data, dict) else "",
+        "suite": str(data.get("suite", "")) if isinstance(data, dict) else "",
+        "history_path": str(report_dir / "history.json") if (report_dir / "history.json").is_file() else "",
+    }
 
 
 def _sim_suite_label(workspace: dict[str, Any], cases: list[dict[str, Any]] | None = None) -> str:

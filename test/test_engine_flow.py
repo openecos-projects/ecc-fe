@@ -105,6 +105,55 @@ def test_sim_metrics_capture_difftest_mismatch_and_progress():
     }
 
 
+def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / "rtl_review.json").write_text(json.dumps({
+        "scope": "cpu",
+        "summary": {"new_issues": 1},
+        "issues": [{"fingerprint": "abc", "confidence": "high", "ownership": "cpu"}],
+        "delta": {"baseline": "previous_run", "new": 1, "existing": 0, "resolved": 1},
+        "resolved_issues": [{"fingerprint": "old"}],
+        "waivers": {"configured": 1, "applied": 1, "invalid": []},
+    }), encoding="utf-8")
+    review = workspace_cli._build_frontend_review_payload(
+        {"report": {"dir": str(review_dir)}},
+    )
+
+    assert review["delta"]["new"] == 1
+    assert review["resolved_issues"][0]["fingerprint"] == "old"
+    assert review["waivers"]["applied"] == 1
+    assert review["issues"][0]["confidence"] == "high"
+
+    sim_dir = tmp_path / "sim"
+    sim_dir.mkdir()
+    (sim_dir / "cases.json").write_text(json.dumps({
+        "suite": "cpu_tests",
+        "run_id": "run-2",
+        "regression": {"new_failures": ["add.soc"], "fixed": []},
+        "cases": [{
+            "name": "add.soc",
+            "ok": False,
+            "returncode": 1,
+            "metrics": {"cycles": 42, "termination": "bad_trap"},
+            "failure": {"kind": "bad_trap", "message": "Bad trap"},
+        }],
+    }), encoding="utf-8")
+    (sim_dir / "history.json").write_text(json.dumps({
+        "latest_run_id": "run-2",
+        "runs": [{"run_id": "run-2", "ok": False}],
+    }), encoding="utf-8")
+    sim = workspace_cli._build_frontend_sim_payload(
+        {"report": {"dir": str(sim_dir)}},
+    )
+
+    assert sim["run_id"] == "run-2"
+    assert sim["regression"]["new_failures"] == ["add.soc"]
+    assert sim["history"][0]["ok"] is False
+    assert sim["cases"][0]["metrics"]["cycles"] == 42
+    assert sim["cases"][0]["failure"]["kind"] == "bad_trap"
+
+
 def test_prepare_fingerprint_tracks_filelist_and_referenced_rtl_contents(tmp_path):
     rtl = tmp_path / "cpu_top.sv"
     filelist = tmp_path / "filelist.cpu.f"
@@ -698,6 +747,9 @@ def test_prepare_frontend_detail_returns_readiness_payload(tmp_path, capsys):
     assert prepare["readiness"]["status"] in {"Ready", "Warning"}
     assert prepare["inputs"]["total_rtl_files"] > 0
     assert prepare["inputs"]["cpu_rtl_files"] > 0
+    assert sum(prepare["ownership"].values()) == prepare["inputs"]["total_rtl_files"]
+    assert prepare["cpu_top_contract"]["module"] == "cpu_top"
+    assert prepare["cpu_top_contract"]["status"] in {"pass", "module_only"}
     assert any(item["label"] == "CPU" and item["value"] == "picorv32" for item in prepare["configuration"])
     assert any(item["label"] == "ecos_sim_top" and item["status"] == "OK" for item in prepare["contracts"])
     assert any(item["label"] == "Sim Top" and item["value"] == "ecos_sim_top" for item in prepare["runtime"])
