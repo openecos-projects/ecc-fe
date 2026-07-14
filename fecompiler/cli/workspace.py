@@ -2038,12 +2038,23 @@ def _build_elab_hierarchy(data: dict[str, Any]) -> dict[str, Any]:
     unresolved = [str(item) for item in unresolved] if isinstance(unresolved, list) else []
     referenced = data.get("referenced_modules", [])
     referenced = [str(item) for item in referenced] if isinstance(referenced, list) else []
+    heuristic_unresolved = data.get("heuristic_unresolved_candidates", [])
+    heuristic_unresolved = (
+        [str(item) for item in heuristic_unresolved]
+        if isinstance(heuristic_unresolved, list)
+        else []
+    )
+    inventory = data.get("inventory", {})
+    inventory = inventory if isinstance(inventory, dict) else {}
     return {
         "top_module": top_module or "--",
         "top_children": top_children,
         "module_count": len(module_records),
         "referenced_count": len(referenced),
         "unresolved": unresolved,
+        "heuristic_unresolved_candidates": heuristic_unresolved,
+        "inventory_source": str(inventory.get("source", "source_scan")),
+        "inventory_authoritative": bool(inventory.get("authoritative", False)),
         "largest_modules": [
             {
                 "module": str(item.get("module", "")),

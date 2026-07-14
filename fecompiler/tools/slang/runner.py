@@ -50,6 +50,14 @@ _DIAGNOSTIC_FALLBACK_RE = re.compile(
 )
 _SUMMARY_ERRORS_RE = re.compile(r"\b(?P<count>\d+)\s+errors?\b", re.IGNORECASE)
 _SUMMARY_WARNINGS_RE = re.compile(r"\b(?P<count>\d+)\s+warnings?\b", re.IGNORECASE)
+_UNKNOWN_MODULE_RES = (
+    re.compile(r"\bunknown\s+module\s+['\"`]?(?P<module>[A-Za-z_][\w$]*)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:cannot|could\s+not)\s+(?:find|resolve)\s+(?:definition\s+of\s+)?module\s+"
+        r"['\"`]?(?P<module>[A-Za-z_][\w$]*)",
+        re.IGNORECASE,
+    ),
+)
 _INSTANCE_KEYWORDS = {
     "always",
     "assign",
@@ -152,7 +160,6 @@ class SlangElabStep(BaseStep):
 
         cmd = [
             _slang_cmd(),
-            "--lint-only",
             "--allow-use-before-declare",
             "--timescale", "1ns/1ps",
             "--top", top,
@@ -247,7 +254,7 @@ def build_elab_summary(
     *,
     summary_path: Path,
 ) -> dict[str, Any]:
-    """Build a human-readable structural ELAB summary from Slang and RTL inputs."""
+    """Build an ELAB summary with compiler diagnostics as the authoritative result."""
     files = [str(path) for path in run_info.get("rtl_files", [])]
     structure = scan_rtl_structure(files)
     diagnostics = parse_slang_diagnostics(log_content)
@@ -255,8 +262,12 @@ def build_elab_summary(
     warnings = _diagnostic_count(log_content, diagnostics, "warning")
     status = "pass" if int(run_info.get("returncode", 1)) == 0 and errors == 0 else "fail"
     top_module = str(run_info.get("top_module") or workspace.get("top_module") or "top")
+    unresolved_modules = compiler_unresolved_modules(diagnostics)
+    source_top_found = top_module in {str(item.get("module")) for item in structure["modules"]}
+    top_found = status == "pass" or source_top_found
 
     return {
+        "schema_version": 2,
         "path": str(summary_path),
         "tool": "slang",
         "status": status,
@@ -276,19 +287,50 @@ def build_elab_summary(
             "rtl_files": len(files),
             "modules": len(structure["modules"]),
             "referenced_modules": len(structure["referenced_modules"]),
-            "unresolved_modules": len(structure["unresolved_modules"]),
+            "unresolved_modules": len(unresolved_modules),
+            "heuristic_unresolved_candidates": len(structure["unresolved_modules"]),
             "top_module": top_module,
-            "top_found": top_module in {str(item.get("module")) for item in structure["modules"]},
+            "top_found": top_found,
+            "module_inventory_source": "source_scan",
+            "module_inventory_authoritative": False,
+            "elaboration_mode": "full",
+        },
+        "compiler": {
+            "source": "slang",
+            "authoritative": True,
+            "elaboration_mode": "full",
+            "unresolved_modules": unresolved_modules,
         },
         "diagnostics": diagnostics,
         "modules": structure["modules"],
         "referenced_modules": structure["referenced_modules"],
-        "unresolved_modules": structure["unresolved_modules"],
+        "unresolved_modules": unresolved_modules,
+        "heuristic_unresolved_candidates": structure["unresolved_modules"],
+        "inventory": {
+            "source": "source_scan",
+            "authoritative": False,
+            "note": "Module inventory is informational; Slang diagnostics determine elaboration readiness.",
+        },
         "reports": {
             "log": str(run_info.get("log_path", "")),
             "summary": str(summary_path),
         },
     }
+
+
+def compiler_unresolved_modules(diagnostics: list[dict[str, Any]]) -> list[str]:
+    """Extract only module names explicitly reported unresolved by Slang."""
+    unresolved: set[str] = set()
+    for diagnostic in diagnostics:
+        if str(diagnostic.get("severity", "")).lower() != "error":
+            continue
+        message = str(diagnostic.get("message", ""))
+        for pattern in _UNKNOWN_MODULE_RES:
+            match = pattern.search(message)
+            if match is not None:
+                unresolved.add(match.group("module"))
+                break
+    return sorted(unresolved)
 
 
 def scan_rtl_structure(files: list[str]) -> dict[str, Any]:

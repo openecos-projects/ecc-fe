@@ -24,7 +24,13 @@ from fecompiler.tools.common.rtl_inputs import (
     verilator_lint_defines,
     workspace_input_fingerprint,
 )
-from fecompiler.tools.slang.runner import SlangElabStep, parse_slang_diagnostics, scan_rtl_structure
+from fecompiler.tools.slang.runner import (
+    SlangElabStep,
+    build_elab_summary,
+    compiler_unresolved_modules,
+    parse_slang_diagnostics,
+    scan_rtl_structure,
+)
 from fecompiler.tools.verilator.runner import (
     build_lint_summary,
     parse_verilator_diagnostics,
@@ -2569,6 +2575,37 @@ def test_elab_check_result_rejects_nonzero_returncode_without_error_text(tmp_pat
     assert SlangElabStep().check_result(step) is False
 
 
+def test_elab_runs_full_slang_hierarchy_instead_of_lint_only(tmp_path, monkeypatch):
+    source = tmp_path / "chip_top.v"
+    source.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_full_elab"),
+        parameters={"Design": "chip", "Top module": "chip_top"},
+        origin_verilog=str(source),
+    )
+    create_workspace(spec)
+    workspace = load_workspace(str(tmp_path / "ws_full_elab"))
+    engine = EngineFlow(workspace=workspace)
+    engine.create_step_workspaces()
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, capture_output, text):
+        captured["command"] = cmd
+        return SimpleNamespace(returncode=0, stdout="Build succeeded: 0 errors, 0 warnings", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.slang.runner.subprocess.run", fake_run)
+
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    assert engine.run_step("elab", rerun=True) == StateEnum.Success
+    assert "--lint-only" not in captured["command"]
+    assert captured["command"][captured["command"].index("--top") + 1] == "chip_top"
+
+    summary_path = Path(workspace["directory"]) / "elab_slang" / "report" / "elab_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["compiler"]["authoritative"] is True
+    assert summary["summary"]["elaboration_mode"] == "full"
+
+
 def test_elab_parses_clickable_slang_diagnostics(tmp_path):
     source = tmp_path / "cpu.sv"
     log = f"{source}:12:7: error: unknown module 'foo'\nBuild failed: 1 error, 0 warnings\n"
@@ -2655,6 +2692,43 @@ endmodule
     assert top["instances"] == 2
     assert top["instantiates"] == ["child", "missing"]
     assert structure["unresolved_modules"] == ["missing"]
+
+
+def test_elab_summary_does_not_promote_source_scan_candidates(tmp_path):
+    source = tmp_path / "top.sv"
+    source.write_text(
+        "module top(input logic clk); missing u_missing(.clk(clk)); endmodule\n",
+        encoding="utf-8",
+    )
+
+    summary = build_elab_summary(
+        {"top_module": "top", "prepared_manifest": ""},
+        {
+            "returncode": 0,
+            "rtl_files": [str(source)],
+            "top_module": "top",
+            "command": ["slang", "--top", "top"],
+            "log_path": str(tmp_path / "log.txt"),
+        },
+        "Build succeeded: 0 errors, 0 warnings",
+        summary_path=tmp_path / "elab_summary.json",
+    )
+
+    assert summary["status"] == "pass"
+    assert summary["summary"]["top_found"] is True
+    assert summary["unresolved_modules"] == []
+    assert summary["heuristic_unresolved_candidates"] == ["missing"]
+    assert summary["inventory"]["authoritative"] is False
+
+
+def test_elab_extracts_unresolved_modules_only_from_slang_errors(tmp_path):
+    diagnostics = parse_slang_diagnostics(
+        f"{tmp_path / 'top.sv'}:12:7: error: unknown module 'missing'\n"
+        "error: could not resolve module `other`\n"
+        "warning: unknown module 'warning_only'\n"
+    )
+
+    assert compiler_unresolved_modules(diagnostics) == ["missing", "other"]
 
 
 def test_elab_scans_module_ports_params_and_refs(tmp_path):
