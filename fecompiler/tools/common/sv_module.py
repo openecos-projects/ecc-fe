@@ -1,0 +1,200 @@
+"""Small SystemVerilog module-interface helpers shared by catalog and prepare."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+
+def module_definitions(files: list[str | Path], module_name: str) -> list[Path]:
+    """Return source files that actually define *module_name*."""
+    pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
+    matches: list[Path] = []
+    for raw_path in files:
+        path = Path(raw_path)
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if pattern.search(strip_sv_comments(text)):
+            matches.append(path)
+    return matches
+
+
+def module_port_contract_from_files(
+    files: list[str | Path],
+    module_name: str,
+) -> tuple[Path | None, list[dict[str, Any]]]:
+    for path in module_definitions(files, module_name):
+        try:
+            contract = module_port_contract(path.read_text(encoding="utf-8", errors="ignore"), module_name)
+        except OSError:
+            continue
+        return path, contract
+    return None, []
+
+
+def module_port_contract(text: str, module_name: str) -> list[dict[str, Any]]:
+    """Parse an ANSI or legacy-style module port contract."""
+    stripped = strip_sv_comments(text)
+    header = _module_port_header(stripped, module_name)
+    if header is None:
+        return []
+
+    ports: list[dict[str, Any]] = []
+    direction = ""
+    width = 1
+    for raw_port in _split_top_level_sv_list(header):
+        direction_match = re.search(r"\b(input|output|inout)\b", raw_port)
+        if direction_match:
+            direction = direction_match.group(1)
+            width = _packed_width(raw_port)
+        name = _port_decl_name(raw_port)
+        if name:
+            ports.append({"name": name, "direction": direction, "width": width})
+
+    if any(not str(port["direction"]) for port in ports):
+        declarations = _legacy_port_declarations(stripped, module_name)
+        ports = [declarations.get(str(port["name"]), port) for port in ports]
+    return ports
+
+
+def compare_port_contracts(
+    expected: list[dict[str, Any]],
+    actual: list[dict[str, Any]],
+) -> dict[str, list[Any]]:
+    expected_by_name = {str(port.get("name", "")): port for port in expected if str(port.get("name", ""))}
+    actual_by_name = {str(port.get("name", "")): port for port in actual if str(port.get("name", ""))}
+    missing = [name for name in expected_by_name if name not in actual_by_name]
+    extra = [name for name in actual_by_name if name not in expected_by_name]
+    mismatches: list[dict[str, Any]] = []
+    for name in expected_by_name.keys() & actual_by_name.keys():
+        expected_port = expected_by_name[name]
+        actual_port = actual_by_name[name]
+        if (
+            str(expected_port.get("direction", "")) != str(actual_port.get("direction", ""))
+            or int(expected_port.get("width", 0) or 0) != int(actual_port.get("width", 0) or 0)
+        ):
+            mismatches.append({
+                "name": name,
+                "expected": expected_port,
+                "actual": actual_port,
+            })
+    return {
+        "missing": missing,
+        "extra": extra,
+        "mismatches": sorted(mismatches, key=lambda item: str(item["name"])),
+    }
+
+
+def strip_sv_comments(text: str) -> str:
+    without_block = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    return re.sub(r"//.*", "", without_block)
+
+
+def _module_port_header(text: str, module_name: str) -> str | None:
+    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
+    if match is None:
+        return None
+    index = match.end()
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index < len(text) and text[index] == "#":
+        index += 1
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text) or text[index] != "(":
+            return None
+        end = _matching_delimiter(text, index, "(", ")")
+        if end is None:
+            return None
+        index = end + 1
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] != "(":
+        return "" if index < len(text) and text[index] == ";" else None
+    end = _matching_delimiter(text, index, "(", ")")
+    return text[index + 1:end] if end is not None else None
+
+
+def _module_body(text: str, module_name: str) -> str:
+    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
+    if match is None:
+        return ""
+    end = re.search(r"\bendmodule\b", text[match.end():])
+    return text[match.end():match.end() + end.start()] if end is not None else text[match.end():]
+
+
+def _legacy_port_declarations(text: str, module_name: str) -> dict[str, dict[str, Any]]:
+    declarations: dict[str, dict[str, Any]] = {}
+    body = _module_body(text, module_name)
+    for match in re.finditer(r"\b(?P<direction>input|output|inout)\b(?P<body>[^;]*);", body):
+        direction = match.group("direction")
+        declaration = match.group("body")
+        width = _packed_width(declaration)
+        for raw_name in _split_top_level_sv_list(declaration):
+            name = _port_decl_name(raw_name)
+            if name:
+                declarations[name] = {"name": name, "direction": direction, "width": width}
+    return declarations
+
+
+def _matching_delimiter(text: str, start: int, opening: str, closing: str) -> int | None:
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _split_top_level_sv_list(text: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depths = {"(": 0, "[": 0, "{": 0}
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for index, char in enumerate(text):
+        if char in depths:
+            depths[char] += 1
+        elif char in pairs:
+            opening = pairs[char]
+            depths[opening] = max(0, depths[opening] - 1)
+        elif char == "," and not any(depths.values()):
+            parts.append(text[start:index])
+            start = index + 1
+    parts.append(text[start:])
+    return parts
+
+
+def _packed_width(port_declaration: str) -> int:
+    raw_ranges = re.findall(r"\[([^\]]+)\]", port_declaration)
+    if not raw_ranges:
+        return 1
+    width = 1
+    for raw_range in raw_ranges:
+        match = re.fullmatch(r"\s*([0-9]+)\s*:\s*([0-9]+)\s*", raw_range)
+        if match is None:
+            return 0
+        width *= abs(int(match.group(1)) - int(match.group(2))) + 1
+    return width
+
+
+def _port_decl_name(raw_port: str) -> str:
+    text = raw_port.strip()
+    if not text:
+        return ""
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    tokens = [
+        token
+        for token in re.split(r"\s+", text)
+        if token
+        and token not in {
+            "input", "output", "inout", "wire", "reg", "logic", "signed", "unsigned",
+        }
+    ]
+    return tokens[-1].split("=")[0].strip() if tokens else ""

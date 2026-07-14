@@ -13,7 +13,7 @@ from fecompiler.data.step import StateEnum
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 
 
-_LIST_PARAMETER_FIELDS = (
+_RUNTIME_LIST_PARAMETER_FIELDS = (
     "sim_cpp_sources",
     "sim_cflags",
     "sim_ldflags",
@@ -24,6 +24,10 @@ _LIST_PARAMETER_FIELDS = (
     "sim_compile_extra_cflags",
     "core_supported_test_suites",
     "soc_supported_test_suites",
+)
+_LIST_PARAMETER_FIELDS = (
+    *_RUNTIME_LIST_PARAMETER_FIELDS,
+    "required_cpu_top_ports",
 )
 _BOOL_PARAMETER_FIELDS = (
     "sim_all_tests",
@@ -63,12 +67,18 @@ _STR_PARAMETER_FIELDS = (
     "soc_cpu_reset_vector",
     "soc_default_program_link_base",
     "soc_bootloader_payload_link_base",
+    "frontend_core_id",
+    "required_cpu_top_module",
+)
+_JSON_PARAMETER_FIELDS = (
+    "required_cpu_top_port_contract",
+    "resource_versions",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
     "cpu_filelist",
     "soc_filelist",
     "testbench",
-    *_LIST_PARAMETER_FIELDS,
+    *_RUNTIME_LIST_PARAMETER_FIELDS,
     *_BOOL_PARAMETER_FIELDS,
     "sim_tests_dir",
     "sim_programs_dir",
@@ -250,6 +260,10 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     workspace.update({
         field: str(parameters.get(field, "")).strip()
         for field in _STR_PARAMETER_FIELDS
+    })
+    workspace.update({
+        field: parameters.get(field, {})
+        for field in _JSON_PARAMETER_FIELDS
     })
     return workspace
 

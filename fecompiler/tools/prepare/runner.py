@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
+from fecompiler.tools.common.sv_module import (
+    compare_port_contracts,
+    module_definitions,
+    module_port_contract_from_files,
+)
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
 from fecompiler.resources import resolve_thirdparty_path
 from fecompiler.utility.json import json_read, json_write
@@ -25,7 +29,8 @@ class PrepareStep(BaseStep):
         self.write_standard_outputs(step)
 
         prepared, source_info = self._collect_inputs(step, workspace)
-        self._validate_frontend_cpu_top(step, workspace, prepared["rtl_files"])
+        cpu_top_contract = self._validate_frontend_cpu_top(step, workspace, prepared["rtl_files"])
+        prepared["cpu_top_contract"] = cpu_top_contract
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
         manifest_path = self._write_prepared_manifest(step, prepared)
         self._persist_workspace_input_filelist(workspace, merged_path, manifest_path)
@@ -47,6 +52,7 @@ class PrepareStep(BaseStep):
             "incdirs": len(prepared["incdirs"]),
             "defines": len(prepared["defines"]),
             "inputs": source_info,
+            "contracts": [cpu_top_contract],
         }
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
@@ -144,29 +150,87 @@ class PrepareStep(BaseStep):
         step: WorkspaceStep,
         workspace: dict[str, Any],
         rtl_files: list[str],
-    ) -> None:
+    ) -> dict[str, Any]:
         if not self._requires_frontend_cpu_top(workspace):
-            return
+            return {"id": "cpu_top", "status": "not_required"}
 
         required_top = str(workspace.get("required_cpu_top_module", "")).strip() or ECOS_CPU_TOP
 
-        matches = [
-            str(Path(path))
-            for path in rtl_files
-            if self._file_defines_module(Path(path), required_top)
-        ]
-        if len(matches) == 1:
-            return
+        matches = module_definitions(rtl_files, required_top)
+        if len(matches) != 1:
+            self._fail_cpu_top_contract(
+                step,
+                f"frontend prepare requires exactly one {required_top} module, found {len(matches)}",
+                {"module": required_top, "count": len(matches), "files": [str(path) for path in matches]},
+            )
 
-        message = (
-            "frontend prepare requires exactly one "
-            f"{required_top} module, found {len(matches)}"
+        expected = self._expected_cpu_top_contract(workspace)
+        source, actual = module_port_contract_from_files(matches, required_top)
+        result: dict[str, Any] = {
+            "id": "cpu_top",
+            "status": "pass" if expected else "module_only",
+            "module": required_top,
+            "source": str(source or matches[0]),
+            "ports": actual,
+            "expected_ports": len(expected),
+        }
+        if not expected:
+            return result
+
+        differences = compare_port_contracts(expected, actual)
+        result["differences"] = differences
+        if not any(differences.values()):
+            return result
+
+        details: list[str] = []
+        if differences["missing"]:
+            details.append(f"missing ports: {', '.join(differences['missing'])}")
+        if differences["extra"]:
+            details.append(f"extra ports: {', '.join(differences['extra'])}")
+        for mismatch in differences["mismatches"]:
+            expected_port = mismatch["expected"]
+            actual_port = mismatch["actual"]
+            details.append(
+                f"{mismatch['name']}: expected {expected_port['direction']}[{expected_port['width']}], "
+                f"found {actual_port.get('direction') or 'unknown'}[{actual_port.get('width') or 'unknown'}]"
+            )
+        self._fail_cpu_top_contract(
+            step,
+            f"{required_top} port contract mismatch ({'; '.join(details)})",
+            result,
         )
+        return result
+
+    @staticmethod
+    def _expected_cpu_top_contract(workspace: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_contract = workspace.get("required_cpu_top_port_contract", [])
+        if not isinstance(raw_contract, list):
+            return []
+        contract: list[dict[str, Any]] = []
+        for raw_port in raw_contract:
+            if not isinstance(raw_port, dict):
+                continue
+            name = str(raw_port.get("name", "")).strip()
+            direction = str(raw_port.get("direction", "")).strip().lower()
+            try:
+                width = int(raw_port.get("width", 0))
+            except (TypeError, ValueError):
+                width = 0
+            if name and direction in {"input", "output", "inout"} and width > 0:
+                contract.append({"name": name, "direction": direction, "width": width})
+        return contract
+
+    def _fail_cpu_top_contract(
+        self,
+        step: WorkspaceStep,
+        message: str,
+        info: dict[str, Any],
+    ) -> None:
         self._update_substep(
             step,
             PrepareSubFlowEnum.collect_inputs.value,
             ok=False,
-            info={"error": message, "module": required_top, "count": len(matches), "files": matches},
+            info={"error": message, **info},
         )
         raise RuntimeError(f"prepare failed: {message}")
 
@@ -195,13 +259,7 @@ class PrepareStep(BaseStep):
 
     @staticmethod
     def _file_defines_module(path: Path, module_name: str) -> bool:
-        if path.name in {f"{module_name}.v", f"{module_name}.sv"}:
-            return True
-        pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
-        try:
-            return bool(pattern.search(path.read_text(encoding="utf-8", errors="ignore")))
-        except OSError:
-            return False
+        return bool(module_definitions([path], module_name))
 
     def _write_merged_filelist(self, step: WorkspaceStep, files: list[str]) -> Path:
         merged_path = self._merged_filelist_path(step)

@@ -165,6 +165,21 @@ def _write_fake_sim_binary(cmd: list[str]) -> None:
     sim_bin.chmod(0o755)
 
 
+def _custom_cpu_top_contract() -> list[dict]:
+    cores = catalog_registry.catalog_payload()["cores"]
+    custom = next(core for core in cores if core["id"] == "custom-filelist")
+    return list(custom["required_cpu_top_port_contract"])
+
+
+def _cpu_top_source(contract: list[dict]) -> str:
+    ports: list[str] = []
+    for port in contract:
+        width = int(port["width"])
+        packed = f" [{width - 1}:0]" if width > 1 else ""
+        ports.append(f"  {port['direction']}{packed} {port['name']}")
+    return "module cpu_top(\n" + ",\n".join(ports) + "\n);\nendmodule\n"
+
+
 # ── _format_runtime ────────────────────────────────────────────────────────────
 
 def test_format_runtime_zero():      assert _format_runtime(0) == "00:00:00"
@@ -516,6 +531,31 @@ def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
     assert ws["sim_build_all_programs"] is False
     assert ws["sim_program_names"] == ["add"]
     assert ws["sim_run_args"] == ["--max-cycles", "50000000"]
+
+
+def test_frontend_create_persists_custom_cpu_top_contract(tmp_path):
+    contract = _custom_cpu_top_contract()
+    cpu_top = tmp_path / "cpu_top.sv"
+    filelist = tmp_path / "filelist.cpu.f"
+    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
+    filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+    request = tmp_path / "create_custom_cpu.json"
+    request.write_text(json.dumps({
+        "directory": str(tmp_path / "ws_custom_cpu"),
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(filelist),
+        "parameters": {"Design": "chip", "Top module": "ecos_sim_top"},
+    }), encoding="utf-8")
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    workspace = load_workspace(str(tmp_path / "ws_custom_cpu"))
+
+    assert workspace["required_cpu_top_module"] == "cpu_top"
+    assert workspace["required_cpu_top_ports"] == [port["name"] for port in contract]
+    assert workspace["required_cpu_top_port_contract"] == contract
 
 
 def test_frontend_create_rejects_user_filelist_for_builtin_cpu(tmp_path):
@@ -1478,6 +1518,52 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     assert state == StateEnum.Incomplete
     prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
     assert "requires exactly one cpu_top module" in prepare_subflow
+
+
+def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
+    contract = [
+        {"name": "clock", "direction": "input", "width": 1},
+        {"name": "address", "direction": "output", "width": 32},
+    ]
+    cpu_top = tmp_path / "cpu_top.sv"
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    soc_top = tmp_path / "ecos_sim_top.sv"
+    soc_filelist = tmp_path / "filelist.soc.f"
+    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
+    cpu_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+    soc_top.write_text("module ecos_sim_top(); endmodule\n", encoding="utf-8")
+    soc_filelist.write_text("ecos_sim_top.sv\n", encoding="utf-8")
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_prepare_contract"),
+        parameters={
+            "Design": "chip",
+            "Top module": "ecos_sim_top",
+            "required_cpu_top_module": "cpu_top",
+            "required_cpu_top_ports": [port["name"] for port in contract],
+            "required_cpu_top_port_contract": contract,
+        },
+        cpu_filelist=str(cpu_filelist),
+        soc_filelist=str(soc_filelist),
+    )
+    create_workspace(spec)
+    workspace = load_workspace(str(tmp_path / "ws_prepare_contract"))
+    engine = EngineFlow(workspace=workspace)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    manifest = json.loads(Path(workspace["prepared_manifest"]).read_text(encoding="utf-8"))
+    assert manifest["cpu_top_contract"]["status"] == "pass"
+    assert manifest["cpu_top_contract"]["expected_ports"] == 2
+
+    cpu_top.write_text(_cpu_top_source([
+        contract[0],
+        {"name": "address", "direction": "output", "width": 16},
+    ]), encoding="utf-8")
+
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Incomplete
+    subflow = json.loads((Path(workspace["directory"]) / "prepare_fe" / "subflow.json").read_text())
+    collect = next(step for step in subflow["steps"] if step["name"] == "collect inputs")
+    assert "address: expected output[32], found output[16]" in collect["info"]["error"]
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):

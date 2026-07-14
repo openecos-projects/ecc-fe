@@ -14,6 +14,7 @@ from fecompiler.cli.workspace import (
     _workspace_supported_test_suites,
 )
 from fecompiler.cpu.registry import get_cpu_wrapper
+from fecompiler.tools.common.sv_module import module_port_contract
 
 
 def _compatibility_by_pair() -> dict[tuple[str, str], dict]:
@@ -162,6 +163,23 @@ def test_shipped_cl3_cpu_top_matches_structured_port_contract():
     })
 
     assert result.ok is True
+
+
+def test_module_port_contract_supports_legacy_port_declarations():
+    contract = module_port_contract(
+        """
+module cpu_top(clock, address);
+  input clock;
+  output [31:0] address;
+endmodule
+""",
+        "cpu_top",
+    )
+
+    assert contract == [
+        {"name": "clock", "direction": "input", "width": 1},
+        {"name": "address", "direction": "output", "width": 32},
+    ]
 
 
 def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shlex
 from functools import lru_cache
 from importlib import resources
@@ -13,6 +12,7 @@ from typing import Any
 from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
 from fecompiler.resources import catalog_manifest_roots, frontend_repo_root, resolve_thirdparty_path
+from fecompiler.tools.common.sv_module import module_definitions, module_port_contract_from_files
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -609,150 +609,12 @@ def _resolve_filelist_token(base: Path, token: str) -> Path:
 
 
 def _filelist_module_count(files: list[Path], module_name: str) -> int:
-    pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
-    count = 0
-    for path in files:
-        try:
-            if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
-                count += 1
-        except OSError:
-            continue
-    return count
-
-
-def _filelist_module_ports(files: list[Path], module_name: str) -> list[str]:
-    return [str(port.get("name", "")) for port in _filelist_module_port_contract(files, module_name)]
+    return len(module_definitions(files, module_name))
 
 
 def _filelist_module_port_contract(files: list[Path], module_name: str) -> list[dict[str, Any]]:
-    for path in files:
-        try:
-            ports = _module_port_contract(path.read_text(encoding="utf-8", errors="ignore"), module_name)
-        except OSError:
-            continue
-        if ports:
-            return ports
-    return []
-
-
-def _module_port_names(text: str, module_name: str) -> list[str]:
-    return [str(port.get("name", "")) for port in _module_port_contract(text, module_name)]
-
-
-def _module_port_contract(text: str, module_name: str) -> list[dict[str, Any]]:
-    stripped = _strip_sv_comments(text)
-    header = _module_port_header(stripped, module_name)
-    if header is None:
-        return []
-
-    ports: list[dict[str, Any]] = []
-    direction = ""
-    width = 1
-    for raw_port in _split_top_level_sv_list(header):
-        direction_match = re.search(r"\b(input|output|inout)\b", raw_port)
-        if direction_match:
-            direction = direction_match.group(1)
-            width = _packed_width(raw_port)
-        name = _port_decl_name(raw_port)
-        if name:
-            ports.append({"name": name, "direction": direction, "width": width})
-    return ports
-
-
-def _module_port_header(text: str, module_name: str) -> str | None:
-    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
-    if match is None:
-        return None
-    index = match.end()
-    while index < len(text) and text[index].isspace():
-        index += 1
-    if index < len(text) and text[index] == "#":
-        index += 1
-        while index < len(text) and text[index].isspace():
-            index += 1
-        if index >= len(text) or text[index] != "(":
-            return None
-        end = _matching_delimiter(text, index, "(", ")")
-        if end is None:
-            return None
-        index = end + 1
-    while index < len(text) and text[index].isspace():
-        index += 1
-    if index >= len(text) or text[index] != "(":
-        return "" if index < len(text) and text[index] == ";" else None
-    end = _matching_delimiter(text, index, "(", ")")
-    return text[index + 1:end] if end is not None else None
-
-
-def _matching_delimiter(text: str, start: int, opening: str, closing: str) -> int | None:
-    depth = 0
-    for index in range(start, len(text)):
-        char = text[index]
-        if char == opening:
-            depth += 1
-        elif char == closing:
-            depth -= 1
-            if depth == 0:
-                return index
-    return None
-
-
-def _split_top_level_sv_list(text: str) -> list[str]:
-    parts: list[str] = []
-    start = 0
-    depths = {"(": 0, "[": 0, "{": 0}
-    pairs = {")": "(", "]": "[", "}": "{"}
-    for index, char in enumerate(text):
-        if char in depths:
-            depths[char] += 1
-        elif char in pairs:
-            opening = pairs[char]
-            depths[opening] = max(0, depths[opening] - 1)
-        elif char == "," and not any(depths.values()):
-            parts.append(text[start:index])
-            start = index + 1
-    parts.append(text[start:])
-    return parts
-
-
-def _packed_width(port_declaration: str) -> int:
-    ranges = re.findall(r"\[\s*([0-9]+)\s*:\s*([0-9]+)\s*\]", port_declaration)
-    if not ranges:
-        return 1
-    width = 1
-    for upper, lower in ranges:
-        width *= abs(int(upper) - int(lower)) + 1
-    return width
-
-
-def _port_decl_name(raw_port: str) -> str:
-    text = raw_port.strip()
-    if not text:
-        return ""
-    text = re.sub(r"\[[^\]]+\]", " ", text)
-    tokens = [
-        token
-        for token in re.split(r"\s+", text)
-        if token
-        and token not in {
-            "input",
-            "output",
-            "inout",
-            "wire",
-            "reg",
-            "logic",
-            "signed",
-            "unsigned",
-        }
-    ]
-    if not tokens:
-        return ""
-    return tokens[-1].split("=")[0].strip()
-
-
-def _strip_sv_comments(text: str) -> str:
-    without_block = re.sub(r"/\*[\s\S]*?\*/", "", text)
-    return re.sub(r"//.*", "", without_block)
+    _, contract = module_port_contract_from_files(files, module_name)
+    return contract
 
 
 def _core_adapter_message(core: CatalogEntry, soc: CatalogEntry | None) -> str:

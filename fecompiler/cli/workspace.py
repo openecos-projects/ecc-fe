@@ -360,6 +360,12 @@ def _create(args: argparse.Namespace) -> CliResult:
     parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
     parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
     parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
+    parameters["required_cpu_top_module"] = validation.normalized.get("required_cpu_top_module", "")
+    parameters["required_cpu_top_ports"] = validation.normalized.get("required_cpu_top_ports", [])
+    parameters["required_cpu_top_port_contract"] = validation.normalized.get(
+        "required_cpu_top_port_contract",
+        [],
+    )
     parameters["cpu_reset_vector"] = validation.normalized.get("required_cpu_reset_vector", "")
     parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
     parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
