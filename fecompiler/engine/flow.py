@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import signal
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from fecompiler.data import workspace as workspace_data
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.engine.provenance import build_step_provenance, output_fingerprint
 from fecompiler.tools.fe import builder
 
 
@@ -79,7 +81,52 @@ class EngineFlow:
             step["state"] = StateEnum.Unstart.value
             step["runtime"] = ""
             step["peak memory (mb)"] = 0
+            step["info"] = {}
+            step.pop("provenance", None)
         self.save()
+
+    def refresh_stale_states(self) -> bool:
+        """Invalidate successful steps whose inputs, config, tools, or upstream changed."""
+        changed = False
+        upstream: dict[str, Any] | None = None
+        stale_from = ""
+        tracked_flow = any(isinstance(step.get("provenance"), dict) for step in self.flow.get("steps", []))
+
+        for step in self.flow.get("steps", []):
+            state = str(step.get("state", ""))
+            provenance = step.get("provenance") if isinstance(step.get("provenance"), dict) else None
+            if stale_from:
+                changed |= self._mark_step_stale(step, f"upstream step {stale_from} is stale", stale_from)
+                continue
+
+            if state != StateEnum.Success.value:
+                upstream = None
+                continue
+
+            expected = build_step_provenance(
+                self.workspace,
+                str(step.get("name", "")),
+                str(step.get("tool", "")),
+                upstream,
+            )
+            if provenance is None:
+                if tracked_flow:
+                    stale_from = str(step.get("name", ""))
+                    changed |= self._mark_step_stale(step, "step result has no provenance", stale_from)
+                continue
+            if str(provenance.get("signature", "")) != expected["signature"]:
+                stale_from = str(step.get("name", ""))
+                changed |= self._mark_step_stale(
+                    step,
+                    _provenance_change_reason(provenance, expected),
+                    stale_from,
+                )
+                continue
+            upstream = provenance
+
+        if changed:
+            self.save()
+        return changed
 
     def clear_stale_ongoing_states(self) -> bool:
         changed = False
@@ -195,9 +242,15 @@ class EngineFlow:
         if flow_step is None:
             return StateEnum.Invalid
 
+        self.refresh_stale_states()
         if not rerun and flow_step.get("state") == StateEnum.Success.value:
             return StateEnum.Success
 
+        self._mark_downstream_stale(step_name, "upstream step is being rerun")
+        upstream = self._upstream_provenance(step_name)
+        provenance = build_step_provenance(self.workspace, ws_step.name, ws_step.tool, upstream)
+        provenance["started_at"] = _utc_now()
+        self._clear_step_stale(flow_step)
         start = time.time()
         self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
         self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
@@ -207,21 +260,30 @@ class EngineFlow:
             success = self._check_step_result(ws_step)
             runtime = _format_runtime(time.time() - start)
             if success:
+                provenance["finished_at"] = _utc_now()
+                provenance["output_fingerprint"] = output_fingerprint(_step_result_paths(ws_step))
+                flow_step["provenance"] = provenance
                 self._finish_step(ws_step, StateEnum.Success, runtime)
                 self._flow_logger.info("[SUCCESS] %-20s  elapsed=%s", step_name, runtime)
                 return StateEnum.Success
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
+            flow_step.pop("provenance", None)
+            self.save()
             self._flow_logger.warning("[FAILED]  %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
         except Exception:
             runtime = _format_runtime(time.time() - start)
             logger.exception("step %r failed unexpectedly", step_name)
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
+            flow_step.pop("provenance", None)
+            self.save()
             self._flow_logger.error("[ERROR]   %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
         except BaseException as exc:
             runtime = _format_runtime(time.time() - start)
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
+            flow_step.pop("provenance", None)
+            self.save()
             if _is_interruption(exc):
                 self._flow_logger.warning("[CANCEL]  %-20s  elapsed=%s", step_name, runtime)
             else:
@@ -255,6 +317,64 @@ class EngineFlow:
             return False
         return handler.check_result(step)
 
+    def _upstream_provenance(self, step_name: str) -> dict[str, Any] | None:
+        upstream: dict[str, Any] | None = None
+        for step in self.flow.get("steps", []):
+            if step.get("name") == step_name:
+                break
+            if step.get("state") == StateEnum.Success.value and isinstance(step.get("provenance"), dict):
+                upstream = step["provenance"]
+            else:
+                upstream = None
+        return upstream
+
+    def _mark_downstream_stale(self, step_name: str, reason: str) -> None:
+        found = False
+        changed = False
+        for step in self.flow.get("steps", []):
+            if step.get("name") == step_name:
+                found = True
+                continue
+            if found:
+                changed |= self._mark_step_stale(step, reason, step_name)
+        if changed:
+            self.save()
+
+    @staticmethod
+    def _mark_step_stale(step: dict[str, Any], reason: str, stale_from: str) -> bool:
+        if step.get("state") == StateEnum.Ongoing.value:
+            return False
+        info = step.get("info") if isinstance(step.get("info"), dict) else {}
+        if (
+            step.get("state") == StateEnum.Unstart.value
+            and "provenance" not in step
+            and info.get("stale") is not True
+        ):
+            return False
+        already_stale = (
+            step.get("state") == StateEnum.Unstart.value
+            and info.get("stale") is True
+            and info.get("stale_reason") == reason
+            and info.get("stale_from") == stale_from
+            and "provenance" not in step
+        )
+        if already_stale:
+            return False
+        step["state"] = StateEnum.Unstart.value
+        step["runtime"] = ""
+        step["peak memory (mb)"] = 0
+        info.update({"stale": True, "stale_reason": reason, "stale_from": stale_from})
+        step["info"] = info
+        step.pop("provenance", None)
+        return True
+
+    @staticmethod
+    def _clear_step_stale(step: dict[str, Any]) -> None:
+        info = step.get("info") if isinstance(step.get("info"), dict) else {}
+        for key in ("stale", "stale_reason", "stale_from"):
+            info.pop(key, None)
+        step["info"] = info
+
 
 def _new_flow_step(name: str, tool: str) -> dict[str, Any]:
     return {
@@ -265,6 +385,31 @@ def _new_flow_step(name: str, tool: str) -> dict[str, Any]:
         "peak memory (mb)": 0,
         "info": {},
     }
+
+
+def _step_result_paths(step: WorkspaceStep) -> list[str]:
+    return [
+        step.output.get("json", ""),
+        step.report.get("step", ""),
+        step.analysis.get("metrics", ""),
+        step.subflow.get("path", ""),
+    ]
+
+
+def _provenance_change_reason(previous: dict[str, Any], current: dict[str, Any]) -> str:
+    changed: list[str] = []
+    for key, label in (
+        ("input_fingerprint", "inputs"),
+        ("config_fingerprint", "configuration"),
+        ("tool_fingerprint", "tools or resources"),
+    ):
+        if str(previous.get(key, "")) != str(current.get(key, "")):
+            changed.append(label)
+    return f"step {'/'.join(changed) if changed else 'provenance'} changed"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _format_runtime(seconds: float) -> str:

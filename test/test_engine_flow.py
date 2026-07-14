@@ -316,6 +316,58 @@ def test_run_step_updates_state(tmp_path):
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Success"
 
 
+def test_successful_step_records_reproducible_provenance(tmp_path):
+    engine, _ = _build_engine(tmp_path)
+
+    assert engine.run_step(FIRST_STEP) == StateEnum.Success
+
+    provenance = engine.get_step(FIRST_STEP, FIRST_TOOL)["provenance"]
+    assert provenance["schema_version"] == 1
+    assert provenance["step"] == FIRST_STEP
+    assert len(provenance["input_fingerprint"]) == 64
+    assert len(provenance["config_fingerprint"]) == 64
+    assert len(provenance["tool_fingerprint"]) == 64
+    assert len(provenance["output_fingerprint"]) == 64
+    assert provenance["started_at"]
+    assert provenance["finished_at"]
+    assert engine.get_step("review", "fe")["state"] == StateEnum.Unstart.value
+    assert engine.get_step("review", "fe")["info"] == {}
+
+
+def test_changed_rtl_marks_step_and_downstream_results_stale(tmp_path):
+    engine, ws = _build_engine(tmp_path)
+    assert engine.run_step(FIRST_STEP) == StateEnum.Success
+    for name, tool in DEFAULT_FLOW_STEPS[1:]:
+        step = engine.get_step(name, tool)
+        step["state"] = StateEnum.Success.value
+        step["provenance"] = dict(engine.get_step(FIRST_STEP, FIRST_TOOL)["provenance"], step=name, tool=tool)
+    engine.save()
+
+    Path(ws["origin_verilog"]).write_text("module chip_top(); wire changed; endmodule\n", encoding="utf-8")
+
+    assert engine.refresh_stale_states() is True
+    for name, tool in DEFAULT_FLOW_STEPS:
+        step = engine.get_step(name, tool)
+        assert step["state"] == StateEnum.Unstart.value
+        assert step["info"]["stale"] is True
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["info"]["stale_reason"] == "step inputs changed"
+
+
+def test_rerunning_step_invalidates_only_downstream_steps(tmp_path):
+    engine, _ = _build_engine(tmp_path)
+    assert engine.run_step(FIRST_STEP) == StateEnum.Success
+    for name, tool in DEFAULT_FLOW_STEPS[1:]:
+        engine.set_state(name=name, tool=tool, state=StateEnum.Success)
+
+    assert engine.run_step(FIRST_STEP, rerun=True) == StateEnum.Success
+
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == StateEnum.Success.value
+    for name, tool in DEFAULT_FLOW_STEPS[1:]:
+        step = engine.get_step(name, tool)
+        assert step["state"] == StateEnum.Unstart.value
+        assert step["info"]["stale_from"] == FIRST_STEP
+
+
 def test_run_step_interruption_clears_ongoing_state(tmp_path, monkeypatch):
     engine, _ = _build_engine(tmp_path)
 
