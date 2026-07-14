@@ -72,6 +72,8 @@ _STR_PARAMETER_FIELDS = (
 )
 _JSON_PARAMETER_FIELDS = (
     "required_cpu_top_port_contract",
+    "review_waivers",
+    "lint_waivers",
     "resource_versions",
 )
 _PARAMETER_OVERRIDE_FIELDS = (
@@ -262,7 +264,7 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         for field in _STR_PARAMETER_FIELDS
     })
     workspace.update({
-        field: parameters.get(field, {})
+        field: parameters.get(field, [] if field.endswith("_waivers") or field.endswith("_contract") else {})
         for field in _JSON_PARAMETER_FIELDS
     })
     return workspace

@@ -8,10 +8,10 @@ from typing import Any
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.fe.subflow import update_substep_ok
-from fecompiler.tools.review.analyzer import build_rtl_review, merge_structural_probe
+from fecompiler.tools.review.analyzer import build_rtl_review, finalize_review_report, merge_structural_probe
 from fecompiler.tools.review.structural_probe import run_structural_probe
 from fecompiler.tools.review.subflow import ReviewSubFlowEnum, init_review_subflow
-from fecompiler.utility.json import json_write
+from fecompiler.utility.json import json_read, json_write
 
 
 class RtlReviewStep(BaseStep):
@@ -19,9 +19,16 @@ class RtlReviewStep(BaseStep):
 
     def run(self, step: WorkspaceStep, workspace: dict[str, Any]) -> None:
         init_review_subflow(step)
+        previous_report = _load_previous_report(step)
         report = build_rtl_review(workspace)
         probe = run_structural_probe(workspace, step)
         report = merge_structural_probe(report, probe)
+        report = finalize_review_report(
+            report,
+            previous_report,
+            workspace.get("review_waivers", []),
+            workspace,
+        )
         self._write_outputs(step, report)
         update_substep_ok(
             step,
@@ -90,6 +97,11 @@ def _format_log(report: dict[str, Any]) -> str:
         "[rtl-review] static RTL review completed",
         f"[rtl-review] source_files={summary.get('source_files', 0)} modules={summary.get('modules', 0)} lines={summary.get('total_lines', 0)}",
         f"[rtl-review] errors={summary.get('errors', 0)} warnings={summary.get('warnings', 0)} infos={summary.get('infos', 0)}",
+        (
+            f"[rtl-review] delta new={summary.get('new_issues', 0)} "
+            f"existing={summary.get('existing_issues', 0)} "
+            f"resolved={summary.get('resolved_issues', 0)} waived={summary.get('waived_issues', 0)}"
+        ),
     ]
     probe = report.get("yosys_precheck") or report.get("structural_probe") or {}
     if isinstance(probe, dict) and probe:
@@ -137,6 +149,9 @@ def _format_summary_markdown(report: dict[str, Any]) -> str:
         f"- Errors: {summary.get('errors', 0)}",
         f"- Warnings: {summary.get('warnings', 0)}",
         f"- Infos: {summary.get('infos', 0)}",
+        f"- New: {summary.get('new_issues', 0)}",
+        f"- Resolved: {summary.get('resolved_issues', 0)}",
+        f"- Waived: {summary.get('waived_issues', 0)}",
         "",
         "## Yosys Precheck",
         "",
@@ -206,7 +221,7 @@ def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:
 
     status = str(probe.get("status", "")).strip().lower()
     if status in {"unavailable", "skipped", ""}:
-        return True
+        return False
 
     quality = probe.get("quality", {})
     gate = str(quality.get("gate", "") if isinstance(quality, dict) else "").strip().lower()
@@ -223,3 +238,11 @@ def _review_is_blocked_by_yosys_precheck(report: dict[str, Any]) -> bool:
         ) or gate == "failed"
 
     return False
+
+
+def _load_previous_report(step: WorkspaceStep) -> dict[str, Any] | None:
+    path = Path(step.report["dir"]) / "rtl_review.json"
+    if not path.is_file():
+        return None
+    data = json_read(str(path))
+    return data if isinstance(data, dict) else None

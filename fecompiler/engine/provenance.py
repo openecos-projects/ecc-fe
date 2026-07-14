@@ -30,7 +30,7 @@ _STEP_CONFIG_FIELDS: dict[str, tuple[str, ...]] = {
         "soc_wrapper_contract",
         "soc_wrapper_top",
     ),
-    "review": ("review_baseline", "review_waivers"),
+    "review": ("review_waivers",),
     "elab": ("top_module",),
     "lint": ("top_module", "lint_profile", "lint_baseline", "lint_waivers"),
 }

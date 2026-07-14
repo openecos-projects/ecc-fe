@@ -7,6 +7,8 @@ frontend RTL quality feedback even before Verilator/Yosys/OpenSTA are wired in.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -55,7 +57,7 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
     summary = _summary(issues, metrics)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "title": "RTL Review Center",
         "scope": "cpu",
         "summary": summary,
@@ -115,6 +117,99 @@ def merge_structural_probe(report: dict[str, Any], probe: dict[str, Any]) -> dic
     summary["yosys_precheck"] = precheck_summary
     merged["summary"] = summary
     return merged
+
+
+def finalize_review_report(
+    report: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    waivers: Any,
+    workspace: dict[str, Any],
+) -> dict[str, Any]:
+    """Annotate issues with stable identities, run delta, confidence, and waivers."""
+    previous_issues = [
+        _decorate_issue(issue, workspace)
+        for issue in (previous_report or {}).get("issues", [])
+        if isinstance(issue, dict)
+    ]
+    previous_by_id = {str(issue["fingerprint"]): issue for issue in previous_issues}
+    current_issues = [
+        _decorate_issue(issue, workspace)
+        for issue in report.get("issues", [])
+        if isinstance(issue, dict)
+    ]
+    current_ids = {str(issue["fingerprint"]) for issue in current_issues}
+    waiver_by_id, invalid_waivers = _valid_waivers(waivers)
+
+    new_count = 0
+    existing_count = 0
+    waived_count = 0
+    for issue in current_issues:
+        fingerprint = str(issue["fingerprint"])
+        issue["status"] = "existing" if fingerprint in previous_by_id else "new"
+        if issue["status"] == "new":
+            new_count += 1
+        else:
+            existing_count += 1
+        waiver = waiver_by_id.get(fingerprint)
+        issue["waived"] = waiver is not None
+        if waiver is not None:
+            issue["waiver"] = waiver
+            waived_count += 1
+
+    resolved = []
+    for fingerprint, issue in previous_by_id.items():
+        if fingerprint in current_ids:
+            continue
+        item = dict(issue)
+        item["status"] = "resolved"
+        item["waived"] = False
+        item.pop("waiver", None)
+        resolved.append(item)
+    resolved.sort(key=_issue_sort_key)
+
+    actionable = [
+        issue
+        for issue in current_issues
+        if not issue.get("waived") and issue.get("ownership") != "tool"
+    ]
+    actionable_counts = Counter(str(issue.get("severity", "info")) for issue in actionable)
+    summary = dict(report.get("summary", {}))
+    summary.update({
+        "new_issues": new_count,
+        "existing_issues": existing_count,
+        "resolved_issues": len(resolved),
+        "waived_issues": waived_count,
+        "actionable_issues": len(actionable),
+        "actionable_errors": actionable_counts["error"],
+        "actionable_warnings": actionable_counts["warning"],
+    })
+    tool_limit = any(
+        issue.get("ownership") == "tool" and issue.get("severity") in {"error", "warning"}
+        for issue in current_issues
+    )
+    if actionable_counts["error"] or actionable_counts["warning"]:
+        summary["status"] = "needs_attention"
+    elif tool_limit:
+        summary["status"] = "tool_limited"
+    else:
+        summary["status"] = "clean"
+
+    finalized = dict(report)
+    finalized["issues"] = sorted(current_issues, key=_issue_sort_key)
+    finalized["resolved_issues"] = resolved
+    finalized["delta"] = {
+        "baseline": "previous_run" if previous_report else "none",
+        "new": new_count,
+        "existing": existing_count,
+        "resolved": len(resolved),
+    }
+    finalized["waivers"] = {
+        "configured": len(waiver_by_id),
+        "applied": waived_count,
+        "invalid": invalid_waivers,
+    }
+    finalized["summary"] = summary
+    return finalized
 
 
 def _load_sources(workspace: dict[str, Any]) -> list[SourceFile]:
@@ -478,6 +573,9 @@ def _issue(
         "column": 1 if line else 0,
         "evidence": evidence or {},
         "recommendation": recommendation,
+        "origin": "source_heuristic",
+        "confidence": "low" if severity == "info" else "medium",
+        "ownership": "cpu",
     }
 
 
@@ -485,9 +583,10 @@ def _normalize_probe_issue(issue: dict[str, Any]) -> dict[str, Any]:
     severity = str(issue.get("severity", "info"))
     if severity not in {"error", "warning", "info"}:
         severity = "info"
+    category = str(issue.get("category", "structural"))
     return {
         "severity": severity,
-        "category": str(issue.get("category", "structural")),
+        "category": category,
         "title": str(issue.get("title", "Yosys precheck issue")),
         "detail": str(issue.get("detail", "")),
         "source": str(issue.get("source", "")),
@@ -495,7 +594,61 @@ def _normalize_probe_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "column": int(issue.get("column", 0) or 0),
         "evidence": issue.get("evidence", {}) if isinstance(issue.get("evidence", {}), dict) else {},
         "recommendation": str(issue.get("recommendation", "")),
+        "origin": "yosys_structural",
+        "confidence": "high",
+        "ownership": "tool" if category in {"tool", "tooling", "tool-limit"} else "cpu",
     }
+
+
+def _decorate_issue(issue: dict[str, Any], workspace: dict[str, Any]) -> dict[str, Any]:
+    decorated = dict(issue)
+    decorated.setdefault("origin", "source_heuristic")
+    decorated.setdefault("confidence", "low" if decorated.get("severity") == "info" else "medium")
+    decorated.setdefault("ownership", "cpu")
+    decorated["fingerprint"] = _issue_fingerprint(decorated, workspace)
+    return decorated
+
+
+def _issue_fingerprint(issue: dict[str, Any], workspace: dict[str, Any]) -> str:
+    source = str(issue.get("source", "")).strip()
+    source_key = source
+    cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
+    if source and cpu_filelist:
+        try:
+            source_key = Path(source).resolve().relative_to(Path(cpu_filelist).resolve().parent).as_posix()
+        except ValueError:
+            source_key = Path(source).name
+    identity = {
+        "origin": str(issue.get("origin", "")),
+        "severity": str(issue.get("severity", "")),
+        "category": str(issue.get("category", "")),
+        "title": str(issue.get("title", "")),
+        "source": source_key,
+        "line": int(issue.get("line", 0) or 0),
+    }
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _valid_waivers(waivers: Any) -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]]:
+    if not isinstance(waivers, list):
+        return {}, []
+    valid: dict[str, dict[str, str]] = {}
+    invalid: list[dict[str, Any]] = []
+    for index, raw_waiver in enumerate(waivers):
+        if not isinstance(raw_waiver, dict):
+            invalid.append({"index": index, "reason": "waiver must be an object"})
+            continue
+        fingerprint = str(raw_waiver.get("fingerprint", "")).strip().lower()
+        reason = str(raw_waiver.get("reason", "")).strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint) or not reason:
+            invalid.append({
+                "index": index,
+                "reason": "waiver requires a 64-character fingerprint and non-empty reason",
+            })
+            continue
+        valid[fingerprint] = {"fingerprint": fingerprint, "reason": reason}
+    return valid, invalid
 
 
 def _issue_sort_key(issue: dict[str, Any]) -> tuple[int, str, str, str, int]:
