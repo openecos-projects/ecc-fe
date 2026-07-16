@@ -16,10 +16,13 @@ import argparse
 import json
 import os
 import sys
+from contextlib import contextmanager
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from fecompiler.catalog import catalog_payload, check_catalog_contracts, validate_frontend_config
@@ -30,7 +33,7 @@ from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, loa
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.soc import soc_runtime_options
-from fecompiler.tools.common.rtl_inputs import prepared_inputs_current
+from fecompiler.tools.common.rtl_inputs import prepared_inputs_current, write_generated_rtl_filelist
 from fecompiler.utility.json import json_read, json_write
 
 try:
@@ -70,11 +73,13 @@ _PATH_FIELDS = {
     "sim_build_test_script",
 }
 _PATH_LIST_FIELDS = {
+    "cpu_rtl_files",
     "rtl_list",
     "sim_cpp_sources",
     "sim_images",
     "sim_program_sources",
 }
+_CPU_RTL_SUFFIXES = {".v", ".sv", ".vh", ".svh"}
 
 
 @dataclass(slots=True)
@@ -110,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--origin-verilog", default="")
     create.add_argument("--filelist", default="")
     create.add_argument("--cpu-filelist", default="")
+    create.add_argument("--cpu-rtl", action="append", default=[], help="CPU RTL source path; repeatable")
     create.add_argument("--soc-filelist", default="")
     create.add_argument("--testbench", default="")
     create.add_argument("--sim-cpp", action="append", default=[])
@@ -145,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--toolchain-id", default="")
     validate.add_argument("--test-suite-id", default="")
     validate.add_argument("--cpu-filelist", default="")
+    validate.add_argument("--cpu-rtl", action="append", default=[], help="CPU RTL source path; repeatable")
 
     load = subparsers.add_parser("load", help="Load an existing frontend workspace")
     _add_json_flag(load)
@@ -323,7 +330,14 @@ def _catalog_check() -> CliResult:
 def _validate_config(args: argparse.Namespace) -> CliResult:
     request, base_dir = _catalog_config_from_args(args)
     normalized = _normalize_catalog_config_paths(request, base_dir)
-    result = validate_frontend_config(normalized)
+    with _materialized_cpu_filelist(
+        normalized,
+        "validate_frontend_config",
+    ) as (validation_input, cpu_rtl_files):
+        result = validate_frontend_config(validation_input)
+    if cpu_rtl_files:
+        result.normalized["cpu_filelist"] = ""
+        result.normalized["cpu_rtl_files"] = cpu_rtl_files
     response = "success" if result.ok else "failed"
     return CliResult(
         cmd="validate_frontend_config",
@@ -336,7 +350,13 @@ def _validate_config(args: argparse.Namespace) -> CliResult:
 def _create(args: argparse.Namespace) -> CliResult:
     request, base_dir = _create_request_from_args(args)
     normalized = _normalize_create_request(request, base_dir)
-    validation = validate_frontend_config(_frontend_catalog_config_from_create_request(normalized))
+    with _materialized_cpu_filelist(
+        normalized,
+        "create_workspace",
+    ) as (validation_input, cpu_rtl_files):
+        validation = validate_frontend_config(
+            _frontend_catalog_config_from_create_request(validation_input),
+        )
     if not validation.ok:
         raise WorkspaceCliError(
             "create_workspace",
@@ -345,6 +365,8 @@ def _create(args: argparse.Namespace) -> CliResult:
             data={"validation": validation.to_dict()},
         )
     _apply_catalog_defaults(normalized, validation.normalized)
+    if cpu_rtl_files:
+        normalized.pop("cpu_filelist", None)
     _apply_default_soc_runtime_options(normalized)
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
@@ -393,6 +415,7 @@ def _create(args: argparse.Namespace) -> CliResult:
         origin_verilog=str(normalized.get("origin_verilog", "")),
         filelist=str(normalized.get("filelist", "")),
         cpu_filelist=str(normalized.get("cpu_filelist", "")),
+        cpu_rtl_files=cpu_rtl_files,
         soc_filelist=str(normalized.get("soc_filelist", "")),
         testbench=str(normalized.get("testbench", "")),
         sim_cpp_sources=_normalize_str_list(normalized.get("sim_cpp_sources", [])),
@@ -736,6 +759,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
             direct[field] = value
 
     list_fields = {
+        "cpu_rtl_files": getattr(args, "cpu_rtl", []),
         "sim_cpp_sources": getattr(args, "sim_cpp", []),
         "sim_cflags": getattr(args, "sim_cflag", []),
         "sim_ldflags": getattr(args, "sim_ldflag", []),
@@ -782,6 +806,9 @@ def _catalog_config_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         value = str(getattr(args, field, "") or "").strip()
         if value:
             request[field] = value
+    cpu_rtl_files = _normalize_str_list(getattr(args, "cpu_rtl", []))
+    if cpu_rtl_files:
+        request["cpu_rtl_files"] = cpu_rtl_files
     return request, base_dir
 
 
@@ -819,7 +846,67 @@ def _normalize_catalog_config_paths(request: dict[str, Any], base_dir: Path) -> 
         normalized["cpu_filelist"] = _resolve_path(value, base_dir)
     else:
         normalized.pop("cpu_filelist", None)
+    normalized["cpu_rtl_files"] = [
+        _resolve_path(item, base_dir)
+        for item in _normalize_str_list(normalized.get("cpu_rtl_files", []))
+    ]
     return normalized
+
+
+@contextmanager
+def _materialized_cpu_filelist(
+    request: dict[str, Any],
+    command: str,
+) -> Iterator[tuple[dict[str, Any], list[str]]]:
+    cpu_rtl_files = _validated_cpu_rtl_files(request, command)
+    if not cpu_rtl_files:
+        yield request, []
+        return
+
+    with TemporaryDirectory(prefix="ecc-fe-cpu-filelist-") as temp_dir:
+        filelist = write_generated_rtl_filelist(
+            Path(temp_dir) / "filelist.cpu.f",
+            cpu_rtl_files,
+        )
+        materialized = dict(request)
+        materialized["cpu_filelist"] = str(filelist)
+        yield materialized, cpu_rtl_files
+
+
+def _validated_cpu_rtl_files(request: dict[str, Any], command: str) -> list[str]:
+    raw_files = _normalize_str_list(request.get("cpu_rtl_files", []))
+    if not raw_files:
+        return []
+    if _optional_text(request.get("cpu_filelist")):
+        raise WorkspaceCliError(
+            command,
+            "failed",
+            "choose either cpu_filelist or cpu_rtl_files, not both",
+        )
+
+    files: list[str] = []
+    seen: set[Path] = set()
+    invalid: list[str] = []
+    for value in raw_files:
+        path = Path(value).expanduser().resolve()
+        if path.suffix.lower() not in _CPU_RTL_SUFFIXES or not path.is_file():
+            invalid.append(str(path))
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        files.append(str(path))
+
+    if invalid:
+        raise WorkspaceCliError(
+            command,
+            "failed",
+            "CPU RTL selection contains missing or unsupported files: " + "; ".join(invalid[:8]),
+            data={"invalid_cpu_rtl_files": invalid},
+        )
+    if not files:
+        raise WorkspaceCliError(command, "failed", "at least one CPU RTL source is required")
+    return files
 
 
 def _frontend_catalog_config_from_create_request(request: dict[str, Any]) -> dict[str, Any]:

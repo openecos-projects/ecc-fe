@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -354,7 +355,10 @@ class PrepareStep(BaseStep):
             line = raw.strip()
             if not line or line.startswith(("#", "//", "`")):
                 continue
-            parts = line.split(maxsplit=1)
+            try:
+                parts = shlex.split(line, comments=True, posix=True)
+            except ValueError as exc:
+                raise ValueError(f"invalid filelist entry in {path}: {line}") from exc
             option = parts[0] if parts else ""
             if option in ("-f", "-F"):
                 nested_ref = parts[1].strip() if len(parts) > 1 else ""
@@ -390,7 +394,7 @@ class PrepareStep(BaseStep):
                 continue
             if line.startswith("+") or line.startswith("-"):
                 continue
-            token = line.split(maxsplit=1)[0].strip("\"'")
+            token = option.strip("\"'")
             if not (token.endswith(".v") or token.endswith(".sv")):
                 continue
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from fecompiler.data.step import StateEnum
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.tools.common.rtl_inputs import write_generated_rtl_filelist
 
 
 _RUNTIME_LIST_PARAMETER_FIELDS = (
@@ -147,6 +148,7 @@ class CreateWorkspaceData:
     origin_verilog: str = ""
     filelist: str = ""
     cpu_filelist: str = ""
+    cpu_rtl_files: list[str] = field(default_factory=list)
     soc_filelist: str = ""
     testbench: str = ""
     sim_cpp_sources: list[str] = field(default_factory=list)
@@ -403,6 +405,13 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
     design     = parameters["Design"]
     top_module = parameters["Top module"]
     origin_dir = project_dir / "origin"
+
+    if spec.cpu_rtl_files:
+        generated = write_generated_rtl_filelist(
+            origin_dir / ".cpu_sources.f",
+            spec.cpu_rtl_files,
+        )
+        parameters["cpu_filelist"] = str(generated)
 
     # DEF
     _copy_or_touch(

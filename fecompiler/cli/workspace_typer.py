@@ -62,6 +62,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         origin_verilog: Annotated[str | None, typer.Option("--origin-verilog")] = None,
         filelist: Annotated[str | None, typer.Option("--filelist")] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        cpu_rtl: Annotated[list[str] | None, typer.Option("--cpu-rtl", help="CPU RTL source path; repeatable")] = None,
         soc_filelist: Annotated[str | None, typer.Option("--soc-filelist")] = None,
         testbench: Annotated[str | None, typer.Option("--testbench")] = None,
         sim_cpp: Annotated[list[str] | None, typer.Option("--sim-cpp")] = None,
@@ -95,6 +96,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             origin_verilog=origin_verilog or "",
             filelist=filelist or "",
             cpu_filelist=cpu_filelist or "",
+            cpu_rtl=list(cpu_rtl or []),
             soc_filelist=soc_filelist or "",
             testbench=testbench or "",
             sim_cpp=list(sim_cpp or []),
@@ -141,6 +143,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         toolchain_id: Annotated[str | None, typer.Option("--toolchain-id")] = None,
         test_suite_id: Annotated[str | None, typer.Option("--test-suite-id")] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        cpu_rtl: Annotated[list[str] | None, typer.Option("--cpu-rtl", help="CPU RTL source path; repeatable")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
         args = argparse.Namespace(
@@ -150,6 +153,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             toolchain_id=toolchain_id or "",
             test_suite_id=test_suite_id or "",
             cpu_filelist=cpu_filelist or "",
+            cpu_rtl=list(cpu_rtl or []),
         )
         finish("validate-config", json_output, lambda: handlers.validate_config(args))
 

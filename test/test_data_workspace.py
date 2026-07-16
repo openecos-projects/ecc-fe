@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 from fecompiler.data.workspace import (
@@ -94,6 +95,33 @@ def test_create_workspace_copies_verilog(tmp_path):
     )
     create_workspace(spec)
     assert (tmp_path / "ws" / "origin" / "design.v").exists()
+
+
+def test_create_workspace_generates_hidden_cpu_filelist(tmp_path):
+    cpu_dir = tmp_path / "cpu sources"
+    cpu_dir.mkdir()
+    cpu_top = cpu_dir / "cpu_top.sv"
+    helper = cpu_dir / "helper.v"
+    header = cpu_dir / "defs.vh"
+    cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    helper.write_text("module helper(); endmodule\n", encoding="utf-8")
+    header.write_text("`define CPU_WIDTH 32\n", encoding="utf-8")
+
+    workspace = create_workspace(_make_spec(
+        tmp_path,
+        cpu_rtl_files=[str(helper), str(cpu_top), str(header), str(helper)],
+    ))
+
+    generated = Path(workspace["cpu_filelist"])
+    assert generated == tmp_path / "ws" / "origin" / ".cpu_sources.f"
+    assert generated.is_file()
+    entries = [
+        shlex.split(line)[0]
+        for line in generated.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith(("#", "+"))
+    ]
+    assert entries == [str(helper.resolve()), str(cpu_top.resolve()), str(header.resolve())]
+    assert f"+incdir+'{cpu_dir.resolve()}'" in generated.read_text(encoding="utf-8")
 
 
 def test_create_workspace_default_design_from_dir_name(tmp_path):

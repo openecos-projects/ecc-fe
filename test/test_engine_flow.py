@@ -25,6 +25,7 @@ from fecompiler.tools.common.rtl_inputs import (
     workspace_input_fingerprint,
 )
 from fecompiler.tools.common.rtl_ownership import classify_rtl_source
+from fecompiler.tools.prepare.runner import PrepareStep
 from fecompiler.tools.slang.runner import (
     SlangElabStep,
     build_elab_summary,
@@ -641,6 +642,59 @@ def test_frontend_create_persists_custom_cpu_top_contract(tmp_path):
     assert workspace["required_cpu_top_port_contract"] == contract
 
 
+def test_frontend_create_accepts_selected_cpu_rtl_files(tmp_path):
+    contract = _custom_cpu_top_contract()
+    cpu_dir = tmp_path / "selected cpu rtl"
+    cpu_dir.mkdir()
+    helper = cpu_dir / "helper.v"
+    cpu_top = cpu_dir / "cpu_top.sv"
+    helper.write_text("module helper(); endmodule\n", encoding="utf-8")
+    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
+    request = tmp_path / "create_selected_cpu.json"
+    request.write_text(json.dumps({
+        "directory": str(tmp_path / "ws_selected_cpu"),
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_rtl_files": [str(helper), str(cpu_top), str(helper)],
+        "parameters": {"Design": "chip", "Top module": "ecos_sim_top"},
+    }), encoding="utf-8")
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    workspace = load_workspace(str(tmp_path / "ws_selected_cpu"))
+    generated = Path(workspace["cpu_filelist"])
+
+    assert generated == tmp_path / "ws_selected_cpu" / "origin" / ".cpu_sources.f"
+    assert generated.is_file()
+    parsed = PrepareStep._parse_sv_filelist(str(generated))
+    assert parsed["rtl_files"] == [helper.resolve(), cpu_top.resolve()]
+    assert workspace["required_cpu_top_port_contract"] == contract
+
+
+def test_frontend_validate_accepts_selected_cpu_rtl_files_without_exposing_temp_path(
+    tmp_path,
+    capsys,
+):
+    contract = _custom_cpu_top_contract()
+    cpu_top = tmp_path / "cpu_top.sv"
+    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
+    request = tmp_path / "validate_selected_cpu.json"
+    request.write_text(json.dumps({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_rtl_files": [str(cpu_top)],
+    }), encoding="utf-8")
+
+    assert workspace_cli_run(["validate-config", "--input-json", str(request), "--json"]) == 0
+    response = json.loads(capsys.readouterr().out)
+
+    assert response["data"]["normalized"]["cpu_filelist"] == ""
+    assert response["data"]["normalized"]["cpu_rtl_files"] == [str(cpu_top.resolve())]
+
+
 def test_frontend_create_rejects_user_filelist_for_builtin_cpu(tmp_path):
     user_cpu_root = tmp_path / "user_cpu"
     user_cpu_root.mkdir()
@@ -1116,6 +1170,7 @@ def test_workspace_create_help_lists_gui_compatible_options(capsys):
     assert "Usage: ecc-fe workspace create" in output
     assert "--input-json" in output
     assert "--cpu-filelist" in output
+    assert "--cpu-rtl" in output
     assert "--soc-variant" in output
     assert "--sim-cpp" in output
     assert "--sim-program-source" in output
