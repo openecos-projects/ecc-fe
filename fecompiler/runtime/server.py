@@ -38,6 +38,9 @@ class RuntimeServer:
             "workspace.close": self.api.close_workspace,
             "workspace.home": self.api.workspace_home,
             "workspace.info": self.api.workspace_info,
+            "workspace.refresh_config": self.api.refresh_config,
+            "workspace.sync_config": self.api.sync_config,
+            "workspace.reset_flow": self.api.reset_flow,
             "flow.run": self.api.flow_run,
             "flow.run_step": self.api.flow_run_step,
         }
@@ -171,6 +174,7 @@ class JsonRpcFault(RuntimeError):
 
 _COMMON_ALIASES = {
     "cpuRtlFiles": "cpu_rtl_files",
+    "configPath": "config_path",
     "id": "info_id",
     "infoId": "info_id",
     "simCompileExtraCflags": "sim_compile_extra_cflags",
@@ -237,6 +241,9 @@ _METHOD_FIELDS: dict[str, set[str] | None] = {
     "workspace.close": {"workspace_id"},
     "workspace.home": {"workspace_id"},
     "workspace.info": {"workspace_id", "step", "info_id"},
+    "workspace.refresh_config": {"workspace_id"},
+    "workspace.sync_config": {"workspace_id", "config_path"},
+    "workspace.reset_flow": {"workspace_id"},
     "flow.run": {"workspace_id", "rerun"},
     "flow.run_step": {
         "workspace_id",

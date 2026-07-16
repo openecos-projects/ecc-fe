@@ -40,6 +40,27 @@ class FakeApplication:
                 {"id": data["id"], "info": {}, "step": data["step"]},
                 [],
             )
+        if command == "refresh-config":
+            return CliResult(
+                command,
+                "success",
+                {"directory": data["directory"], "refreshed": True},
+                [],
+            )
+        if command == "sync-config":
+            return CliResult(
+                command,
+                "success",
+                {
+                    "config_path": data["config_path"],
+                    "directory": data["directory"],
+                    "parameters_changed": False,
+                    "refreshed": True,
+                },
+                [],
+            )
+        if command == "reset-flow":
+            return CliResult(command, "success", {"directory": data["directory"]}, [])
         if command == "run-flow":
             if event_sink:
                 event_sink({"type": "event", "phase": "started", "data": {}})
@@ -174,3 +195,32 @@ def test_real_application_opens_workspace_and_returns_home(tmp_path) -> None:
 
     assert home["result"]["path"] == str(directory / "home" / "home.json")
     assert home["result"]["response"] == "success"
+
+
+def test_workspace_config_lifecycle_uses_open_session(tmp_path) -> None:
+    application = FakeApplication()
+    server = RuntimeServer(WorkspaceRuntimeApi(application=application))
+    directory = str(tmp_path / "workspace")
+    opened = _dispatch(server, "workspace.open", {"directory": directory})
+    workspace_id = opened["result"]["workspaceId"]
+    config_path = str(tmp_path / "workspace" / "config" / "sim.json")
+
+    refreshed = _dispatch(
+        server,
+        "workspace.refresh_config",
+        {"workspaceId": workspace_id},
+    )
+    synced = _dispatch(
+        server,
+        "workspace.sync_config",
+        {"workspaceId": workspace_id, "configPath": config_path},
+    )
+    reset = _dispatch(
+        server,
+        "workspace.reset_flow",
+        {"workspaceId": workspace_id},
+    )
+
+    assert refreshed["result"]["refreshed"] is True
+    assert synced["result"]["config_path"] == config_path
+    assert reset["result"]["directory"] == directory

@@ -2809,6 +2809,9 @@ def _normalize_application_command(command: str) -> str:
         "rtl2gds": "run-flow",
         "run-flow": "run-flow",
         "run-step": "run-step",
+        "refresh-config": "refresh-config",
+        "sync-config": "sync-config",
+        "reset-flow": "reset-flow",
         "get-info": "get-info",
         "home-page": "get-home",
         "get-home": "get-home",
@@ -2828,6 +2831,12 @@ def _dispatch_payload(
         return _validate_config_request(payload, base_dir)
     if command == "create":
         return _create_request(payload, base_dir)
+    if command == "refresh-config":
+        return _refresh_config_payload(payload)
+    if command == "sync-config":
+        return _sync_config_payload(payload)
+    if command == "reset-flow":
+        return _reset_flow_payload(payload)
 
     defaults: dict[str, Any] = {
         "directory": "",
@@ -2858,6 +2867,58 @@ def _dispatch_payload(
         if target in defaults:
             defaults[target] = value
     return _dispatch(argparse.Namespace(command=command, **defaults))
+
+
+def _refresh_config_payload(payload: dict[str, Any]) -> CliResult:
+    directory = _optional_text(payload.get("directory"))
+    workspace, _ = _load_runtime(directory, cmd="refresh_config")
+    repaired = _repair_workspace_sim_defaults(workspace)
+    return CliResult(
+        cmd="refresh_config",
+        response="success",
+        data={
+            "directory": workspace["directory"],
+            "refreshed": True,
+            "repaired_sim_defaults": repaired,
+        },
+        message=[f"refresh frontend workspace success: {workspace['directory']}"],
+    )
+
+
+def _sync_config_payload(payload: dict[str, Any]) -> CliResult:
+    directory = _optional_text(payload.get("directory"))
+    config_path = Path(_optional_text(payload.get("config_path"))).expanduser().resolve()
+    workspace_dir = Path(_resolve_path(directory, Path.cwd())).resolve()
+    if not _path_is_relative_to(config_path, workspace_dir):
+        raise WorkspaceCliError(
+            "sync_config",
+            "failed",
+            f"config path outside frontend workspace: {config_path}",
+        )
+    workspace, _ = _load_runtime(str(workspace_dir), cmd="sync_config")
+    return CliResult(
+        cmd="sync_config",
+        response="success",
+        data={
+            "config_path": str(config_path),
+            "directory": workspace["directory"],
+            "parameters_changed": False,
+            "refreshed": True,
+        },
+        message=[f"sync frontend config success: {config_path}"],
+    )
+
+
+def _reset_flow_payload(payload: dict[str, Any]) -> CliResult:
+    directory = _optional_text(payload.get("directory"))
+    workspace, engine = _load_runtime(directory, cmd="reset_flow")
+    engine.clear_states()
+    return CliResult(
+        cmd="reset_flow",
+        response="success",
+        data={"directory": workspace["directory"]},
+        message=[f"reset frontend flow success: {workspace['directory']}"],
+    )
 
 
 def _emit_event(

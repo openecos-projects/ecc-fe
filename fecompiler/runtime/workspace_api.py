@@ -103,6 +103,43 @@ class WorkspaceRuntimeApi:
             ),
         )
 
+    def refresh_config(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._with_session(
+            params,
+            lambda session: self._result_data(
+                self.application.execute_payload(
+                    "refresh-config",
+                    {"directory": str(session.directory)},
+                ),
+            ),
+        )
+
+    def sync_config(self, params: dict[str, Any]) -> dict[str, Any]:
+        config_path = _required_text(params, "config_path")
+        return self._with_session(
+            params,
+            lambda session: self._result_data(
+                self.application.execute_payload(
+                    "sync-config",
+                    {
+                        "config_path": config_path,
+                        "directory": str(session.directory),
+                    },
+                ),
+            ),
+        )
+
+    def reset_flow(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._with_session(
+            params,
+            lambda session: self._result_data(
+                self.application.execute_payload(
+                    "reset-flow",
+                    {"directory": str(session.directory)},
+                ),
+            ),
+        )
+
     def flow_run(self, params: dict[str, Any]) -> dict[str, Any]:
         rerun = _optional_bool(params, "rerun")
         return self._with_session(
