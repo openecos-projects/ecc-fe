@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from fecompiler.application.workspace_service import CliResult
+from fecompiler.data.workspace import CreateWorkspaceData, create_workspace
+from fecompiler.runtime.server import RuntimeServer
+from fecompiler.runtime.workspace_api import WorkspaceRuntimeApi
+
+
+class FakeApplication:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def execute_payload(
+        self,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        base_dir: object = None,
+        event_sink=None,
+    ) -> CliResult:
+        del base_dir
+        data = dict(payload or {})
+        self.calls.append((command, data))
+        if command == "catalog-list":
+            return CliResult(command, "success", {"cores": []}, ["catalog"])
+        if command == "validate-config":
+            return CliResult(command, "failed", {"ok": False}, ["invalid config"])
+        if command in {"create", "load"}:
+            directory = str(data["directory"])
+            return CliResult(command, "success", {"directory": directory}, ["ready"])
+        if command == "get-home":
+            return CliResult(command, "success", {"path": "/tmp/home.json"}, [])
+        if command == "get-info":
+            return CliResult(
+                command,
+                "success",
+                {"id": data["id"], "info": {}, "step": data["step"]},
+                [],
+            )
+        if command == "run-flow":
+            if event_sink:
+                event_sink({"type": "event", "phase": "started", "data": {}})
+            return CliResult(command, "success", {"rerun": data["rerun"]}, [])
+        if command == "run-step":
+            if event_sink:
+                event_sink(
+                    {
+                        "type": "event",
+                        "phase": "completed",
+                        "data": {"step": data["step"]},
+                    },
+                )
+            return CliResult(
+                command,
+                "success",
+                {"state": "Success", "step": data["step"]},
+                [],
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+
+def _request(method: str, params: dict[str, Any] | None = None, *, request_id=1):
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    return json.loads(RuntimeServer().dispatch(json.dumps(payload)))
+
+
+def _dispatch(server: RuntimeServer, method: str, params=None, *, request_id=1):
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    return json.loads(server.dispatch(json.dumps(payload)))
+
+
+def test_rpc_hello_reports_frontend_capabilities() -> None:
+    response = _request("rpc.hello", {"version": 1})
+
+    assert response["result"]["version"] == 1
+    assert "frontend.catalog" in response["result"]["capabilities"]
+    assert "flow.run_step" in response["result"]["capabilities"]
+
+
+def test_rpc_hello_rejects_incompatible_version() -> None:
+    response = _request("rpc.hello", {"version": 2})
+
+    assert response["error"]["code"] == -32001
+    assert response["error"]["message"] == "unsupported_version"
+
+
+def test_workspace_session_lifecycle_and_flow_events(tmp_path) -> None:
+    application = FakeApplication()
+    notifications: list[dict[str, Any]] = []
+    server = RuntimeServer(
+        WorkspaceRuntimeApi(application=application),
+        notification_sink=notifications.append,
+    )
+    directory = str(tmp_path / "workspace")
+
+    created = _dispatch(server, "workspace.create", {"directory": directory})
+    workspace_id = created["result"]["workspaceId"]
+    assert created["result"]["directory"] == directory
+
+    run = _dispatch(
+        server,
+        "flow.run_step",
+        {"workspaceId": workspace_id, "step": "sim", "rerun": True},
+    )
+    assert run["result"]["state"] == "Success"
+    assert notifications[0]["method"] == "runtime.event"
+    assert notifications[0]["params"]["data"]["workspaceId"] == workspace_id
+    assert notifications[0]["params"]["data"]["step"] == "sim"
+
+    closed = _dispatch(server, "workspace.close", {"workspaceId": workspace_id})
+    assert closed["result"] == {"ok": True}
+    missing = _dispatch(server, "workspace.home", {"workspaceId": workspace_id})
+    assert missing["error"]["code"] == -32010
+
+
+def test_frontend_validation_returns_structured_failed_result() -> None:
+    application = FakeApplication()
+    server = RuntimeServer(WorkspaceRuntimeApi(application=application))
+
+    response = _dispatch(
+        server,
+        "frontend.validate_config",
+        {"core_id": "custom-filelist"},
+    )
+
+    assert response["result"]["ok"] is False
+    assert response["result"]["response"] == "failed"
+    assert response["result"]["message"] == ["invalid config"]
+
+
+def test_runtime_rejects_unknown_and_duplicate_fields() -> None:
+    server = RuntimeServer(WorkspaceRuntimeApi(application=FakeApplication()))
+
+    unknown = _dispatch(server, "workspace.open", {"directory": "/tmp/ws", "x": 1})
+    duplicate = _dispatch(
+        server,
+        "workspace.close",
+        {"workspaceId": "one", "workspace_id": "two"},
+    )
+
+    assert unknown["error"]["code"] == -32602
+    assert unknown["error"]["data"]["message"] == "unknown field: x"
+    assert duplicate["error"]["code"] == -32602
+    assert duplicate["error"]["data"]["message"] == "duplicate field: workspace_id"
+
+
+def test_notification_has_no_response() -> None:
+    server = RuntimeServer(WorkspaceRuntimeApi(application=FakeApplication()))
+    payload = json.dumps({"jsonrpc": "2.0", "method": "rpc.ping"})
+
+    assert server.dispatch(payload) == ""
+
+
+def test_real_application_opens_workspace_and_returns_home(tmp_path) -> None:
+    directory = tmp_path / "workspace"
+    create_workspace(
+        CreateWorkspaceData(
+            directory=str(directory),
+            parameters={"Design": "demo", "Top module": "chip_top"},
+        ),
+    )
+    server = RuntimeServer()
+
+    opened = _dispatch(server, "workspace.open", {"directory": str(directory)})
+    workspace_id = opened["result"]["workspaceId"]
+    home = _dispatch(server, "workspace.home", {"workspaceId": workspace_id})
+
+    assert home["result"]["path"] == str(directory / "home" / "home.json")
+    assert home["result"]["response"] == "success"

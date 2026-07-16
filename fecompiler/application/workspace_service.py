@@ -18,6 +18,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Sequence
@@ -97,6 +98,22 @@ class WorkspaceCliError(Exception):
         self.result = CliResult(cmd=cmd, response=response, data=data or {}, message=[message])
 
 
+WorkspaceEventSink = Callable[[dict[str, Any]], None]
+_workspace_event_sink: ContextVar[WorkspaceEventSink | None] = ContextVar(
+    "workspace_event_sink",
+    default=None,
+)
+
+
+@contextmanager
+def workspace_event_sink(sink: WorkspaceEventSink | None) -> Iterator[None]:
+    token = _workspace_event_sink.set(sink)
+    try:
+        yield
+    finally:
+        _workspace_event_sink.reset(token)
+
+
 class WorkspaceApplicationService:
     """Execute workspace operations independently of their transport."""
 
@@ -120,6 +137,27 @@ class WorkspaceApplicationService:
     ) -> CliResult:
         args.command = command
         return self.call(command, lambda: _dispatch(args))
+
+    def execute_payload(
+        self,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        base_dir: str | Path | None = None,
+        event_sink: WorkspaceEventSink | None = None,
+    ) -> CliResult:
+        request = dict(payload or {})
+        resolved_base_dir = Path(base_dir or Path.cwd()).expanduser().resolve()
+        normalized_command = _normalize_application_command(command)
+        with workspace_event_sink(event_sink):
+            return self.call(
+                normalized_command,
+                lambda: _dispatch_payload(
+                    normalized_command,
+                    request,
+                    resolved_base_dir,
+                ),
+            )
 
 
 workspace_application = WorkspaceApplicationService()
@@ -353,6 +391,10 @@ def _catalog_check() -> CliResult:
 
 def _validate_config(args: argparse.Namespace) -> CliResult:
     request, base_dir = _catalog_config_from_args(args)
+    return _validate_config_request(request, base_dir)
+
+
+def _validate_config_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     normalized = _normalize_catalog_config_paths(request, base_dir)
     with _materialized_cpu_filelist(
         normalized,
@@ -373,6 +415,10 @@ def _validate_config(args: argparse.Namespace) -> CliResult:
 
 def _create(args: argparse.Namespace) -> CliResult:
     request, base_dir = _create_request_from_args(args)
+    return _create_request(request, base_dir)
+
+
+def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     normalized = _normalize_create_request(request, base_dir)
     with _materialized_cpu_filelist(
         normalized,
@@ -2749,6 +2795,71 @@ def _command_to_cmd(command: str) -> str:
     }.get(command, "workspace")
 
 
+def _normalize_application_command(command: str) -> str:
+    normalized = command.strip().replace("_", "-")
+    return {
+        "catalog-list": "catalog-list",
+        "catalog-check": "catalog-check",
+        "validate-frontend-config": "validate-config",
+        "validate-config": "validate-config",
+        "create-workspace": "create",
+        "create": "create",
+        "load-workspace": "load",
+        "load": "load",
+        "rtl2gds": "run-flow",
+        "run-flow": "run-flow",
+        "run-step": "run-step",
+        "get-info": "get-info",
+        "home-page": "get-home",
+        "get-home": "get-home",
+    }.get(normalized, normalized)
+
+
+def _dispatch_payload(
+    command: str,
+    payload: dict[str, Any],
+    base_dir: Path,
+) -> CliResult:
+    if command == "catalog-list":
+        return _catalog_list()
+    if command == "catalog-check":
+        return _catalog_check()
+    if command == "validate-config":
+        return _validate_config_request(payload, base_dir)
+    if command == "create":
+        return _create_request(payload, base_dir)
+
+    defaults: dict[str, Any] = {
+        "directory": "",
+        "id": "",
+        "json": False,
+        "rerun": False,
+        "sim_compile_extra_cflag": [],
+        "sim_compile_mabi": "",
+        "sim_compile_march": "",
+        "sim_compile_opt_level": "",
+        "sim_compile_preset": "",
+        "sim_coremark_has_float": "",
+        "sim_coremark_iterations": None,
+        "sim_coremark_max_cycles": None,
+        "sim_coremark_total_data_size": None,
+        "sim_cpu_test_case": [],
+        "sim_cpu_test_mode": "selected",
+        "sim_test_suite": "",
+        "step": "",
+    }
+    aliases = {
+        "info_id": "id",
+        "sim_compile_extra_cflags": "sim_compile_extra_cflag",
+        "sim_cpu_test_cases": "sim_cpu_test_case",
+    }
+    for key, value in payload.items():
+        target = aliases.get(key, key)
+        if target in defaults:
+            defaults[target] = value
+    return _dispatch(argparse.Namespace(command=command, **defaults))
+
+
 def _emit_event(
     cmd: str,
     phase: str,
@@ -2757,8 +2868,6 @@ def _emit_event(
     *,
     json_output: bool,
 ) -> None:
-    if not json_output:
-        return
     payload = {
         "type": "event",
         "phase": phase,
@@ -2766,6 +2875,12 @@ def _emit_event(
         "data": data or {},
         "message": message or [],
     }
+    sink = _workspace_event_sink.get()
+    if sink is not None:
+        sink(payload)
+        return
+    if not json_output:
+        return
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 

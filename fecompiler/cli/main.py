@@ -235,6 +235,10 @@ def _run_full_flow(engine: EngineFlow, rerun: bool) -> int:
 
 def run(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["rpc"]:
+        from fecompiler.cli.rpc import run as run_rpc
+
+        return run_rpc(raw_argv[1:])
     if raw_argv[:1] == ["workspace"]:
         from fecompiler.cli.workspace import run as run_workspace
 
