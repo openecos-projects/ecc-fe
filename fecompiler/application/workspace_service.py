@@ -2625,23 +2625,24 @@ def _build_frontend_sim_payload(step: Any) -> dict[str, Any]:
     for raw_case in raw_cases:
         if not isinstance(raw_case, dict):
             continue
-        cases.append(
-            {
-                "name": str(raw_case.get("name", "")),
-                "suite": str(raw_case.get("suite", "")),
-                "ok": bool(raw_case.get("ok", False)),
-                "returncode": raw_case.get("returncode"),
-                "image": str(raw_case.get("image", "")),
-                "log": str(raw_case.get("log") or raw_case.get("latest_log") or ""),
-                "report_log": str(raw_case.get("report_log", "")),
-                "run_log": str(raw_case.get("run_log", "")),
-                "wave": str(raw_case.get("wave", "")),
-                "run_id": str(raw_case.get("run_id", "")),
-                "validation": raw_case.get("validation", {}) if isinstance(raw_case.get("validation"), dict) else {},
-                "metrics": raw_case.get("metrics", {}) if isinstance(raw_case.get("metrics"), dict) else {},
-                "failure": raw_case.get("failure", {}) if isinstance(raw_case.get("failure"), dict) else {},
-            }
-        )
+        case = {
+            "name": str(raw_case.get("name", "")),
+            "suite": str(raw_case.get("suite", "")),
+            "ok": bool(raw_case.get("ok", False)),
+            "returncode": raw_case.get("returncode"),
+            "image": str(raw_case.get("image", "")),
+            "log": str(raw_case.get("log") or raw_case.get("latest_log") or ""),
+            "report_log": str(raw_case.get("report_log", "")),
+            "run_log": str(raw_case.get("run_log", "")),
+            "wave": str(raw_case.get("wave", "")),
+            "run_id": str(raw_case.get("run_id", "")),
+            "validation": raw_case.get("validation", {}) if isinstance(raw_case.get("validation"), dict) else {},
+            "metrics": raw_case.get("metrics", {}) if isinstance(raw_case.get("metrics"), dict) else {},
+        }
+        failure = raw_case.get("failure")
+        if isinstance(failure, dict) and failure:
+            case["failure"] = failure
+        cases.append(case)
     history_data = _json_read(report_dir / "history.json")
     history = history_data.get("runs", []) if isinstance(history_data, dict) else []
     return {
