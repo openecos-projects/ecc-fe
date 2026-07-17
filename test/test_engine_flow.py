@@ -138,6 +138,11 @@ def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
             "returncode": 1,
             "metrics": {"cycles": 42, "termination": "bad_trap"},
             "failure": {"kind": "bad_trap", "message": "Bad trap"},
+        }, {
+            "name": "bit.soc",
+            "ok": True,
+            "returncode": 0,
+            "metrics": {"cycles": 21, "termination": "good_trap"},
         }],
     }), encoding="utf-8")
     (sim_dir / "history.json").write_text(json.dumps({
@@ -153,6 +158,8 @@ def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
     assert sim["history"][0]["ok"] is False
     assert sim["cases"][0]["metrics"]["cycles"] == 42
     assert sim["cases"][0]["failure"]["kind"] == "bad_trap"
+    assert sim["cases"][1]["ok"] is True
+    assert "failure" not in sim["cases"][1]
 
 
 def test_prepare_fingerprint_tracks_filelist_and_referenced_rtl_contents(tmp_path):
