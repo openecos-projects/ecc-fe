@@ -569,6 +569,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
     _repair_workspace_sim_defaults(workspace)
     if args.rerun:
         engine.clear_states()
+        _clear_frontend_step_details(engine)
 
     json_output = bool(getattr(args, "json", False))
     reports: list[dict[str, Any]] = []
@@ -591,6 +592,12 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         )
         state = engine.run_step(workspace_step.name, rerun=bool(args.rerun))
         report = _step_report_payload(workspace, workspace_step, state)
+        report["detail_path"] = _write_frontend_step_detail(
+            workspace,
+            engine,
+            workspace_step,
+            state,
+        )
         reports.append(report)
         _emit_event(
             "rtl2gds",
@@ -672,10 +679,18 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         [f"start frontend step {step}: {workspace['directory']}"],
         json_output=json_output,
     )
+    if args.rerun or force_rerun:
+        _remove_frontend_step_detail(workspace_step)
     state = engine.run_step(step, rerun=bool(args.rerun or force_rerun))
     data: dict[str, Any] = {"step": step, "state": state.value, "directory": workspace["directory"]}
     if workspace_step is not None:
         data.update(_step_report_payload(workspace, workspace_step, state))
+        data["detail_path"] = _write_frontend_step_detail(
+            workspace,
+            engine,
+            workspace_step,
+            state,
+        )
     if state != StateEnum.Success:
         data["failure"] = _failure_payload(workspace, workspace_step, step, state)
     phase = "completed" if state == StateEnum.Success else "failed"
@@ -2016,6 +2031,39 @@ def _build_frontend_step_detail(
     return detail
 
 
+def _write_frontend_step_detail(
+    workspace: dict[str, Any],
+    engine: EngineFlow,
+    workspace_step: Any,
+    state: StateEnum,
+) -> str:
+    report_dir = _optional_path(_step_section(workspace_step, "report").get("dir", ""))
+    if report_dir is None:
+        return ""
+
+    flow_step = engine.get_step(workspace_step.name, workspace_step.tool)
+    detail = _build_frontend_step_detail(workspace, workspace_step, flow_step)
+    detail["state"] = state.value
+    summary = detail.get("summary")
+    if isinstance(summary, dict):
+        summary["status"] = state.value
+
+    detail_path = report_dir / "frontend_detail.json"
+    return str(detail_path) if json_write(detail_path, detail) else ""
+
+
+def _remove_frontend_step_detail(workspace_step: Any) -> None:
+    report_dir = _optional_path(_step_section(workspace_step, "report").get("dir", ""))
+    if report_dir is None:
+        return
+    (report_dir / "frontend_detail.json").unlink(missing_ok=True)
+
+
+def _clear_frontend_step_details(engine: EngineFlow) -> None:
+    for workspace_step in engine.workspace_steps:
+        _remove_frontend_step_detail(workspace_step)
+
+
 def _build_frontend_step_summary(step: Any, state: str, runtime: str) -> dict[str, Any]:
     report = _json_read(_step_section(step, "report").get("step", ""))
     summary: dict[str, Any] = {
@@ -2913,6 +2961,7 @@ def _reset_flow_payload(payload: dict[str, Any]) -> CliResult:
     directory = _optional_text(payload.get("directory"))
     workspace, engine = _load_runtime(directory, cmd="reset_flow")
     engine.clear_states()
+    _clear_frontend_step_details(engine)
     return CliResult(
         cmd="reset_flow",
         response="success",
