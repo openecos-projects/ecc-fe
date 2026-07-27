@@ -50,6 +50,8 @@ ipython_config.py
 # Project outputs
 /workspace_projects/
 /bazel-*
+/build/
+/dist/
 
 # Local assistant files
 .cursorignore

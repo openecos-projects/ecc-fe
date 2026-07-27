@@ -40,6 +40,7 @@ run_case() {
 
 run_case docs-only '[]' false docs/guide.md tests/test_cli.py
 run_case runtime '["runtime"]' false fecompiler/engine.py
+run_case runtime-packaging '["runtime"]' false ecc-fe.spec packaging/run_ecc_fe.py uv.lock
 run_case split-assets '["soc","examples"]' false fecompiler/thirdparty/SoC/driver/main.cpp examples/cl3/filelist.cpu.f
 run_case difftest '["difftest-ref"]' false fecompiler/thirdparty/SoC/tools/riscv32-spike-so
 run_case cpu-rtl '["cpu-rtl"]' false fecompiler/thirdparty/ibex

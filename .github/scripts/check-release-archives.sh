@@ -32,6 +32,24 @@ require_entry() {
   fi
 }
 
+require_elf_entry() {
+  local archive="$1"
+  local entry="$2"
+  if ! python3 - "${archive}" "${entry}" <<'PY'
+import sys
+import tarfile
+
+archive, entry = sys.argv[1:]
+with tarfile.open(archive, "r:gz") as bundle:
+    member = bundle.extractfile(entry)
+    if member is None or member.read(4) != b"\x7fELF":
+        raise SystemExit(1)
+PY
+  then
+    fail "${archive} entry is not a self-contained Linux executable: ${entry}"
+  fi
+}
+
 forbid_entry_prefix() {
   local archive="$1"
   local prefix="$2"
@@ -68,6 +86,7 @@ check_runtime() {
   archive="$(archive_path ecc-fe-latest.tar.gz)"
   check_archive "${archive}" || return
   require_entry "${archive}" "ecc-fe-latest/bin/ecc-fe"
+  require_elf_entry "${archive}" "ecc-fe-latest/bin/ecc-fe"
   require_entry "${archive}" "ecc-fe-latest/fecompiler/resources.py"
   forbid_entry_prefix "${archive}" "ecc-fe-latest/fecompiler/thirdparty/"
 }
