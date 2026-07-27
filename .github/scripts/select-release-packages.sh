@@ -31,7 +31,7 @@ classify_path() {
     .github/scripts/test-release-selection.sh)
       select_all
       ;;
-    bin|bin/*|fecompiler|README.md|LICENSE|pyproject.toml|BUILD.bazel|MODULE.bazel|MODULE.bazel.lock)
+    bin|bin/*|packaging|packaging/*|ecc-fe.spec|fecompiler|README.md|LICENSE|pyproject.toml|uv.lock|BUILD.bazel|MODULE.bazel|MODULE.bazel.lock)
       select_package runtime
       ;;
     fecompiler/thirdparty/SoC/tools/riscv32-spike-so|fecompiler/thirdparty/SoC/tools/riscv32-spike-so/*)

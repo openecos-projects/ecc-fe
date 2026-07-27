@@ -49,6 +49,19 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Setup Python
+        if: steps.select.outputs.runtime == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        if: steps.select.outputs.runtime == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.12
+          enable-cache: true
+
       - name: Package selected resources
         if: steps.select.outputs.any == 'true'
         shell: bash
@@ -68,6 +81,35 @@ jobs:
           set -euo pipefail
           read -r -a packages <<< "${PACKAGES}"
           bash .github/scripts/check-release-archives.sh dist "${packages[@]}"
+
+      - name: Smoke self-contained runtime without system Python
+        if: steps.select.outputs.runtime == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_root="${RUNNER_TEMP}/ecc-fe-runtime-smoke/ecc-fe-latest"
+          mkdir -p "$(dirname "${runtime_root}")"
+          tar -xzf dist/ecc-fe-latest.tar.gz -C "$(dirname "${runtime_root}")"
+
+          response="${RUNNER_TEMP}/ecc-fe-runtime-response.txt"
+          hello='{"jsonrpc":"2.0","id":1,"method":"rpc.hello","params":{"version":1}}'
+          catalog='{"jsonrpc":"2.0","id":2,"method":"frontend.catalog","params":{}}'
+          shutdown='{"jsonrpc":"2.0","id":3,"method":"rpc.shutdown","params":{}}'
+          {
+            printf 'Content-Length: %s\r\n\r\n%s' "${#hello}" "${hello}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#catalog}" "${catalog}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#shutdown}" "${shutdown}"
+          } \
+            | env -i \
+                HOME="${HOME}" \
+                TMPDIR="${RUNNER_TEMP}" \
+                PATH=/nonexistent \
+                ECOS_FE_COMPILER_ROOT="${runtime_root}" \
+                "${runtime_root}/bin/ecc-fe" rpc serve --stdio \
+            > "${response}"
+          grep -F '"eccFeVersion"' "${response}"
+          grep -F '"frontend.catalog"' "${response}"
+          grep -F '"cores"' "${response}"
 
       - name: Upload runtime payload
         if: steps.select.outputs.runtime == 'true'
