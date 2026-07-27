@@ -101,8 +101,21 @@ archive_package() {
 
 prepare_runtime() {
   local root="${WORK_DIR}/ecc-fe-latest"
+
+  uv run \
+    --frozen \
+    --group packaging \
+    --python "${ECOS_PYTHON_VERSION:-3.11}" \
+    pyinstaller ecc-fe.spec --clean --noconfirm
+  if [[ ! -x dist/ecc-fe ]]; then
+    echo "PyInstaller did not produce dist/ecc-fe" >&2
+    exit 1
+  fi
+
   mkdir -p "${root}"
-  cp -a bin fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${root}/"
+  cp -a fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${root}/"
+  mkdir -p "${root}/bin"
+  install -m 0755 dist/ecc-fe "${root}/bin/ecc-fe"
   rm -rf "${root}/fecompiler/thirdparty"
   archive_package ecc-fe ecc-fe-latest
 }
