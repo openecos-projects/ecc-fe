@@ -43,7 +43,7 @@ jobs:
         run: bash .github/scripts/check-no-tracked-waveforms.sh
 
       - name: Initialize CPU RTL submodules
-        if: steps.select.outputs.cpu_rtl == 'true'
+        if: steps.select.outputs.cpu_rtl == 'true' || steps.select.outputs.runtime == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -61,6 +61,25 @@ jobs:
         with:
           version: 0.11.12
           enable-cache: true
+
+      - name: Test ECC-FE runtime
+        if: steps.select.outputs.runtime == 'true'
+        shell: bash
+        run: |
+          uv run --frozen --group test --python 3.11 pytest -q \
+            test/test_allflow_builder.py \
+            test/test_catalog_compatibility.py \
+            test/test_catalog_contract.py \
+            test/test_data_step.py \
+            test/test_data_workspace.py \
+            test/test_examples.py \
+            test/test_frontend_detail_snapshot.py \
+            test/test_rtl_review.py \
+            test/test_runtime_server.py \
+            test/test_runtime_stdio.py \
+            test/test_runtime_transport.py \
+            test/test_utility.py \
+            test/test_workspace_application.py
 
       - name: Package selected resources
         if: steps.select.outputs.any == 'true'
@@ -92,12 +111,22 @@ jobs:
           tar -xzf dist/ecc-fe-latest.tar.gz -C "$(dirname "${runtime_root}")"
 
           response="${RUNNER_TEMP}/ecc-fe-runtime-response.txt"
+          workspace="${RUNNER_TEMP}/ecc-fe-runtime-workspace"
+          rtl="${GITHUB_WORKSPACE}/examples/cl3/cl3_verilog/cpu_top.sv"
           hello='{"jsonrpc":"2.0","id":1,"method":"rpc.hello","params":{"version":1}}'
           catalog='{"jsonrpc":"2.0","id":2,"method":"frontend.catalog","params":{}}'
-          shutdown='{"jsonrpc":"2.0","id":3,"method":"rpc.shutdown","params":{}}'
+          validate="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"frontend.validate_config\",\"params\":{\"core_id\":\"custom-filelist\",\"test_suite_id\":\"smoke\",\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          create="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"workspace.create\",\"params\":{\"directory\":\"${workspace}\",\"core_id\":\"custom-filelist\",\"test_suite_id\":\"smoke\",\"top_module\":\"cpu_top\",\"parameters\":{\"Design\":\"runtime-smoke\",\"Top module\":\"cpu_top\"},\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          prepare='{"jsonrpc":"2.0","id":5,"method":"flow.run_step","params":{"workspaceId":"workspace-1","step":"prepare","rerun":true}}'
+          close='{"jsonrpc":"2.0","id":6,"method":"workspace.close","params":{"workspaceId":"workspace-1"}}'
+          shutdown='{"jsonrpc":"2.0","id":7,"method":"rpc.shutdown","params":{}}'
           {
             printf 'Content-Length: %s\r\n\r\n%s' "${#hello}" "${hello}"
             printf 'Content-Length: %s\r\n\r\n%s' "${#catalog}" "${catalog}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#validate}" "${validate}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#create}" "${create}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#prepare}" "${prepare}"
+            printf 'Content-Length: %s\r\n\r\n%s' "${#close}" "${close}"
             printf 'Content-Length: %s\r\n\r\n%s' "${#shutdown}" "${shutdown}"
           } \
             | env -i \
@@ -107,9 +136,18 @@ jobs:
                 ECOS_FE_COMPILER_ROOT="${runtime_root}" \
                 "${runtime_root}/bin/ecc-fe" rpc serve --stdio \
             > "${response}"
-          grep -F '"eccFeVersion"' "${response}"
-          grep -F '"frontend.catalog"' "${response}"
-          grep -F '"cores"' "${response}"
+          response_lines="${RUNNER_TEMP}/ecc-fe-runtime-response-lines.txt"
+          tr '\r' '\n' < "${response}" > "${response_lines}"
+          grep -F '"eccFeVersion"' "${response_lines}"
+          grep -F '"frontend.catalog"' "${response_lines}"
+          grep -F '"cores"' "${response_lines}"
+          grep -F '"id":3,"result":{"ok":true,' "${response_lines}"
+          grep -F '"id":4,"result":{"directory":' "${response_lines}" | grep -F '"workspaceId":"workspace-1"'
+          grep -F '"id":5,"result":{"step":"prepare","state":"Success"' "${response_lines}"
+          grep -F '"id":6,"result":{"ok":true}' "${response_lines}"
+          if grep -F '"error"' "${response_lines}"; then
+            exit 1
+          fi
 
       - name: Upload runtime payload
         if: steps.select.outputs.runtime == 'true'
