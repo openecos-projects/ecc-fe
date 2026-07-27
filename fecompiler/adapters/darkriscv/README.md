@@ -13,4 +13,4 @@ Current status:
 - `filelist.cpu.f` points at the DarkRISCV core RTL and ECOS wrapper.
 - The adapter exposes `ysyx-axi-cpu-socket-v1`.
 - CPU Tests are enabled for basic one-case experiments such as `add`.
-- Difftest and RT-Thread are not supported by this adapter.
+- Difftest is not supported by this adapter.

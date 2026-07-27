@@ -2,7 +2,7 @@
   {
     "id": "ysyx-am-soc",
     "name": "YSYX AM SoC Harness",
-    "description": "Current ECOS frontend SoC harness for ysyx-style CPU integration and AM/RT-Thread tests.",
+    "description": "Current ECOS frontend SoC harness for ysyx-style CPU integration and AM tests.",
     "variant": "soc1",
     "isa": ["rv32"],
     "bus": "ysyx-soc",
@@ -15,8 +15,8 @@
     "default_program_link_base": "0x20000000",
     "bootloader_payload_link_base": "0x80000000",
     "supports_difftest": true,
-    "supported_test_suites": ["smoke", "cpu-tests", "rtthread", "coremark"],
+    "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
     "directory": "fecompiler/thirdparty/SoC",
-    "tags": ["default", "cpu-tests", "rtthread", "coremark"]
+    "tags": ["default", "cpu-tests", "coremark"]
   }
 ]

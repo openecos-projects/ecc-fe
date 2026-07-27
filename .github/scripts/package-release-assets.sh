@@ -133,14 +133,12 @@ prepare_cpu_rtl() {
   mkdir -p "${root}/thirdparty"
   cp -a \
     fecompiler/thirdparty/README \
-    fecompiler/thirdparty/rtthread_prepare.py \
     fecompiler/thirdparty/cv32e40p \
     fecompiler/thirdparty/cva6 \
     fecompiler/thirdparty/darkriscv \
     fecompiler/thirdparty/ibex \
     fecompiler/thirdparty/learn-fpga \
     fecompiler/thirdparty/picorv32 \
-    fecompiler/thirdparty/rt-thread-am \
     fecompiler/thirdparty/scr1 \
     fecompiler/thirdparty/serv \
     fecompiler/thirdparty/vexriscv \

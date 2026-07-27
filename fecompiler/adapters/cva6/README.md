@@ -18,7 +18,7 @@ Current status:
 - Wrapper top: `ecos_cva6_cpu_wrapper`
 - SoC-facing module: `cpu_top`
 - Test suites: `smoke`, `cpu-tests`
-- Difftest and RT-Thread are not supported by this adapter.
+- Difftest is not supported by this adapter.
 
 The first ECOS profile is intentionally RV32/AXI32.  CVA6's upstream default
 AXI package is 64-bit, so this wrapper provides local 32-bit AXI channel types

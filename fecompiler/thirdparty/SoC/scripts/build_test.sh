@@ -41,17 +41,11 @@ if [[ -z "${SRC}" ]]; then
   SRC="${ROOT}/tests/programs/${NAME}.c"
 fi
 
-IS_RTTHREAD=0
-if [[ "${NAME}" == "rtthread" || "${SRC}" == "rtthread" ]]; then
-  IS_RTTHREAD=1
-  NAME="rtthread"
-fi
-
 if [[ "${NAME}" == "coremark" ]]; then
   SRC="${ROOT}/tests/benchmarks/coremark/core_main.c"
 fi
 
-if [[ "${IS_RTTHREAD}" != "1" && ! -f "${SRC}" ]]; then
+if [[ ! -f "${SRC}" ]]; then
   echo "test source not found: ${SRC}" >&2
   exit 1
 fi
@@ -132,13 +126,8 @@ ASFLAGS=(
   "-I${ROOT}/tests/common/include"
   "-I${ROOT}/tests/common"
 )
-if [[ "${IS_RTTHREAD}" == "1" ]]; then
-  SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-1}"
-  SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-1}"
-else
-  SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-0}"
-  SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-0}"
-fi
+SOC_USE_BOOTLOADER="${SOC_USE_BOOTLOADER:-0}"
+SOC_FAST_DIFF_BOOT="${SOC_FAST_DIFF_BOOT:-0}"
 if [[ "${SOC_USE_BOOTLOADER}" == "1" ]]; then
   PMEM_START=0x80000000
 elif [[ -n "${SOC_PROGRAM_LINK_BASE:-}" ]]; then
@@ -176,112 +165,63 @@ rm -rf "${TMPDIR}"
 mkdir -p "${TMPDIR}"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
-if [[ "${IS_RTTHREAD}" == "1" ]]; then
-  RTTHREAD_AM_ROOT="${RTTHREAD_AM_ROOT:-${ROOT}/../rt-thread-am}"
-  RTTHREAD_BSP="${RTTHREAD_AM_ROOT}/bsp/abstract-machine"
-  RTTHREAD_ARCH="${RTTHREAD_ARCH:-riscv32-nemu}"
-  RTTHREAD_PREPARE="${RTTHREAD_PREPARE:-${ROOT}/../rtthread_prepare.py}"
-  if [[ ! -d "${RTTHREAD_BSP}" ]]; then
-    echo "rt-thread-am BSP not found: ${RTTHREAD_BSP}" >&2
-    exit 1
-  fi
-  if [[ -z "${AM_HOME:-}" || ! -f "${AM_HOME}/Makefile" ]]; then
-    if [[ -f "/home/luyoung/ysyx-workbench/abstract-machine/Makefile" ]]; then
-      export AM_HOME="/home/luyoung/ysyx-workbench/abstract-machine"
-    else
-      echo "AM_HOME must point to an AbstractMachine repo" >&2
-      exit 1
-    fi
-  fi
-  if command -v scons >/dev/null 2>&1; then
-    make -C "${RTTHREAD_BSP}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" init
-  elif [[ -x "${RTTHREAD_PREPARE}" || -f "${RTTHREAD_PREPARE}" ]]; then
-    echo "[build_test] scons not found; generating rt-thread-am fallback files"
-    python3 "${RTTHREAD_PREPARE}" --bsp "${RTTHREAD_BSP}" --arch "${RTTHREAD_ARCH}"
-  else
-    echo "scons is required to build rt-thread-am; fallback helper not found: ${RTTHREAD_PREPARE}" >&2
-    exit 1
-  fi
-  export RTT_CC_PREFIX="${CROSS_COMPILE}"
-  RTTHREAD_AM_APPS_MK="${TMPDIR}/rtthread-empty-am-apps.mk"
-  if [[ -f "${RTTHREAD_PREPARE}" ]]; then
-    python3 "${RTTHREAD_PREPARE}" --bsp "${RTTHREAD_BSP}" --arch "${RTTHREAD_ARCH}" --am-apps-only --am-apps-mk "${RTTHREAD_AM_APPS_MK}"
-  else
-    printf '# ECOS frontend RT-Thread smoke test uses no bundled AM apps.\n' > "${RTTHREAD_AM_APPS_MK}"
-  fi
-
-  RTTHREAD_WRAPPER_MK="$(cd "${TMPDIR}" && pwd)/rtthread-am.mk"
-  {
-    echo "include Makefile"
-    echo "CFLAGS += -Wno-error -DECC_FE_SOC"
-  } > "${RTTHREAD_WRAPPER_MK}"
-  make -C "${RTTHREAD_BSP}" -f "${RTTHREAD_WRAPPER_MK}" ARCH="${RTTHREAD_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" AM_APPS_MK="${RTTHREAD_AM_APPS_MK}" image
-
-  RTTHREAD_IMAGE="${RTTHREAD_BSP}/build/rtthread-${RTTHREAD_ARCH}"
-  cp -f "${RTTHREAD_IMAGE}.elf" "${PREFIX}.elf"
-  cp -f "${RTTHREAD_IMAGE}.bin" "${PREFIX}.bin"
-  "${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
-  "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
-  "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
-else
-  mapfile -t COMMON_SRCS < <(
-    find -L "${ROOT}/tests/common" -type f \( -name '*.c' -o -name '*.S' \) ! -path "${ROOT}/tests/common/soc_bootloader.S" | sort
+mapfile -t COMMON_SRCS < <(
+  find -L "${ROOT}/tests/common" -type f \( -name '*.c' -o -name '*.S' \) ! -path "${ROOT}/tests/common/soc_bootloader.S" | sort
+)
+if [[ "${NAME}" == "coremark" ]]; then
+  COREMARK_DIR="${ROOT}/tests/benchmarks/coremark"
+  COREMARK_PORT_DIR="${COREMARK_DIR}/ecos"
+  COREMARK_ITERATIONS="${ECOS_COREMARK_ITERATIONS:-128}"
+  COREMARK_TOTAL_DATA_SIZE="${ECOS_COREMARK_TOTAL_DATA_SIZE:-2000}"
+  COREMARK_HAS_FLOAT="${ECOS_COREMARK_HAS_FLOAT:-1}"
+  COREMARK_FLAGS_TEXT="${ECOS_COREMARK_FLAGS_STR:-${SIM_OPT_LEVEL},-march=${SIM_MARCH},-mabi=${SIM_MABI}}"
+  CFLAGS+=(
+    "-I${COREMARK_DIR}"
+    "-I${COREMARK_PORT_DIR}"
+    "-DITERATIONS=${COREMARK_ITERATIONS}"
+    "-DTOTAL_DATA_SIZE=${COREMARK_TOTAL_DATA_SIZE}"
+    "-DHAS_FLOAT=${COREMARK_HAS_FLOAT}"
+    -DPERFORMANCE_RUN=1
+    -DMAIN_HAS_NOARGC=1
+    "-DFLAGS_STR=\"${COREMARK_FLAGS_TEXT}\""
   )
-  if [[ "${NAME}" == "coremark" ]]; then
-    COREMARK_DIR="${ROOT}/tests/benchmarks/coremark"
-    COREMARK_PORT_DIR="${COREMARK_DIR}/ecos"
-    COREMARK_ITERATIONS="${ECOS_COREMARK_ITERATIONS:-128}"
-    COREMARK_TOTAL_DATA_SIZE="${ECOS_COREMARK_TOTAL_DATA_SIZE:-2000}"
-    COREMARK_HAS_FLOAT="${ECOS_COREMARK_HAS_FLOAT:-1}"
-    COREMARK_FLAGS_TEXT="${ECOS_COREMARK_FLAGS_STR:-${SIM_OPT_LEVEL},-march=${SIM_MARCH},-mabi=${SIM_MABI}}"
-    CFLAGS+=(
-      "-I${COREMARK_DIR}"
-      "-I${COREMARK_PORT_DIR}"
-      "-DITERATIONS=${COREMARK_ITERATIONS}"
-      "-DTOTAL_DATA_SIZE=${COREMARK_TOTAL_DATA_SIZE}"
-      "-DHAS_FLOAT=${COREMARK_HAS_FLOAT}"
-      -DPERFORMANCE_RUN=1
-      -DMAIN_HAS_NOARGC=1
-      "-DFLAGS_STR=\"${COREMARK_FLAGS_TEXT}\""
-    )
-    SRC="${COREMARK_DIR}/core_main.c"
-    COREMARK_SRCS=(
-      "${COREMARK_DIR}/core_list_join.c"
-      "${COREMARK_DIR}/core_matrix.c"
-      "${COREMARK_DIR}/core_state.c"
-      "${COREMARK_DIR}/core_util.c"
-      "${COREMARK_PORT_DIR}/core_portme.c"
-    )
-  else
-    COREMARK_SRCS=()
-  fi
-
-  OBJS=()
-  INDEX=0
-  for FILE in "${SRC}" "${COREMARK_SRCS[@]}" "${COMMON_SRCS[@]}"; do
-    OBJ="${TMPDIR}/obj_${INDEX}.o"
-    INDEX=$((INDEX + 1))
-    case "${FILE}" in
-      *.c)
-        "${CC}" -std=gnu11 "${CFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
-        ;;
-      *.S)
-        "${AS}" "${ASFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
-        ;;
-      *)
-        echo "Unsupported source: ${FILE}" >&2
-        exit 1
-        ;;
-    esac
-    OBJS+=("${OBJ}")
-  done
-
-  "${LD}" "${LDFLAGS[@]}" -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
-  "${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
-  "${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
-  "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
-  "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
+  SRC="${COREMARK_DIR}/core_main.c"
+  COREMARK_SRCS=(
+    "${COREMARK_DIR}/core_list_join.c"
+    "${COREMARK_DIR}/core_matrix.c"
+    "${COREMARK_DIR}/core_state.c"
+    "${COREMARK_DIR}/core_util.c"
+    "${COREMARK_PORT_DIR}/core_portme.c"
+  )
+else
+  COREMARK_SRCS=()
 fi
+
+OBJS=()
+INDEX=0
+for FILE in "${SRC}" "${COREMARK_SRCS[@]}" "${COMMON_SRCS[@]}"; do
+  OBJ="${TMPDIR}/obj_${INDEX}.o"
+  INDEX=$((INDEX + 1))
+  case "${FILE}" in
+    *.c)
+      "${CC}" -std=gnu11 "${CFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
+      ;;
+    *.S)
+      "${AS}" "${ASFLAGS[@]}" -c -o "${OBJ}" "${FILE}"
+      ;;
+    *)
+      echo "Unsupported source: ${FILE}" >&2
+      exit 1
+      ;;
+  esac
+  OBJS+=("${OBJ}")
+done
+
+"${LD}" "${LDFLAGS[@]}" -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
+"${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
+"${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
+"${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
+"${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
 
 PAYLOAD_SIZE="$(wc -c < "${PREFIX}.bin")"
 if [[ "${SOC_USE_BOOTLOADER}" != "1" ]]; then

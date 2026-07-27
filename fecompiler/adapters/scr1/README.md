@@ -6,7 +6,7 @@ SCR1 is integrated as an experimental ECOS frontend CPU adapter.
 - ECOS wrapper: `ecos_scr1_cpu_wrapper.sv`
 - CPU socket: `ysyx-axi-cpu-socket-v1`
 - Supported suites: `smoke`, `cpu-tests`
-- Not supported yet: RT-Thread and difftest
+- Not supported yet: difftest
 
 The adapter keeps SCR1 upstream RTL unmodified.  `scr1_arch_custom.svh` sets the
 ECOS reset vector and simulation memory map, while the wrapper adapts SCR1's

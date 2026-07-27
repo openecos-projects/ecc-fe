@@ -54,7 +54,7 @@ flowchart LR
         RTL[单独 RTL / legacy filelist]
         TB[C++ testbench]
         CPP[额外 C++ sources<br/>dpi_mem.cpp / difftest.cpp 等]
-        CASES[sim_images / sim_all_tests<br/>sim_program_names / rtthread]
+        CASES[sim_images / sim_all_tests<br/>sim_program_names]
         FLAGS[sim_cflags / sim_ldflags / sim_run_args]
     end
 
@@ -172,7 +172,6 @@ sim_verilator/
    - 显式镜像：`sim_images`。
    - 扫描镜像：`sim_all_tests + sim_tests_dir`。
    - 先编译程序再运行：`sim_build_all_programs`, `sim_program_names`, `sim_program_sources`, `sim_programs_dir`。
-   - `rtthread` 被当作普通 case，输出在 `sim_verilator/output/cases/rtthread.soc/`。
 
 ## 常见 SoC + CPU 仿真链路
 

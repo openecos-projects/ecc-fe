@@ -107,8 +107,7 @@ check_cpu_rtl() {
   archive="$(archive_path ecc-fe-cpu-rtl-latest.tar.gz)"
   check_archive "${archive}" || return
   require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/README"
-  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/rtthread_prepare.py"
-  for root in cv32e40p cva6 darkriscv ibex learn-fpga picorv32 rt-thread-am scr1 serv vexriscv; do
+  for root in cv32e40p cva6 darkriscv ibex learn-fpga picorv32 scr1 serv vexriscv; do
     require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/${root}/"
   done
 }

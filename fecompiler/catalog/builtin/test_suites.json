@@ -18,15 +18,6 @@
     "default_cases": ["add"]
   },
   {
-    "id": "rtthread",
-    "name": "RT-Thread",
-    "description": "RT-Thread AM boot smoke case with terminal-style log validation.",
-    "isa": ["rv32"],
-    "requires": ["ysyx-am-soc", "riscv-gcc", "scons", "rt-thread-am"],
-    "status": "stable",
-    "default_cases": ["rtthread"]
-  },
-  {
     "id": "coremark",
     "name": "CoreMark",
     "description": "Deterministic CoreMark-style benchmark smoke run for frontend simulation.",

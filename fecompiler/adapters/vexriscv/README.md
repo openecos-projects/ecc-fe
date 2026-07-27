@@ -14,7 +14,7 @@ Current support:
 - ECOS wrapper: `ecos_vexriscv_cpu_wrapper`,
 - SoC-facing module: `cpu_top`,
 - supported suites: `smoke`, `cpu-tests`,
-- difftest/RT-Thread: not supported.
+- Difftest is not supported.
 
 Planned ECOS work:
 

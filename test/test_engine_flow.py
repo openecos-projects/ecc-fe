@@ -37,8 +37,6 @@ from fecompiler.tools.verilator.runner import (
     build_lint_summary,
     parse_verilator_diagnostics,
     _prepare_sim_images,
-    _rtthread_build_preflight_errors,
-    _rtthread_prepare_helper,
     _sim_cases_from_images,
     _sim_cflags_args,
     _sim_cpp_sources,
@@ -214,7 +212,7 @@ def _write_fake_soc_manifests(soc_root: Path, directory_value: str = ".") -> Non
                 "wrapper_top": "ecos_sim_top",
                 "cpu_socket_contract": "ysyx-axi-cpu-socket-v1",
                 "supports_difftest": True,
-                "supported_test_suites": ["smoke", "cpu-tests", "rtthread", "coremark"],
+                "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
                 "directory": directory_value,
                 "tags": ["default"],
             },
@@ -1201,7 +1199,7 @@ def test_workspace_cli_falls_back_to_argparse_when_typer_is_missing(
     assert response["data"]["directory"] == str(tmp_path / "missing")
 
 
-def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
+def test_sim_suite_switching_resets_cpu_and_coremark_runtime_fields(tmp_path):
     programs_dir = tmp_path / "programs"
     programs_dir.mkdir()
     for name in ("add", "load-store", "fib", "coremark"):
@@ -1215,9 +1213,11 @@ def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
         "soc_filelist": str(soc_root / "filelist.soc.f"),
     }
 
-    _apply_sim_test_suite(workspace, "rtthread")
-    assert workspace["sim_program_names"] == ["rtthread"]
+    _apply_sim_test_suite(workspace, "coremark")
+    assert workspace["sim_program_names"] == ["coremark"]
     assert workspace["sim_build_all_programs"] is False
+    assert "--diff" not in workspace["sim_run_args"]
+    assert workspace["sim_compile_opt_level"] == "-O2"
 
     _apply_sim_test_suite(workspace, "cpu_tests", "selected", ["fib"])
     assert workspace["sim_program_names"] == ["fib"]
@@ -1225,27 +1225,11 @@ def test_sim_suite_switching_resets_cpu_and_rtthread_runtime_fields(tmp_path):
     assert "--diff" in workspace["sim_run_args"]
     assert "--timeout-ok" not in workspace["sim_run_args"]
 
-    _apply_sim_test_suite(workspace, "rtthread")
-    assert workspace["sim_program_names"] == ["rtthread"]
-    assert workspace["sim_run_args"] == [
-        "--max-cycles",
-        "10000000",
-        "--diff",
-        "--ref",
-        str(soc_root / "tools" / "riscv32-spike-so"),
-        "--diff-image-offset",
-        "0x100",
-        "--diff-reset-vector",
-        "0x80000000",
-        "--timeout-ok",
-    ]
-
-    _apply_sim_test_suite(workspace, "coremark")
-    assert workspace["sim_program_names"] == ["coremark"]
-    assert workspace["sim_build_all_programs"] is False
-    assert "--diff" not in workspace["sim_run_args"]
+    _apply_sim_test_suite(workspace, "cpu_tests", "all", [])
+    assert workspace["sim_program_names"] == []
+    assert workspace["sim_build_all_programs"] is True
+    assert "--diff" in workspace["sim_run_args"]
     assert "--timeout-ok" not in workspace["sim_run_args"]
-    assert workspace["sim_compile_opt_level"] == "-O2"
 
 
 def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
@@ -2050,149 +2034,6 @@ def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypat
     assert [run["ok"] for run in history["runs"][:3]] == [True, False, True]
 
 
-def test_rtthread_run_does_not_reuse_previous_cpu_tests_cases(tmp_path, monkeypatch):
-    rtl = tmp_path / "chip_top.v"
-    tb = tmp_path / "tb_main.cpp"
-    soc_root = tmp_path / "SoC"
-    programs_dir = soc_root / "tests" / "programs"
-    build_script = soc_root / "scripts" / "build_test.sh"
-    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
-    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
-    programs_dir.mkdir(parents=True)
-    build_script.parent.mkdir(parents=True)
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    (programs_dir / "add.c").write_text("int main(){return 0;}\n", encoding="utf-8")
-    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-
-    spec = CreateWorkspaceData(
-        directory=str(tmp_path / "ws_rtthread_no_reuse"),
-        parameters={"Design": "chip", "Top module": "chip_top"},
-        origin_verilog=str(rtl),
-        soc_filelist=str(soc_root / "filelist.soc.f"),
-        testbench=str(tb),
-        sim_programs_dir=str(programs_dir),
-        sim_build_test_script=str(build_script),
-        sim_program_names=["add"],
-    )
-    create_workspace(spec)
-    ws = load_workspace(str(tmp_path / "ws_rtthread_no_reuse"))
-
-    def _fake_run(cmd, capture_output=True, text=True, env=None):
-        if _is_verilator_compile_cmd(cmd):
-            _write_fake_sim_binary(cmd)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if "--name" in cmd:
-            name = cmd[cmd.index("--name") + 1]
-            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
-            return SimpleNamespace(returncode=0, stdout="booted but no shell transcript\n", stderr="")
-            return SimpleNamespace(returncode=0, stdout="cpu ok\nHIT GOOD TRAP\n", stderr="")
-
-    def _fake_sim_process(cmd, *, stream_output):
-        if "--image" in cmd and Path(cmd[cmd.index("--image") + 1]).name == "rtthread.soc.bin":
-            return 0, "booted but no shell transcript\n"
-        return 0, "cpu ok\nHIT GOOD TRAP\n"
-
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._run_sim_process", _fake_sim_process)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
-
-    engine = EngineFlow(workspace=ws)
-    engine.create_step_workspaces()
-
-    ws["sim_program_names"] = ["add"]
-    state = engine.run_step("sim", rerun=True)
-    assert state == StateEnum.Success
-    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
-    cpu_payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
-    assert cpu_payload["suite"] == "cpu_tests"
-    assert cpu_payload["cases"][0]["name"] == "add.soc"
-
-    ws["sim_program_names"] = ["rtthread"]
-    ws["sim_run_args"] = ["--max-cycles", "10000000", "--wave", "/dev/null"]
-    state = engine.run_step("sim", rerun=True)
-
-    rtthread_payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
-    rtthread_case = rtthread_payload["cases"][0]
-    assert state == StateEnum.Incomplete
-    assert rtthread_payload["suite"] == "rtthread"
-    assert rtthread_case["name"] == "rtthread.soc"
-    assert rtthread_case["ok"] is False
-    assert "Thread Operating System" in rtthread_case["validation"]["missing_markers"]
-    assert cpu_payload["run_id"] != rtthread_payload["run_id"]
-
-
-def test_rtthread_terminal_markers_are_required_for_success(tmp_path, monkeypatch):
-    rtl = tmp_path / "chip_top.v"
-    tb = tmp_path / "tb_main.cpp"
-    soc_root = tmp_path / "SoC"
-    programs_dir = soc_root / "tests" / "programs"
-    build_script = soc_root / "scripts" / "build_test.sh"
-    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
-    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
-    programs_dir.mkdir(parents=True)
-    build_script.parent.mkdir(parents=True)
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-
-    spec = CreateWorkspaceData(
-        directory=str(tmp_path / "ws_rtthread_markers"),
-        parameters={"Design": "chip", "Top module": "chip_top"},
-        origin_verilog=str(rtl),
-        soc_filelist=str(soc_root / "filelist.soc.f"),
-        testbench=str(tb),
-        sim_programs_dir=str(programs_dir),
-        sim_build_test_script=str(build_script),
-        sim_program_names=["rtthread"],
-        sim_run_args=["--max-cycles", "10000000", "--wave", "/dev/null"],
-    )
-    create_workspace(spec)
-    ws = load_workspace(str(tmp_path / "ws_rtthread_markers"))
-
-    def _fake_run(cmd, capture_output=True, text=True, env=None):
-        if _is_verilator_compile_cmd(cmd):
-            _write_fake_sim_binary(cmd)
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if "--name" in cmd:
-            name = cmd[cmd.index("--name") + 1]
-            out_dir = Path(cmd[cmd.index("--out_dir") + 1])
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    def _fake_sim_process(cmd, *, stream_output):
-        output = "\n".join([
-            "[soc-sim][difftest] enabled",
-            "Thread Operating System",
-            "Hello RISC-V!",
-            "msh />help",
-            "RT-Thread shell commands:",
-            "[soc-sim] timeout after 10000000 cycles",
-            "",
-        ])
-        return 0, output
-
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._run_sim_process", _fake_sim_process)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
-
-    engine = EngineFlow(workspace=ws)
-    engine.create_step_workspaces()
-    state = engine.run_step("sim", rerun=True)
-
-    assert state == StateEnum.Success
-    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
-    payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
-    case = payload["cases"][0]
-    assert payload["suite"] == "rtthread"
-    assert case["ok"] is True
-    assert case["validation"]["missing_markers"] == []
-
-
 def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
     rtl = tmp_path / "chip_top.v"
     rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
@@ -2225,7 +2066,6 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
         return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
     state = engine.run_step("sim", rerun=True)
 
     assert state == StateEnum.Success
@@ -2448,39 +2288,6 @@ def test_coremark_validation_errors_fail_sim_case(tmp_path, monkeypatch):
     assert "Errors detected: yes" in log_text
 
 
-def test_rtthread_program_enables_default_difftest_args(tmp_path):
-    soc_root = tmp_path / "SoC"
-    soc_root.mkdir()
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    ref_so = soc_root / "tools" / "riscv32-spike-so"
-    ref_so.parent.mkdir()
-    ref_so.write_bytes(b"")
-
-    args = _sim_run_args({
-        "soc_filelist": str(soc_root / "filelist.soc.f"),
-        "sim_program_names": ["rtthread"],
-    })
-
-    assert "--max-cycles" in args
-    assert args[args.index("--max-cycles") + 1] == "10000000"
-    assert "--diff" in args
-    assert args[args.index("--ref") + 1] == str(ref_so)
-    assert args[args.index("--diff-image-offset") + 1] == "0x100"
-    assert args[args.index("--diff-reset-vector") + 1] == "0x80000000"
-    assert "--timeout-ok" in args
-
-
-def test_rtthread_program_omits_difftest_for_generic_cpu():
-    args = _sim_run_args({
-        "sim_program_names": ["rtthread"],
-        "cpu_supports_difftest": False,
-        "soc_supports_difftest": True,
-        "sim_run_args": ["--max-cycles", "10000000", "--timeout-ok"],
-    })
-
-    assert args == ["--max-cycles", "10000000", "--timeout-ok"]
-
-
 def test_legacy_custom_cpu_workspace_forces_difftest_stub(tmp_path):
     soc_root = tmp_path / "SoC"
     driver = soc_root / "driver"
@@ -2518,46 +2325,7 @@ def test_legacy_custom_cpu_workspace_forces_difftest_stub(tmp_path):
     assert any(item["label"] == "Difftest" and item["status"] == "Stub" for item in contracts)
 
 
-def test_rtthread_program_uses_external_difftest_ref_when_soc_ref_is_split(tmp_path, monkeypatch):
-    soc_root = tmp_path / "SoC"
-    ref_root = tmp_path / "ecc-fe-difftest-ref"
-    ref_so = ref_root / "tools" / "riscv32-spike-so"
-    soc_root.mkdir()
-    ref_so.parent.mkdir(parents=True)
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    ref_so.write_bytes(b"")
-    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(ref_root))
-
-    args = _sim_run_args({
-        "soc_filelist": str(soc_root / "filelist.soc.f"),
-        "sim_program_names": ["rtthread"],
-    })
-
-    assert args[args.index("--ref") + 1] == str(ref_so.resolve())
-
-
-def test_rtthread_program_keeps_explicit_difftest_args(tmp_path):
-    soc_root = tmp_path / "SoC"
-    soc_root.mkdir()
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-
-    explicit = [
-        "--max-cycles",
-        "1234",
-        "--diff",
-        "--ref",
-        "/tmp/custom-ref.so",
-    ]
-    args = _sim_run_args({
-        "soc_filelist": str(soc_root / "filelist.soc.f"),
-        "sim_program_names": ["rtthread"],
-        "sim_run_args": explicit,
-    })
-
-    assert args == explicit
-
-
-def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch):
+def test_build_all_programs_emit_separate_case_images(tmp_path, monkeypatch):
     soc_root = tmp_path / "SoC"
     programs_dir = soc_root / "tests" / "programs"
     build_script = soc_root / "scripts" / "build_test.sh"
@@ -2580,14 +2348,13 @@ def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
 
     case_root = tmp_path / "ws" / "sim_verilator" / "output" / "cases"
     images, ok = _prepare_sim_images(
         {
             "soc_filelist": str(soc_root / "filelist.soc.f"),
             "sim_build_all_programs": True,
-            "sim_program_names": ["rtthread"],
+            "sim_program_names": [],
             "sim_programs_dir": str(programs_dir),
             "sim_run_args": ["--diff"],
         },
@@ -2595,167 +2362,17 @@ def test_build_all_programs_and_rtthread_emit_case_images(tmp_path, monkeypatch)
     )
 
     assert ok is True
-    assert [Path(call[call.index("--name") + 1]).name for call in run_calls] == ["add", "bit", "rtthread"]
-    rtthread_call = next(call for call in run_calls if call[call.index("--name") + 1] == "rtthread")
-    assert "--src" not in rtthread_call
+    assert [Path(call[call.index("--name") + 1]).name for call in run_calls] == ["add", "bit"]
+    assert all("--src" in call for call in run_calls)
     expected = {
         case_root / "add.soc" / "add.soc.bin",
         case_root / "bit.soc" / "bit.soc.bin",
-        case_root / "rtthread.soc" / "rtthread.soc.bin",
     }
     assert {Path(image) for image in images} == expected
 
     cases = _sim_cases_from_images(images, ["--diff"])
-    rtthread_case = next(case for case in cases if case["name"] == "rtthread.soc")
-    add_case = next(case for case in cases if case["name"] == "add.soc")
-    assert "--timeout-ok" in rtthread_case["args"]
-    assert "--timeout-ok" not in add_case["args"]
-
-
-def test_rtthread_build_failure_reports_dependency_diagnosis(tmp_path, monkeypatch):
-    soc_root = tmp_path / "SoC"
-    programs_dir = soc_root / "tests" / "programs"
-    build_script = soc_root / "scripts" / "build_test.sh"
-    programs_dir.mkdir(parents=True)
-    build_script.parent.mkdir(parents=True)
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    build_script.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
-    build_script.chmod(0o755)
-
-    run_calls: list[list[str]] = []
-
-    def _fake_run(cmd, capture_output=True, text=True, env=None):
-        run_calls.append(list(cmd))
-        return SimpleNamespace(
-            returncode=1,
-            stdout="",
-            stderr="scons is required to build rt-thread-am\n",
-        )
-
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_build_preflight_errors", lambda workspace: [])
-
-    build_log = tmp_path / "build_programs.log.txt"
-    images, ok = _prepare_sim_images(
-        {
-            "soc_filelist": str(soc_root / "filelist.soc.f"),
-            "sim_program_names": ["rtthread"],
-            "sim_programs_dir": str(programs_dir),
-            "sim_run_args": ["--diff"],
-        },
-        build_log_path=build_log,
-        case_output_root=tmp_path / "cases",
-    )
-
-    assert images == []
-    assert ok is False
-    assert run_calls and "--src" not in run_calls[0]
-    content = build_log.read_text(encoding="utf-8")
-    assert "src=rtthread-am BSP" in content
-    assert "scons is required to build rt-thread-am" in content
-    assert "diagnosis: missing dependency: install scons or keep the RT-Thread fallback helper available" in content
-
-
-def test_rtthread_build_preflight_reports_missing_scons_without_spawn(tmp_path, monkeypatch):
-    soc_root = tmp_path / "SoC"
-    programs_dir = soc_root / "tests" / "programs"
-    build_script = soc_root / "scripts" / "build_test.sh"
-    rtthread_bsp = soc_root.parent / "rt-thread-am" / "bsp" / "abstract-machine"
-    am_home = tmp_path / "abstract-machine"
-    programs_dir.mkdir(parents=True)
-    build_script.parent.mkdir(parents=True)
-    rtthread_bsp.mkdir(parents=True)
-    am_home.mkdir()
-    (am_home / "Makefile").write_text("", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-    build_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    build_script.chmod(0o755)
-
-    def _fake_which(command):
-        if command == "scons":
-            return None
-        return f"/usr/bin/{command}"
-
-    def _fake_run(*args, **kwargs):
-        raise AssertionError("rtthread preflight should fail before subprocess.run")
-
-    monkeypatch.setenv("AM_HOME", str(am_home))
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner._rtthread_prepare_helper", lambda workspace: None)
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
-
-    build_log = tmp_path / "build_programs.log.txt"
-    images, ok = _prepare_sim_images(
-        {
-            "soc_filelist": str(soc_root / "filelist.soc.f"),
-            "sim_program_names": ["rtthread"],
-            "sim_programs_dir": str(programs_dir),
-            "sim_run_args": ["--diff"],
-        },
-        build_log_path=build_log,
-        case_output_root=tmp_path / "cases",
-    )
-
-    assert images == []
-    assert ok is False
-    content = build_log.read_text(encoding="utf-8")
-    assert "scons is required to build rt-thread-am" in content
-    assert "diagnosis: missing dependency: install scons or keep the RT-Thread fallback helper available" in content
-
-
-def test_rtthread_build_preflight_allows_fallback_helper_without_scons(tmp_path, monkeypatch):
-    soc_root = tmp_path / "thirdparty" / "SoC"
-    helper = soc_root.parent / "rtthread_prepare.py"
-    rtthread_bsp = soc_root.parent / "rt-thread-am" / "bsp" / "abstract-machine"
-    am_home = tmp_path / "abstract-machine"
-    soc_root.mkdir(parents=True)
-    rtthread_bsp.mkdir(parents=True)
-    am_home.mkdir()
-    helper.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-    (am_home / "Makefile").write_text("", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-
-    def _fake_which(command):
-        if command == "scons":
-            return None
-        return f"/usr/bin/{command}"
-
-    monkeypatch.setenv("AM_HOME", str(am_home))
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
-
-    workspace = {"soc_filelist": str(soc_root / "filelist.soc.f")}
-
-    assert _rtthread_prepare_helper(workspace) == helper.resolve()
-    assert _rtthread_build_preflight_errors(workspace) == []
-
-
-def test_rtthread_build_preflight_resolves_external_cpu_rtl_resource(tmp_path, monkeypatch):
-    soc_root = tmp_path / "ecc-fe-soc-ysyx-am" / "SoC"
-    cpu_resource = tmp_path / "ecc-fe-cpu-rtl"
-    helper = cpu_resource / "thirdparty" / "rtthread_prepare.py"
-    rtthread_bsp = cpu_resource / "thirdparty" / "rt-thread-am" / "bsp" / "abstract-machine"
-    am_home = tmp_path / "abstract-machine"
-    soc_root.mkdir(parents=True)
-    helper.parent.mkdir(parents=True)
-    rtthread_bsp.mkdir(parents=True)
-    am_home.mkdir()
-    helper.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-    (am_home / "Makefile").write_text("", encoding="utf-8")
-    (soc_root / "filelist.soc.f").write_text("", encoding="utf-8")
-
-    def _fake_which(command):
-        if command == "scons":
-            return None
-        return f"/usr/bin/{command}"
-
-    monkeypatch.setenv("AM_HOME", str(am_home))
-    monkeypatch.setenv("ECOS_FE_RESOURCE_ROOTS", str(cpu_resource))
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.shutil.which", _fake_which)
-
-    workspace = {"soc_filelist": str(soc_root / "filelist.soc.f")}
-
-    assert _rtthread_prepare_helper(workspace) == helper.resolve()
-    assert _rtthread_build_preflight_errors(workspace) == []
+    assert [case["name"] for case in cases] == ["add.soc", "bit.soc"]
+    assert all("--timeout-ok" not in case["args"] for case in cases)
 
 
 def test_elab_check_result_rejects_20_errors_log(tmp_path):

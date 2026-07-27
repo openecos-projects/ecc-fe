@@ -7,7 +7,6 @@ import re
 import shutil
 import shlex
 import subprocess
-import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -32,11 +31,7 @@ from fecompiler.tools.verilator.subflow import (
     init_lint_subflow,
     init_sim_subflow,
 )
-from fecompiler.resources import (
-    resolve_difftest_reference_model,
-    resolve_rtthread_am_root,
-    resolve_rtthread_prepare_helper,
-)
+from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.utility.json import json_read, json_write
 
 
@@ -80,13 +75,6 @@ _DIFFTEST_PROGRESS_RE = re.compile(
 _COREMARK_ITERATIONS_RE = re.compile(r"^\s*Iterations\s*:\s*(?P<value>[0-9]+)\s*$", re.MULTILINE)
 _COREMARK_ITERATIONS_PER_SEC_RE = re.compile(r"^\s*Iterations/Sec\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
 _COREMARK_PER_MHZ_RE = re.compile(r"^\s*CoreMark/MHz\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
-_RTTHREAD_REQUIRED_LOG_MARKERS = (
-    "Thread Operating System",
-    "Hello RISC-V!",
-    "msh />help",
-    "RT-Thread shell commands:",
-    "[soc-sim] timeout after",
-)
 _DIFFTEST_SOURCE_NAME = "difftest.cpp"
 _DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
 _DIFFTEST_UNSUPPORTED_CPU_IDS = {
@@ -183,8 +171,6 @@ def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
     args = [str(arg) for arg in workspace.get("sim_run_args", []) or []]
     if not _sim_difftest_supported(workspace):
         return _strip_difftest_args(args)
-    if _rtthread_requested(workspace) and _sim_difftest_supported(workspace) and not _arg_present(args, "--diff"):
-        args = _append_rtthread_difftest_args(workspace, args)
     return args
 
 
@@ -218,48 +204,9 @@ def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
     return _sim_difftest_supported(workspace) and "--diff" in _sim_run_args(workspace)
 
 
-def _run_sim_process(cmd: list[str], *, stream_output: bool) -> tuple[int, str]:
-    if not stream_output:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        return int(result.returncode), result.stdout + result.stderr
-
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
-    )
-    output_chunks: list[str] = []
-    assert process.stdout is not None
-    try:
-        try:
-            while True:
-                chunk = os.read(process.stdout.fileno(), 4096)
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", errors="replace")
-                output_chunks.append(text)
-                sys.stdout.write(text)
-                sys.stdout.flush()
-        finally:
-            process.stdout.close()
-    except BaseException:
-        process.kill()
-        process.wait()
-        raise
-
-    return int(process.wait()), "".join(output_chunks)
-
-
-def _rtthread_requested(workspace: dict[str, Any]) -> bool:
-    for name in workspace.get("sim_program_names", []) or []:
-        text = str(name).strip()
-        if text == "rtthread" or Path(text).stem == "rtthread":
-            return True
-    for source in workspace.get("sim_program_sources", []) or []:
-        if Path(str(source).strip()).stem == "rtthread":
-            return True
-    return False
+def _run_sim_process(cmd: list[str]) -> tuple[int, str]:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return int(result.returncode), result.stdout + result.stderr
 
 
 def _coremark_requested(workspace: dict[str, Any]) -> bool:
@@ -276,16 +223,12 @@ def _coremark_requested(workspace: dict[str, Any]) -> bool:
 
 
 def _sim_suite_name(workspace: dict[str, Any]) -> str:
-    if _rtthread_requested(workspace):
-        return "rtthread"
     if _coremark_requested(workspace):
         return "coremark"
     return "cpu_tests"
 
 
 def _suite_label(suite: str) -> str:
-    if suite == "rtthread":
-        return "RT-Thread"
     if suite == "coremark":
         return "CoreMark"
     return "CPU Tests"
@@ -293,30 +236,6 @@ def _suite_label(suite: str) -> str:
 
 def _arg_present(args: list[str], option: str) -> bool:
     return option in args or any(arg.startswith(f"{option}=") for arg in args)
-
-
-def _append_rtthread_difftest_args(workspace: dict[str, Any], args: list[str]) -> list[str]:
-    out = list(args)
-    if not _arg_present(out, "--max-cycles"):
-        out.extend(["--max-cycles", "10000000"])
-    out.extend([
-        "--diff",
-        "--ref",
-        str(_rtthread_ref_so(workspace)),
-        "--diff-image-offset",
-        "0x100",
-        "--diff-reset-vector",
-        "0x80000000",
-        "--timeout-ok",
-    ])
-    return out
-
-
-def _rtthread_ref_so(workspace: dict[str, Any]) -> Path:
-    soc_root = _workspace_soc_root(workspace)
-    if soc_root is None:
-        soc_root = _invocation_root() / _WORKSPACE_REL_SOC_ROOT
-    return resolve_difftest_reference_model(soc_root)
 
 
 def _resolve_path(path_text: str, *, base: Path | None = None) -> Path:
@@ -428,8 +347,6 @@ def _sim_cases_from_images(images: list[str], run_args: list[str]) -> list[dict[
         seen[base_name] = idx + 1
         case_name = base_name if idx == 0 else f"{base_name}_{idx + 1}"
         args = ["--image", image, *base_args]
-        if case_name == "rtthread.soc" and not _arg_present(args, "--timeout-ok"):
-            args.append("--timeout-ok")
         cases.append(
             {
                 "name": case_name,
@@ -451,12 +368,6 @@ def _effective_sim_cases(images: list[str], run_args: list[str]) -> list[dict[st
     return [{"name": case_name, "image": image, "args": run_args}]
 
 
-def _is_rtthread_case(case_name: str, image: str) -> bool:
-    if case_name == "rtthread.soc":
-        return True
-    return Path(str(image)).stem == "rtthread.soc"
-
-
 def _is_coremark_case(case_name: str, image: str) -> bool:
     if case_name == "coremark.soc":
         return True
@@ -475,17 +386,7 @@ def _case_output_ok(case_name: str, image: str, returncode: int, output: str) ->
         ok = returncode == 0 and has_validated and not has_error and "%Error" not in output
         return ok, validation
 
-    if not _is_rtthread_case(case_name, image):
-        return _sim_output_ok(returncode, output), {}
-
-    missing = [marker for marker in _RTTHREAD_REQUIRED_LOG_MARKERS if marker not in output]
-    validation = {
-        "type": "rtthread_terminal",
-        "required_markers": list(_RTTHREAD_REQUIRED_LOG_MARKERS),
-        "missing_markers": missing,
-    }
-    ok = returncode == 0 and not missing and "FAILED" not in output and "%Error" not in output
-    return ok, validation
+    return _sim_output_ok(returncode, output), {}
 
 
 def _workspace_frequency_mhz(workspace: dict[str, Any]) -> float | None:
@@ -999,15 +900,6 @@ def _case_terminal_output(
         ])
         if metrics:
             lines.extend(_format_coremark_score_lines(metrics))
-    if validation.get("type") == "rtthread_terminal":
-        missing = validation.get("missing_markers", [])
-        lines.extend([
-            "",
-            "RT-Thread terminal validation",
-            "-----------------------------",
-            f"Required markers: {len(validation.get('required_markers', []))}",
-            f"Missing markers : {', '.join(missing) if missing else '-'}",
-        ])
     if validation.get("type") == "coremark_validation":
         lines.extend([
             "",
@@ -1193,8 +1085,6 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     _apply_cpu_program_build_env(workspace, env, lines)
     if any(src.stem == "coremark" for src in sources):
         _apply_coremark_build_env(workspace, env, lines)
-    if any(src.stem == "rtthread" for src in sources):
-        _apply_rtthread_build_env(workspace, env, lines)
     link_base = str(workspace.get("sim_program_link_base", "")).strip()
     if link_base:
         env["SOC_PROGRAM_LINK_BASE"] = link_base
@@ -1205,24 +1095,16 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         out_dir = flat_out_dir if flat_out_dir is not None else case_output_root / case_name
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = _build_program_command(build_script, src, name, out_dir)
-        preflight_errors = _rtthread_build_preflight_errors(workspace) if name == "rtthread" else []
-        if preflight_errors:
-            output = "\n".join(preflight_errors)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            output = (result.stdout + result.stderr).strip()
+            rc = int(result.returncode)
+        except OSError as exc:
+            output = str(exc)
             rc = 1
-        else:
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-                output = (result.stdout + result.stderr).strip()
-                rc = int(result.returncode)
-            except OSError as exc:
-                output = str(exc)
-                rc = 1
-        lines.append(f"[build_program] name={name} rc={rc} src={_build_program_source_label(src, name)}")
+        lines.append(f"[build_program] name={name} rc={rc} src={src}")
         if output:
             lines.append(output)
-        diagnosis = _build_program_failure_diagnosis(name, output)
-        if rc != 0 and diagnosis:
-            lines.append(f"[build_program] diagnosis: {diagnosis}")
         img = out_dir / f"{name}.soc.bin"
         if rc == 0 and img.exists():
             canonical = str(img.resolve())
@@ -1240,100 +1122,12 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
 
 
 def _build_program_command(build_script: Path, src: Path, name: str, out_dir: Path) -> list[str]:
-    if name == "rtthread":
-        return [
-            str(build_script),
-            "--name", "rtthread",
-            "--out_dir", str(out_dir),
-        ]
     return [
         str(build_script),
         "--src", str(src),
         "--name", name,
         "--out_dir", str(out_dir),
     ]
-
-
-def _build_program_source_label(src: Path, name: str) -> str:
-    return "rtthread-am BSP" if name == "rtthread" else str(src)
-
-
-def _apply_rtthread_build_env(workspace: dict[str, Any], env: dict[str, str], lines: list[str]) -> None:
-    soc_root = _workspace_soc_root(workspace)
-    rtthread_root = resolve_rtthread_am_root(soc_root)
-    if rtthread_root.exists():
-        env["RTTHREAD_AM_ROOT"] = str(rtthread_root)
-        lines.append(f"[build_program] rtthread_am_root={rtthread_root}")
-
-    helper = resolve_rtthread_prepare_helper(soc_root)
-    if helper.is_file():
-        env["RTTHREAD_PREPARE"] = str(helper)
-        lines.append(f"[build_program] rtthread_prepare={helper}")
-
-
-def _build_program_failure_diagnosis(name: str, output: str) -> str:
-    if name != "rtthread":
-        return ""
-    if "scons is required to build rt-thread-am" in output:
-        return "missing dependency: install scons or keep the RT-Thread fallback helper available"
-    if "AM_HOME must point to an AbstractMachine repo" in output:
-        return "missing dependency: set AM_HOME to an AbstractMachine repo"
-    if "No RISC-V GCC toolchain found in PATH" in output:
-        return "missing dependency: add a RISC-V GCC toolchain to PATH"
-    if "rt-thread-am BSP not found" in output:
-        return "missing dependency: initialize the rt-thread-am submodule"
-    return ""
-
-
-def _rtthread_build_preflight_errors(workspace: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-
-    soc_root = _workspace_soc_root(workspace)
-    rtthread_root = resolve_rtthread_am_root(soc_root)
-    rtthread_bsp = rtthread_root / "bsp" / "abstract-machine"
-    if not rtthread_bsp.is_dir():
-        errors.append(f"rt-thread-am BSP not found: {rtthread_bsp}")
-
-    am_home = Path(os.getenv("AM_HOME", "")).expanduser() if os.getenv("AM_HOME") else Path("/home/luyoung/ysyx-workbench/abstract-machine")
-    if not (am_home / "Makefile").is_file():
-        errors.append("AM_HOME must point to an AbstractMachine repo")
-
-    cross_compile = _riscv_cross_compile_prefix()
-    if not cross_compile:
-        errors.append("No RISC-V GCC toolchain found in PATH")
-    elif shutil.which(f"{cross_compile}gcc") is None:
-        errors.append(f"Configured cross toolchain prefix is invalid: {cross_compile}")
-
-    hexdump = os.getenv("HEXDUMP_BIN", "hexdump")
-    if shutil.which(hexdump) is None:
-        errors.append(f"hexdump tool not found: {hexdump}")
-
-    if shutil.which("scons") is None and _rtthread_prepare_helper(workspace) is None:
-        errors.append("scons is required to build rt-thread-am")
-
-    return errors
-
-
-def _rtthread_prepare_helper(workspace: dict[str, Any]) -> Path | None:
-    soc_root = _workspace_soc_root(workspace)
-    helper = resolve_rtthread_prepare_helper(soc_root)
-    return helper if helper.is_file() else None
-
-
-def _riscv_cross_compile_prefix() -> str:
-    if os.getenv("RISCV_PREFIX", "").strip():
-        return os.getenv("RISCV_PREFIX", "").strip()
-    for prefix in (
-        "riscv32-unknown-elf-",
-        "riscv64-unknown-elf-",
-        "riscv64-none-elf-",
-        "riscv-none-elf-",
-        "riscv64-unknown-linux-gnu-",
-        "riscv64-linux-gnu-",
-    ):
-        if shutil.which(f"{prefix}gcc") is not None:
-            return prefix
-    return ""
 
 
 def _invocation_root() -> Path:
@@ -1979,10 +1773,7 @@ class VerilatorSimStep(BaseStep):
                 output = f"image not found: {image}\n"
                 rc = 1
             else:
-                rc, output = _run_sim_process(
-                    [str(sim_bin), *run_args],
-                    stream_output=case_name == "rtthread.soc",
-                )
+                rc, output = _run_sim_process([str(sim_bin), *run_args])
 
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
             metrics = _sim_case_metrics(run_args, rc, output, case_ok)
