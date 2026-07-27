@@ -13,3 +13,8 @@ command -v verilator
 command -v riscv32-unknown-elf-gcc || command -v riscv64-unknown-elf-gcc
 command -v yosys
 ```
+
+The CPU RTL release archive is trimmed to the source trees required by the
+built-in adapter filelists, plus the corresponding license and notice files.
+Large upstream test, example, verification, and generated-output trees remain
+in the source submodules and are not part of the runtime resource package.
