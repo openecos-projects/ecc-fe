@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1100" viewBox="0 0 1560 1100" role="img" aria-labelledby="title desc">
+  <title id="title">ECC-FE release resource boundaries</title>
+  <desc id="desc">The ECC-FE repository is selectively cut into five independently published resource archives. The runtime depends on the four frontend payloads while external EDA tools remain separate registry resources.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#53636f"/>
+    </marker>
+    <marker id="arrow-soft" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a98a2"/>
+    </marker>
+    <style>
+      .canvas { fill: #f5f7f8; }
+      .header { fill: #17242d; }
+      .panel { fill: #ffffff; stroke: #c8d3da; stroke-width: 2; }
+      .blue { fill: #eaf5f8; stroke: #55a2ba; stroke-width: 2; }
+      .green { fill: #eaf6f1; stroke: #48a484; stroke-width: 2; }
+      .amber { fill: #fff6dd; stroke: #d2a142; stroke-width: 2; }
+      .coral { fill: #fff0ed; stroke: #df7566; stroke-width: 2; }
+      .violet { fill: #f3eff9; stroke: #8b72b3; stroke-width: 2; }
+      .slate { fill: #edf1f3; stroke: #98a7b1; stroke-width: 2; }
+      .title { font: 700 36px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: 0; }
+      .subtitle { font: 400 17px Inter, "Segoe UI", Arial, sans-serif; fill: #cbd6dc; letter-spacing: 0; }
+      .eyebrow { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .heading { font: 700 18px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .body { font: 400 14px Inter, "Segoe UI", Arial, sans-serif; fill: #52616d; letter-spacing: 0; }
+      .small { font: 400 12.5px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .code { font: 600 12.5px "SFMono-Regular", Consolas, monospace; fill: #304754; letter-spacing: 0; }
+      .include { font: 600 12.5px Inter, "Segoe UI", Arial, sans-serif; fill: #23795e; letter-spacing: 0; }
+      .exclude { font: 600 12.5px Inter, "Segoe UI", Arial, sans-serif; fill: #b65347; letter-spacing: 0; }
+      .line { fill: none; stroke: #53636f; stroke-width: 2.5; marker-end: url(#arrow); }
+      .dependency { fill: none; stroke: #8a98a2; stroke-width: 2; stroke-dasharray: 7 6; marker-end: url(#arrow-soft); }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1560" height="1100"/>
+  <rect class="header" width="1560" height="118"/>
+  <text class="title" x="64" y="57">Release Resource Boundaries</text>
+  <text class="subtitle" x="64" y="87">One source repository, five independently replaceable payloads, no bundled heavy EDA toolchain</text>
+
+  <text class="eyebrow" x="52" y="154">SOURCE OWNERSHIP IN OPENECOS-PROJECTS/ECC-FE</text>
+  <rect class="panel" x="52" y="174" width="1456" height="190" rx="8"/>
+
+  <rect class="blue" x="80" y="204" width="260" height="126" rx="8"/>
+  <text class="heading" x="104" y="241">Flow Runtime</text>
+  <text class="code" x="104" y="269">fecompiler/</text>
+  <text class="code" x="104" y="293">bin/ + packaging/</text>
+  <text class="small" x="104" y="316">Python application and RPC</text>
+
+  <rect class="green" x="370" y="204" width="260" height="126" rx="8"/>
+  <text class="heading" x="394" y="241">YSYX AM SoC</text>
+  <text class="code" x="394" y="269">thirdparty/SoC/</text>
+  <text class="small" x="394" y="293">RTL, driver, tests</text>
+  <text class="small" x="394" y="316">and difftest source</text>
+
+  <rect class="amber" x="660" y="204" width="260" height="126" rx="8"/>
+  <text class="heading" x="684" y="241">CPU RTL Sources</text>
+  <text class="code" x="684" y="269">thirdparty/{core}/</text>
+  <text class="small" x="684" y="293">Pinned submodules plus</text>
+  <text class="small" x="684" y="316">vendored snapshots</text>
+
+  <rect class="coral" x="950" y="204" width="260" height="126" rx="8"/>
+  <text class="heading" x="974" y="241">Reference Model</text>
+  <text class="code" x="974" y="269">riscv32-spike-so</text>
+  <text class="small" x="974" y="293">Prebuilt difftest shared</text>
+  <text class="small" x="974" y="316">object for supported CPUs</text>
+
+  <rect class="violet" x="1240" y="204" width="240" height="126" rx="8"/>
+  <text class="heading" x="1264" y="241">Examples</text>
+  <text class="code" x="1264" y="269">examples/</text>
+  <text class="small" x="1264" y="293">CL3 project collateral</text>
+  <text class="small" x="1264" y="316">and filelists</text>
+
+  <rect class="slate" x="538" y="394" width="484" height="76" rx="8"/>
+  <text class="heading" x="780" y="426" text-anchor="middle">Changed-path Package Selector</text>
+  <text class="small" x="780" y="451" text-anchor="middle">Only affected payloads are rebuilt; manual dispatch selects all five</text>
+  <path class="line" d="M210 330 V380 H610 V386"/>
+  <path class="line" d="M500 330 V372 H700 V386"/>
+  <path class="line" d="M790 330 V386"/>
+  <path class="line" d="M1080 330 V372 H860 V386"/>
+  <path class="line" d="M1360 330 V380 H950 V386"/>
+
+  <text class="eyebrow" x="52" y="512">PUBLISHED TO OPENECOS-PROJECTS/ECOS-RESOURCE-ASSETS</text>
+
+  <rect class="blue" x="52" y="534" width="272" height="258" rx="8"/>
+  <text class="heading" x="76" y="574">ecc-fe-latest</text>
+  <text class="code" x="76" y="600">ecc-fe-latest.tar.gz</text>
+  <line x1="76" y1="620" x2="300" y2="620" stroke="#b8d9e3"/>
+  <text class="include" x="76" y="648">IN  PyInstaller executable</text>
+  <text class="include" x="76" y="674">IN  Python flow and catalog</text>
+  <text class="include" x="76" y="700">IN  metadata and licenses</text>
+  <text class="exclude" x="76" y="735">OUT fecompiler/thirdparty</text>
+  <text class="small" x="76" y="768">Runs without system Python</text>
+
+  <rect class="green" x="348" y="534" width="272" height="258" rx="8"/>
+  <text class="heading" x="372" y="574">ecc-fe-soc-ysyx-am</text>
+  <text class="code" x="372" y="600">soc-ysyx-am-latest.tar.gz</text>
+  <line x1="372" y1="620" x2="596" y2="620" stroke="#b9ddcf"/>
+  <text class="include" x="372" y="648">IN  SoC RTL and manifest</text>
+  <text class="include" x="372" y="674">IN  C++ driver and scripts</text>
+  <text class="include" x="372" y="700">IN  CPU tests and CoreMark</text>
+  <text class="exclude" x="372" y="735">OUT riscv32-spike-so</text>
+  <text class="small" x="372" y="768">Harness changes stay isolated</text>
+
+  <rect class="amber" x="644" y="534" width="272" height="258" rx="8"/>
+  <text class="heading" x="668" y="574">ecc-fe-cpu-rtl</text>
+  <text class="code" x="668" y="600">cpu-rtl-latest.tar.gz</text>
+  <line x1="668" y1="620" x2="892" y2="620" stroke="#ead39d"/>
+  <text class="include" x="668" y="648">IN  Adapter-required RTL</text>
+  <text class="include" x="668" y="674">IN  License and notice files</text>
+  <text class="exclude" x="668" y="709">OUT upstream DV and benches</text>
+  <text class="exclude" x="668" y="735">OUT generated output trees</text>
+  <text class="small" x="668" y="768">Curated, not a submodule mirror</text>
+
+  <rect class="coral" x="940" y="534" width="272" height="258" rx="8"/>
+  <text class="heading" x="964" y="574">ecc-fe-difftest-ref</text>
+  <text class="code" x="964" y="600">difftest-ref-latest.tar.gz</text>
+  <line x1="964" y1="620" x2="1188" y2="620" stroke="#ecc6c0"/>
+  <text class="include" x="964" y="648">IN  riscv32-spike-so only</text>
+  <text class="body" x="964" y="684">Shared independently from the</text>
+  <text class="body" x="964" y="708">SoC harness and CPU bundle</text>
+  <text class="small" x="964" y="768">Difftest remains optional by CPU</text>
+
+  <rect class="violet" x="1236" y="534" width="272" height="258" rx="8"/>
+  <text class="heading" x="1260" y="574">ecc-fe-examples</text>
+  <text class="code" x="1260" y="600">examples-latest.tar.gz</text>
+  <line x1="1260" y1="620" x2="1484" y2="620" stroke="#d6cae7"/>
+  <text class="include" x="1260" y="648">IN  examples/ tree only</text>
+  <text class="body" x="1260" y="684">Demo RTL and filelists can</text>
+  <text class="body" x="1260" y="708">change without runtime rebuilds</text>
+  <text class="small" x="1260" y="768">Used by demos and validation</text>
+
+  <text class="eyebrow" x="52" y="836">INSTALL-TIME DEPENDENCY GRAPH</text>
+
+  <rect class="blue" x="52" y="862" width="270" height="116" rx="8"/>
+  <text class="heading" x="76" y="902">ECC-FE Runtime</text>
+  <text class="small" x="76" y="930">Top-level Resource Manager entry</text>
+  <text class="small" x="76" y="954">requires all frontend payloads</text>
+
+  <rect class="amber" x="402" y="824" width="238" height="82" rx="8"/>
+  <text class="heading" x="426" y="859">CPU RTL</text>
+  <text class="small" x="426" y="884">Source implementations</text>
+  <rect class="green" x="402" y="948" width="238" height="82" rx="8"/>
+  <text class="heading" x="426" y="983">SoC Harness</text>
+  <text class="small" x="426" y="1008">Requires CPU RTL + difftest</text>
+
+  <rect class="violet" x="720" y="824" width="238" height="82" rx="8"/>
+  <text class="heading" x="744" y="859">Examples</text>
+  <text class="small" x="744" y="884">Demo project collateral</text>
+  <rect class="coral" x="720" y="948" width="238" height="82" rx="8"/>
+  <text class="heading" x="744" y="983">Difftest Reference</text>
+  <text class="small" x="744" y="1008">Spike-compatible shared object</text>
+
+  <path class="line" d="M322 900 H370 V865 H394"/>
+  <path class="line" d="M322 920 H370 V989 H394"/>
+  <path class="line" d="M322 940 H680 V865 H712"/>
+  <path class="line" d="M322 958 H680 V989 H712"/>
+  <path class="dependency" d="M640 975 H712"/>
+  <path class="dependency" d="M520 948 V918 H520 V914"/>
+
+  <rect class="slate" x="1038" y="824" width="470" height="206" rx="8"/>
+  <text class="heading" x="1062" y="861">External Runtime Dependencies</text>
+  <text class="body" x="1062" y="891">Slang, Verilator, Yosys / OSS CAD Suite</text>
+  <text class="body" x="1062" y="919">RISC-V GNU toolchain and Surfer web assets</text>
+  <line x1="1062" y1="941" x2="1480" y2="941" stroke="#c8d3da"/>
+  <text class="small" x="1062" y="968">Available through registry, local import, or PATH.</text>
+  <text class="small" x="1062" y="994">They are not built or published by the ECC-FE release workflow.</text>
+  <text class="small" x="780" y="1072" text-anchor="middle">Each archive carries SHA256, size, source commit and strip-prefix metadata for registry locking.</text>
+</svg>

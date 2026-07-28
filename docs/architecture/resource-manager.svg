@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1080" viewBox="0 0 1500 1080" role="img" aria-labelledby="title desc">
+  <title id="title">ECOS Studio Resource Manager lifecycle</title>
+  <desc id="desc">The GUI refreshes the Pages registry and release metadata, checks the registry lock, resolves dependencies, verifies and stages downloads, performs health checks and an atomic replacement, then assembles runtime environment variables for ECC-FE.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#53636f"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c95b4d"/>
+    </marker>
+    <style>
+      .canvas { fill: #f5f7f8; }
+      .header { fill: #17242d; }
+      .panel { fill: #ffffff; stroke: #c8d3da; stroke-width: 2; }
+      .blue { fill: #eaf5f8; stroke: #55a2ba; stroke-width: 2; }
+      .green { fill: #eaf6f1; stroke: #48a484; stroke-width: 2; }
+      .amber { fill: #fff6dd; stroke: #d2a142; stroke-width: 2; }
+      .coral { fill: #fff0ed; stroke: #df7566; stroke-width: 2; }
+      .slate { fill: #edf1f3; stroke: #98a7b1; stroke-width: 2; }
+      .title { font: 700 36px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: 0; }
+      .subtitle { font: 400 17px Inter, "Segoe UI", Arial, sans-serif; fill: #cbd6dc; letter-spacing: 0; }
+      .eyebrow { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .heading { font: 700 18px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .body { font: 400 14px Inter, "Segoe UI", Arial, sans-serif; fill: #52616d; letter-spacing: 0; }
+      .small { font: 400 12.5px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .code { font: 600 12.5px "SFMono-Regular", Consolas, monospace; fill: #304754; letter-spacing: 0; }
+      .line { fill: none; stroke: #53636f; stroke-width: 2.5; marker-end: url(#arrow); }
+      .rollback { fill: none; stroke: #c95b4d; stroke-width: 2.5; stroke-dasharray: 8 6; marker-end: url(#arrow-red); }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1500" height="1080"/>
+  <rect class="header" width="1500" height="118"/>
+  <text class="title" x="64" y="57">GUI Resource Manager Lifecycle</text>
+  <text class="subtitle" x="64" y="87">Registry locks authorize bytes; staged health checks and atomic replacement protect local installations</text>
+
+  <text class="eyebrow" x="56" y="154">DISCOVERY AND UPDATE CHECK</text>
+  <rect class="blue" x="56" y="178" width="270" height="152" rx="8"/>
+  <text class="heading" x="80" y="216">Resource Manager UI</text>
+  <text class="body" x="80" y="246">Refresh forces a registry fetch</text>
+  <text class="body" x="80" y="271">and a fresh metadata check</text>
+  <text class="small" x="80" y="303">Pinia store receives progress events</text>
+
+  <rect class="panel" x="378" y="178" width="294" height="152" rx="8"/>
+  <text class="heading" x="402" y="216">GitHub Pages Registry</text>
+  <text class="code" x="402" y="246">tool-registry.json</text>
+  <text class="body" x="402" y="274">URL, version, requires,</text>
+  <text class="body" x="402" y="298">SHA256, size, strip prefix</text>
+
+  <rect class="panel" x="724" y="178" width="294" height="152" rx="8"/>
+  <text class="heading" x="748" y="216">Release Metadata</text>
+  <text class="code" x="748" y="246">*.metadata.json</text>
+  <text class="body" x="748" y="274">Published SHA256 and size</text>
+  <text class="small" x="748" y="303">Mutable latest release signal</text>
+
+  <rect class="amber" x="1070" y="178" width="374" height="152" rx="8"/>
+  <text class="heading" x="1094" y="216">Two-Source Lock Gate</text>
+  <text class="code" x="1094" y="246">metadata.sha256 == registry.sha256</text>
+  <text class="body" x="1094" y="274">Only then compare with installed SHA</text>
+  <text class="small" x="1094" y="303">Mismatch means registry has not caught up</text>
+
+  <path class="line" d="M326 254 H370"/>
+  <path class="line" d="M672 240 H716"/>
+  <path class="line" d="M1018 254 H1062"/>
+  <path class="line" d="M672 286 H1050 V278 H1062"/>
+
+  <rect class="green" x="1070" y="354" width="180" height="58" rx="8"/>
+  <text class="small" x="1160" y="389" text-anchor="middle">UPDATE AVAILABLE</text>
+  <rect class="slate" x="1264" y="354" width="180" height="58" rx="8"/>
+  <text class="small" x="1354" y="389" text-anchor="middle">INSTALLED</text>
+  <path class="line" d="M1160 330 V346"/>
+  <path class="line" d="M1354 330 V346"/>
+
+  <text class="eyebrow" x="56" y="462">DEPENDENCY-AWARE INSTALL OR UPDATE</text>
+  <rect class="panel" x="56" y="486" width="1388" height="298" rx="8"/>
+
+  <rect class="blue" x="84" y="520" width="220" height="118" rx="8"/>
+  <text class="heading" x="108" y="558">1  Resolve</text>
+  <text class="body" x="108" y="586">Walk requires graph</text>
+  <text class="small" x="108" y="612">Detect cycles and shared jobs</text>
+
+  <rect class="panel" x="332" y="520" width="220" height="118" rx="8"/>
+  <text class="heading" x="356" y="558">2  Download</text>
+  <text class="body" x="356" y="586">Stream into temp archive</text>
+  <text class="small" x="356" y="612">Report bytes and allow cancel</text>
+
+  <rect class="amber" x="580" y="520" width="220" height="118" rx="8"/>
+  <text class="heading" x="604" y="558">3  Verify</text>
+  <text class="body" x="604" y="586">Check locked SHA256</text>
+  <text class="small" x="604" y="612">Reject corrupt or stale bytes</text>
+
+  <rect class="panel" x="828" y="520" width="220" height="118" rx="8"/>
+  <text class="heading" x="852" y="558">4  Stage</text>
+  <text class="body" x="852" y="586">Extract outside destination</text>
+  <text class="small" x="852" y="612">Apply strip_prefix</text>
+
+  <rect class="green" x="1076" y="520" width="220" height="118" rx="8"/>
+  <text class="heading" x="1100" y="558">5  Health</text>
+  <text class="body" x="1100" y="586">Validate required markers</text>
+  <text class="small" x="1100" y="612">Detect usable executables</text>
+
+  <path class="line" d="M304 579 H324"/>
+  <path class="line" d="M552 579 H572"/>
+  <path class="line" d="M800 579 H820"/>
+  <path class="line" d="M1048 579 H1068"/>
+
+  <rect class="green" x="360" y="676" width="330" height="76" rx="8"/>
+  <text class="heading" x="384" y="709">6  Atomic Replace</text>
+  <text class="small" x="384" y="733">old destination -> backup; staged -> destination</text>
+
+  <rect class="blue" x="810" y="676" width="330" height="76" rx="8"/>
+  <text class="heading" x="834" y="709">7  Commit Manifest</text>
+  <text class="small" x="834" y="733">Record version, SHA, path, health and timestamp</text>
+
+  <path class="line" d="M1186 638 V658 H525 V668"/>
+  <path class="line" d="M690 714 H802"/>
+
+  <rect class="coral" x="1192" y="676" width="216" height="76" rx="8"/>
+  <text class="heading" x="1216" y="709">Rollback</text>
+  <text class="small" x="1216" y="733">Restore backup on failure</text>
+  <path class="rollback" d="M1192 714 H1152"/>
+  <path class="rollback" d="M1300 676 V656 H690 V668"/>
+
+  <text class="eyebrow" x="56" y="832">RUNTIME COMPOSITION</text>
+  <rect class="panel" x="56" y="854" width="1388" height="170" rx="8"/>
+
+  <rect class="slate" x="84" y="884" width="252" height="106" rx="8"/>
+  <text class="heading" x="108" y="922">Installed Manifest</text>
+  <text class="code" x="108" y="950">resources/manifest.json</text>
+  <text class="small" x="108" y="975">Only active, healthy entries</text>
+
+  <rect class="amber" x="384" y="884" width="304" height="106" rx="8"/>
+  <text class="heading" x="408" y="922">Environment Assembly</text>
+  <text class="small" x="408" y="950">Resolve tools, roots and PATH</text>
+  <text class="small" x="408" y="975">Skip missing or invalid resources</text>
+
+  <rect class="blue" x="736" y="884" width="388" height="106" rx="8"/>
+  <text class="code" x="760" y="916">ECOS_FE_CLI / COMPILER_ROOT</text>
+  <text class="code" x="760" y="943">ECOS_FE_RESOURCE_ROOTS / SOC_ROOT</text>
+  <text class="code" x="760" y="970">ECOS_SLANG / VERILATOR / RISCV_PREFIX</text>
+
+  <rect class="green" x="1172" y="884" width="236" height="106" rx="8"/>
+  <text class="heading" x="1196" y="922">Launch ECC-FE</text>
+  <text class="code" x="1196" y="950">rpc serve --stdio</text>
+  <text class="small" x="1196" y="975">Composed resource view</text>
+
+  <path class="line" d="M336 937 H376"/>
+  <path class="line" d="M688 937 H728"/>
+  <path class="line" d="M1124 937 H1164"/>
+  <text class="small" x="750" y="1058" text-anchor="middle">Installed means locally healthy; update_available additionally requires metadata and the deployed registry lock to agree.</text>
+</svg>

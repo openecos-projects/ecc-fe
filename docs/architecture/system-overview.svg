@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960" viewBox="0 0 1440 960" role="img" aria-labelledby="title desc">
+  <title id="title">ECC-FE system architecture</title>
+  <desc id="desc">The ECOS Studio renderer calls the Electron main process, which manages an ECC-FE JSON-RPC sidecar. The sidecar maps requests through runtime, application, and engine layers into the five-stage frontend flow.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#52616d"/>
+    </marker>
+    <style>
+      .canvas { fill: #f4f7f8; }
+      .header { fill: #17242d; }
+      .panel { fill: #ffffff; stroke: #c8d3da; stroke-width: 2; }
+      .panel-blue { fill: #eaf5f8; stroke: #58a3bb; stroke-width: 2; }
+      .panel-green { fill: #eaf6f1; stroke: #48a484; stroke-width: 2; }
+      .panel-coral { fill: #fff0ed; stroke: #df7566; stroke-width: 2; }
+      .panel-amber { fill: #fff6dd; stroke: #d2a142; stroke-width: 2; }
+      .band { fill: #e8edf0; stroke: #c8d3da; stroke-width: 2; }
+      .flow { fill: #ffffff; stroke: #8ea0ac; stroke-width: 2; }
+      .title { font: 700 36px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: 0; }
+      .subtitle { font: 400 17px Inter, "Segoe UI", Arial, sans-serif; fill: #cbd6dc; letter-spacing: 0; }
+      .eyebrow { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; fill: #62727e; letter-spacing: 0; }
+      .heading { font: 700 20px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .body { font: 400 15px Inter, "Segoe UI", Arial, sans-serif; fill: #52616d; letter-spacing: 0; }
+      .small { font: 400 13px Inter, "Segoe UI", Arial, sans-serif; fill: #62727e; letter-spacing: 0; }
+      .code { font: 600 14px "SFMono-Regular", Consolas, monospace; fill: #27404e; letter-spacing: 0; }
+      .header-code { font: 600 14px "SFMono-Regular", Consolas, monospace; fill: #d7e9ef; letter-spacing: 0; }
+      .step { font: 700 16px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .line { fill: none; stroke: #52616d; stroke-width: 3; marker-end: url(#arrow); }
+      .event { fill: none; stroke: #d26455; stroke-width: 2.5; stroke-dasharray: 8 7; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1440" height="960"/>
+  <rect class="header" width="1440" height="118"/>
+  <text class="title" x="64" y="57">ECC-FE System Architecture</text>
+  <text class="subtitle" x="64" y="87">A process-isolated frontend flow service for ECOS Studio</text>
+  <rect x="1182" y="35" width="194" height="48" rx="8" fill="#213640" stroke="#4f7180"/>
+  <text x="1279" y="64" text-anchor="middle" class="header-code">JSON-RPC v1</text>
+
+  <text class="eyebrow" x="64" y="154">ECOS STUDIO APPLICATION</text>
+  <rect class="panel" x="64" y="174" width="278" height="148" rx="8"/>
+  <rect x="64" y="174" width="278" height="10" rx="5" fill="#3b8fa8"/>
+  <text class="heading" x="88" y="219">Vue Renderer</text>
+  <text class="body" x="88" y="250">Workspace wizard</text>
+  <text class="body" x="88" y="274">Flow, reports, logs, Wave</text>
+  <text class="small" x="88" y="302">No direct Python imports</text>
+
+  <rect class="panel-blue" x="398" y="174" width="278" height="148" rx="8"/>
+  <text class="heading" x="422" y="219">Desktop Bridge</text>
+  <text class="body" x="422" y="250">Typed Electron IPC</text>
+  <text class="body" x="422" y="274">Frontend/backend routing</text>
+  <text class="small" x="422" y="302">Renderer trust boundary</text>
+
+  <rect class="panel-green" x="732" y="174" width="306" height="148" rx="8"/>
+  <text class="heading" x="756" y="219">Frontend Runtime Service</text>
+  <text class="body" x="756" y="250">Sidecar lifecycle and hello</text>
+  <text class="body" x="756" y="274">Operation queue and handles</text>
+  <text class="small" x="756" y="302">Cancellation stops the sidecar</text>
+
+  <rect class="panel-coral" x="1094" y="174" width="282" height="148" rx="8"/>
+  <text class="heading" x="1118" y="219">ECC-FE Sidecar</text>
+  <text class="code" x="1118" y="252">bin/ecc-fe rpc serve</text>
+  <text class="code" x="1118" y="276">--stdio</text>
+  <text class="small" x="1118" y="302">Independent OS process</text>
+
+  <path class="line" d="M342 248 H390"/>
+  <path class="line" d="M676 248 H724"/>
+  <path class="line" d="M1038 248 H1086"/>
+
+  <rect class="band" x="186" y="356" width="1068" height="70" rx="8"/>
+  <text class="code" x="720" y="386" text-anchor="middle">Content-Length framed JSON-RPC 2.0 over stdin / stdout</text>
+  <text class="small" x="720" y="410" text-anchor="middle">stdout is reserved for protocol frames; diagnostics are redirected to stderr</text>
+
+  <text class="eyebrow" x="64" y="466">ECC-FE SERVICE PROCESS</text>
+  <rect class="panel" x="64" y="486" width="1312" height="222" rx="8"/>
+
+  <rect class="panel-blue" x="92" y="520" width="244" height="132" rx="8"/>
+  <text class="heading" x="116" y="562">RuntimeServer</text>
+  <text class="body" x="116" y="590">Protocol validation</text>
+  <text class="body" x="116" y="614">Method dispatch</text>
+  <text class="small" x="116" y="638">runtime.event notifications</text>
+
+  <rect class="panel-green" x="382" y="520" width="244" height="132" rx="8"/>
+  <text class="heading" x="406" y="562">WorkspaceRuntimeApi</text>
+  <text class="body" x="406" y="590">Session registry</text>
+  <text class="body" x="406" y="614">Per-workspace mutation lock</text>
+  <text class="small" x="406" y="638">RPC to application mapping</text>
+
+  <rect class="panel-amber" x="672" y="520" width="280" height="132" rx="8"/>
+  <text class="heading" x="696" y="562">Application Service</text>
+  <text class="body" x="696" y="590">Catalog and compatibility</text>
+  <text class="body" x="696" y="614">Create, open, run, inspect</text>
+  <text class="small" x="696" y="638">Shared by CLI and RPC</text>
+
+  <rect class="panel-coral" x="998" y="520" width="244" height="132" rx="8"/>
+  <text class="heading" x="1022" y="562">EngineFlow</text>
+  <text class="body" x="1022" y="590">Linear orchestration</text>
+  <text class="body" x="1022" y="614">State and provenance</text>
+  <text class="small" x="1022" y="638">Stop on first failure</text>
+
+  <rect x="1262" y="520" width="86" height="132" rx="8" fill="#edf0f2" stroke="#b7c2c9" stroke-width="2"/>
+  <text x="1305" y="555" text-anchor="middle" class="eyebrow">DISK</text>
+  <text x="1305" y="584" text-anchor="middle" class="small">home</text>
+  <text x="1305" y="606" text-anchor="middle" class="small">logs</text>
+  <text x="1305" y="628" text-anchor="middle" class="small">reports</text>
+
+  <path class="line" d="M336 586 H374"/>
+  <path class="line" d="M626 586 H664"/>
+  <path class="line" d="M952 586 H990"/>
+  <path class="line" d="M1242 586 H1254"/>
+
+  <path class="event" d="M214 520 H40 V340 H885 V330"/>
+  <text class="small" x="550" y="349" text-anchor="middle" fill="#b44f43">Progress and completion events return to the GUI</text>
+
+  <text class="eyebrow" x="64" y="752">FIXED FRONTEND FLOW</text>
+  <rect class="flow" x="64" y="774" width="218" height="126" rx="8"/>
+  <rect x="64" y="774" width="218" height="8" rx="4" fill="#3b8fa8"/>
+  <text class="step" x="173" y="820" text-anchor="middle">PREPARE</text>
+  <text class="small" x="173" y="849" text-anchor="middle">Normalize RTL inputs</text>
+  <text class="small" x="173" y="873" text-anchor="middle">Validate cpu_top</text>
+
+  <rect class="flow" x="338" y="774" width="218" height="126" rx="8"/>
+  <rect x="338" y="774" width="218" height="8" rx="4" fill="#48a484"/>
+  <text class="step" x="447" y="820" text-anchor="middle">REVIEW</text>
+  <text class="small" x="447" y="849" text-anchor="middle">CPU-only quality scan</text>
+  <text class="small" x="447" y="873" text-anchor="middle">Optional Yosys probe</text>
+
+  <rect class="flow" x="612" y="774" width="218" height="126" rx="8"/>
+  <rect x="612" y="774" width="218" height="8" rx="4" fill="#d2a142"/>
+  <text class="step" x="721" y="820" text-anchor="middle">ELAB</text>
+  <text class="small" x="721" y="849" text-anchor="middle">Slang semantics</text>
+  <text class="small" x="721" y="873" text-anchor="middle">Hierarchy resolution</text>
+
+  <rect class="flow" x="886" y="774" width="218" height="126" rx="8"/>
+  <rect x="886" y="774" width="218" height="8" rx="4" fill="#8b72b3"/>
+  <text class="step" x="995" y="820" text-anchor="middle">LINT</text>
+  <text class="small" x="995" y="849" text-anchor="middle">Verilator diagnostics</text>
+  <text class="small" x="995" y="873" text-anchor="middle">Structured rule groups</text>
+
+  <rect class="flow" x="1160" y="774" width="216" height="126" rx="8"/>
+  <rect x="1160" y="774" width="216" height="8" rx="4" fill="#df7566"/>
+  <text class="step" x="1268" y="820" text-anchor="middle">SIM</text>
+  <text class="small" x="1268" y="849" text-anchor="middle">Build and execute</text>
+  <text class="small" x="1268" y="873" text-anchor="middle">Logs, cases, VCD</text>
+
+  <path class="line" d="M282 837 H330"/>
+  <path class="line" d="M556 837 H604"/>
+  <path class="line" d="M830 837 H878"/>
+  <path class="line" d="M1104 837 H1152"/>
+  <text class="small" x="720" y="936" text-anchor="middle">One sidecar and one Electron operation queue currently serialize frontend work across workspaces.</text>
+</svg>
