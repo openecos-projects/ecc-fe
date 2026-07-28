@@ -14,7 +14,6 @@ Current support:
 - Supported suites: `smoke`, `cpu-tests`
 - Default CPU test case: `add`
 - Difftest: not supported
-- RT-Thread: not supported
 
 The SERV adapter is meant to be used with the minimal RISC-V SoC harness first.
 Broader SoC compatibility should be validated one harness at a time.

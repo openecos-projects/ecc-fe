@@ -58,13 +58,13 @@ def test_custom_cpu_entry_exposes_only_the_cpu_top_contract():
     assert "standard-cpu-filelist" not in {item["id"] for item in cores}
 
 
-def test_stable_custom_filelist_combination_supports_rtthread(tmp_path):
+def test_stable_custom_filelist_combination_supports_declared_suites(tmp_path):
     item = _compatibility_by_pair()[("custom-filelist", "ysyx-am-soc")]
     assert item["can_create_workspace"] is True
     assert item["support_level"] == "supported"
     assert item["status"] == "requires_filelist"
     assert item["requires_cpu_filelist"] is True
-    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "rtthread", "coremark"]
+    assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
     cpu_top = tmp_path / "cpu_top.sv"
     cpu_top.write_text(_cl3_top_source(), encoding="utf-8")
@@ -325,14 +325,3 @@ def test_removed_placeholder_soc_profiles_are_not_exposed():
 
     assert exposed_ids == {"ysyx-am-soc"}
     assert not (removed_ids & exposed_ids)
-
-
-def test_validate_rejects_rtthread_for_non_difftest_experimental_core():
-    result = validate_frontend_config({
-        "core_id": "picorv32",
-        "soc_harness_id": "ysyx-am-soc",
-        "toolchain_id": "riscv32-unknown-elf",
-        "test_suite_id": "rtthread",
-    })
-    assert result.ok is False
-    assert any(issue.code == "combination_test_suite_not_supported" for issue in result.issues)

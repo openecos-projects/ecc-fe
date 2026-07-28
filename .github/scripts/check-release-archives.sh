@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="${1:-dist}"
 if (( $# > 0 )); then
   shift
@@ -21,6 +22,16 @@ require_archive() {
   if [[ ! -f "${archive}" ]]; then
     fail "Missing release archive: ${archive}"
     return 1
+  fi
+}
+
+require_archive_max_bytes() {
+  local archive="$1"
+  local max_bytes="$2"
+  local size
+  size="$(stat -c '%s' "${archive}")"
+  if (( size > max_bytes )); then
+    fail "${archive} is ${size} bytes; maximum allowed size is ${max_bytes} bytes"
   fi
 }
 
@@ -91,6 +102,31 @@ check_runtime() {
   forbid_entry_prefix "${archive}" "ecc-fe-latest/fecompiler/thirdparty/"
 }
 
+check_cpu_rtl_filelist_entries() {
+  local archive="$1"
+  local filelist line entry source_path relative archive_entry
+  local thirdparty_root="${REPO_ROOT}/fecompiler/thirdparty/"
+
+  for filelist in "${REPO_ROOT}"/fecompiler/adapters/*/filelist.cpu.f; do
+    while IFS= read -r line; do
+      entry="${line%%#*}"
+      case "${entry}" in
+        +incdir+*) entry="${entry#+incdir+}" ;;
+        ../../thirdparty/*) ;;
+        *) continue ;;
+      esac
+      source_path="$(realpath -m "$(dirname "${filelist}")/${entry}")"
+      [[ "${source_path}" == "${thirdparty_root}"* ]] || continue
+      relative="${source_path#${thirdparty_root}}"
+      archive_entry="ecc-fe-cpu-rtl-latest/thirdparty/${relative}"
+      if [[ -d "${source_path}" ]]; then
+        archive_entry="${archive_entry}/"
+      fi
+      require_entry "${archive}" "${archive_entry}"
+    done < "${filelist}"
+  done
+}
+
 check_soc() {
   local archive
   archive="$(archive_path ecc-fe-soc-ysyx-am-latest.tar.gz)"
@@ -103,14 +139,25 @@ check_soc() {
 }
 
 check_cpu_rtl() {
-  local archive root
+  local archive
   archive="$(archive_path ecc-fe-cpu-rtl-latest.tar.gz)"
   check_archive "${archive}" || return
+  require_archive_max_bytes "${archive}" "$((50 * 1024 * 1024))"
   require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/README"
-  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/rtthread_prepare.py"
-  for root in cv32e40p cva6 darkriscv ibex learn-fpga picorv32 rt-thread-am scr1 serv vexriscv; do
-    require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/${root}/"
-  done
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/cv32e40p/rtl/cv32e40p_core.sv"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/cva6/core/cva6.sv"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/darkriscv/rtl/darkriscv.v"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/ibex/rtl/ibex_core.sv"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_electron.v"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/picorv32/picorv32.v"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/scr1/src/core/scr1_core_top.sv"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/serv/rtl/serv_top.v"
+  require_entry "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/vexriscv/verilog/VexRiscv_Min.v"
+  check_cpu_rtl_filelist_entries "${archive}"
+  forbid_entry_prefix "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/ibex/dv/"
+  forbid_entry_prefix "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/learn-fpga/Basic/"
+  forbid_entry_prefix "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/scr1/dependencies/"
+  forbid_entry_prefix "${archive}" "ecc-fe-cpu-rtl-latest/thirdparty/serv/bench/"
 }
 
 check_difftest_ref() {

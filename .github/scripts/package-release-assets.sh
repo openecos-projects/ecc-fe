@@ -128,23 +128,53 @@ prepare_soc() {
   archive_package ecc-fe-soc-ysyx-am ecc-fe-soc-ysyx-am-latest
 }
 
+copy_cpu_rtl_path() {
+  local root="$1"
+  local source="$2"
+  local relative="${source#fecompiler/thirdparty/}"
+  local destination="${root}/thirdparty/${relative}"
+
+  if [[ ! -e "${source}" ]]; then
+    echo "CPU RTL package source is missing: ${source}" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "${destination}")"
+  cp -a "${source}" "${destination}"
+}
+
 prepare_cpu_rtl() {
   local root="${WORK_DIR}/ecc-fe-cpu-rtl-latest"
   mkdir -p "${root}/thirdparty"
-  cp -a \
-    fecompiler/thirdparty/README \
-    fecompiler/thirdparty/rtthread_prepare.py \
-    fecompiler/thirdparty/cv32e40p \
-    fecompiler/thirdparty/cva6 \
-    fecompiler/thirdparty/darkriscv \
-    fecompiler/thirdparty/ibex \
-    fecompiler/thirdparty/learn-fpga \
-    fecompiler/thirdparty/picorv32 \
-    fecompiler/thirdparty/rt-thread-am \
-    fecompiler/thirdparty/scr1 \
-    fecompiler/thirdparty/serv \
-    fecompiler/thirdparty/vexriscv \
-    "${root}/thirdparty/"
+  local paths=(
+    fecompiler/thirdparty/README
+    fecompiler/thirdparty/cv32e40p/LICENSE
+    fecompiler/thirdparty/cv32e40p/bhv/cv32e40p_sim_clock_gate.sv
+    fecompiler/thirdparty/cv32e40p/rtl
+    fecompiler/thirdparty/cva6
+    fecompiler/thirdparty/darkriscv/LICENSE
+    fecompiler/thirdparty/darkriscv/rtl
+    fecompiler/thirdparty/ibex/LICENSE
+    fecompiler/thirdparty/ibex/NOTICE
+    fecompiler/thirdparty/ibex/rtl
+    fecompiler/thirdparty/ibex/vendor/lowrisc_ip/dv/sv/dv_utils
+    fecompiler/thirdparty/ibex/vendor/lowrisc_ip/ip/prim/rtl
+    fecompiler/thirdparty/ibex/vendor/lowrisc_ip/ip/prim_generic/rtl
+    fecompiler/thirdparty/learn-fpga/LICENSE
+    fecompiler/thirdparty/learn-fpga/FemtoRV/LICENSE.md
+    fecompiler/thirdparty/learn-fpga/FemtoRV/RTL/PROCESSOR
+    fecompiler/thirdparty/picorv32/COPYING
+    fecompiler/thirdparty/picorv32/picorv32.v
+    fecompiler/thirdparty/scr1/LICENSE
+    fecompiler/thirdparty/scr1/src/core
+    fecompiler/thirdparty/scr1/src/includes
+    fecompiler/thirdparty/serv/LICENSE
+    fecompiler/thirdparty/serv/rtl
+    fecompiler/thirdparty/vexriscv
+  )
+  local path
+  for path in "${paths[@]}"; do
+    copy_cpu_rtl_path "${root}" "${path}"
+  done
   archive_package ecc-fe-cpu-rtl ecc-fe-cpu-rtl-latest
 }
 

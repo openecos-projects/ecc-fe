@@ -36,7 +36,6 @@ ecc-fe/
 │   │   ├── SoC/                # SoC variant 1, tests, driver, difftest
 │   │   ├── SoC2/               # SoC variant 2
 │   │   ├── SoC3/               # SoC variant 3
-│   │   ├── rt-thread-am/       # RT-Thread AM submodule
 │   │   ├── slang/              # slang source
 │   │   └── verilator/          # verilator source
 │   └── utility/                # JSON/file/log helpers
@@ -66,7 +65,7 @@ stronger tools or require more runtime context.
 | `review` | Is the user CPU RTL healthy enough to inspect before running compiler-grade checks? | Reviews CPU RTL only and intentionally ignores the SoC harness.  It scans source text for RTL quality risks such as clock/reset usage, always-block style, case/default patterns, assignment style, hot signal references, and other static review hints.  If Yosys is available, it also runs a bounded CPU-only structural precheck to estimate module risk, fanin/fanout candidates, combinational depth candidates, inferred cells, and structural diagnostics. | `review_fe/report/rtl_review.json`, `review_fe/report/rtl_review_summary.md`, `review_fe/report/yosys_precheck.json`, `review_fe/report/yosys_precheck.log` | A blocking CPU RTL quality issue was found, or Yosys produced a real parse/hierarchy/structural error.  If Yosys is unavailable, review can still succeed with the source-scan portion and reports Yosys as unavailable. |
 | `elab` | Can a SystemVerilog frontend understand the complete design hierarchy? | Runs full Slang elaboration on the prepared RTL. It checks syntax, package/include/define handling, module resolution, top selection, parameter/port structure, and semantic consistency. The source-scanned module inventory is informational; only Slang diagnostics are authoritative for unresolved modules and readiness. | `elab_slang/report/log.txt`, `elab_slang/report/elab_summary.json`, `elab_slang/report/elab.rpt` | The RTL cannot be elaborated as a complete SystemVerilog design: syntax errors, unresolved modules, bad hierarchical references, bad packages/includes, or incompatible language constructs. |
 | `lint` | Does Verilator accept the RTL for simulation-oriented lint rules? | Runs `verilator --lint-only` with the prepared files, include directories, defines, and top module.  It parses Verilator diagnostics into structured errors, warnings, rule groups, and per-file hotspots for GUI display. | `lint_verilator/report/log.txt`, `lint_verilator/report/lint_summary.json`, `lint_verilator/report/lint.rpt` | Verilator found errors or returned a non-zero status.  Typical causes include unsupported constructs, width/range problems, undriven or multidriven signals, missing pins, latch/case warnings promoted by policy, or tool invocation problems. |
-| `sim` | Can the selected CPU and SoC harness build and run real software images? | Compiles the prepared RTL plus the configured C++ simulator testbench with Verilator.  It builds requested test programs when needed, runs each simulation case, captures logs, preserves per-run history, and emits VCD waveforms.  RT-Thread is treated as a special terminal-style case with required log markers. | `sim_verilator/output/<design>_sim`, `sim_verilator/output/cases/<case>/`, `sim_verilator/report/cases.json`, `sim_verilator/report/log.txt`, `sim_verilator/report/runs/<run_id>/` | The simulator failed to compile, a test image could not be built, a case returned failure, required RT-Thread markers were missing, timeout policy failed, or the runtime/testbench configuration is incomplete. |
+| `sim` | Can the selected CPU and SoC harness build and run real software images? | Compiles the prepared RTL plus the configured C++ simulator testbench with Verilator. It builds requested test programs when needed, runs each simulation case, captures logs, preserves per-run history, and emits VCD waveforms. | `sim_verilator/output/<design>_sim`, `sim_verilator/output/cases/<case>/`, `sim_verilator/report/cases.json`, `sim_verilator/report/log.txt`, `sim_verilator/report/runs/<run_id>/` | The simulator failed to compile, a test image could not be built, a case returned failure, timeout policy failed, or the runtime/testbench configuration is incomplete. |
 
 ### How To Read The Steps
 
@@ -112,11 +111,9 @@ UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate
 the run as GOOD/BAD TRAP depending on the written value.
 
 The CPU must reset its first instruction fetch to `0x2000_0000`. Normal CPU
-tests are linked at that address. RT-Thread uses the SoC bootloader at
-`0x2000_0000`, which loads and jumps to the payload at `0x8000_0000`. These
-addresses are part of the catalog contract and are stored in every workspace;
-changing them requires a matching CPU wrapper, SoC harness, linker, and
-difftest configuration.
+tests are linked at that address. This address is part of the catalog contract
+and is stored in every workspace; changing it requires a matching CPU wrapper,
+SoC harness, linker, and difftest configuration.
 
 Before claiming a new adapter is runnable, run the static catalog check:
 
@@ -155,20 +152,13 @@ workspace_projects/<design>/
 └── sim_verilator/
     ├── output/<design>_sim         # compiled simulator
     ├── output/cases/<case>/
-    │   ├── <case>.bin              # built image, e.g. rtthread.soc.bin
+    │   ├── <case>.bin              # built test image
     │   ├── log.txt                 # latest case log
     │   └── wave.vcd
     ├── report/cases.json           # latest machine-readable case summary
     ├── report/log.txt              # latest simulation summary
     ├── report/cases/<case>/log.txt
     └── report/runs/<run_id>/       # retained run history
-```
-
-RT-Thread is treated as a normal simulation case:
-
-```text
-<workspace>/sim_verilator/output/cases/rtthread.soc/rtthread.soc.bin
-<workspace>/sim_verilator/output/cases/rtthread.soc/log.txt
 ```
 
 ## Python API
@@ -208,7 +198,7 @@ spec = CreateWorkspaceData(
     # Case selection
     sim_build_all_programs=True,
     sim_programs_dir="/path/to/SoC/tests/programs",
-    sim_program_names=["rtthread"],  # optional extra case
+    sim_program_names=[],
     sim_tests_out_dir="",            # default: sim_verilator/output/cases/<case>/
 )
 
@@ -251,7 +241,7 @@ ecc-fe \
   --sim-cpp fecompiler/thirdparty/SoC/driver/difftest.cpp \
   --sim-cflag=-Ifecompiler/thirdparty/SoC \
   --sim-ldflag=-ldl \
-  --sim-program rtthread \
+  --sim-program add \
   --sim-arg=--max-cycles \
   --sim-arg=10000000 \
   --rerun
@@ -274,17 +264,12 @@ ecc-fe workspace get-home --directory /path/to/workspace --json
 # CL3 CPU + SoC examples
 bazel run //:run_cl3_soc
 bazel run //:run_cl3_soc_all_tests
-bazel run //:run_cl3_soc_rtthread
 
 # Main regressions
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
 bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"
-bazel test //:test_cpu_soc_rtthread_flow --test_output=streamed --test_env=PATH="$PATH"
 bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 ```
-
-For RT-Thread, make sure `scons`, a RISC-V GCC toolchain, and `AM_HOME`
-or `/home/luyoung/ysyx-workbench/abstract-machine` are available.
 
 ## Tests
 
@@ -340,13 +325,11 @@ repository:
   `fecompiler/thirdparty`.
 
 Most CPU RTL resources in `fecompiler/thirdparty` are pinned git submodules:
-`cv32e40p`, `darkriscv`, `ibex`, `learn-fpga`, `picorv32`, `rt-thread-am`,
-`scr1`, and `serv`. The `cva6` and `vexriscv` directories are vendored
+`cv32e40p`, `darkriscv`, `ibex`, `learn-fpga`, `picorv32`, `scr1`, and
+`serv`. The `cva6` and `vexriscv` directories are vendored
 snapshots in this repository, so updates to them should be intentional and
 documented with their upstream source and commit in the release notes or
 change log.
-
-RT-Thread BSP notes live in [`fecompiler/thirdparty/README`](fecompiler/thirdparty/README).
 
 ## Documentation
 
