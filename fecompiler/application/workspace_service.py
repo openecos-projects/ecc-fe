@@ -2113,6 +2113,17 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
                 path = str(case.get(key, "")).strip()
                 label = f"{case_name} {suffix}".strip()
                 append_item(_existing_path_item(path, label))
+            program = case.get("program", {})
+            if isinstance(program, dict):
+                for key, suffix in (
+                    ("source", "source"),
+                    ("elf", "ELF"),
+                    ("binary", "binary"),
+                    ("disassembly", "disassembly"),
+                ):
+                    path = str(program.get(key, "")).strip()
+                    label = f"{case_name} {suffix}".strip()
+                    append_item(_existing_path_item(path, label))
 
     return artifacts
 
@@ -2593,6 +2604,8 @@ def _build_frontend_sim_payload(step: Any) -> dict[str, Any]:
     for raw_case in raw_cases:
         if not isinstance(raw_case, dict):
             continue
+        raw_program = raw_case.get("program", {})
+        program = raw_program if isinstance(raw_program, dict) else {}
         case = {
             "name": str(raw_case.get("name", "")),
             "suite": str(raw_case.get("suite", "")),
@@ -2604,6 +2617,13 @@ def _build_frontend_sim_payload(step: Any) -> dict[str, Any]:
             "run_log": str(raw_case.get("run_log", "")),
             "wave": str(raw_case.get("wave", "")),
             "run_id": str(raw_case.get("run_id", "")),
+            "program": {
+                "source": str(program.get("source", "")),
+                "elf": str(program.get("elf", "")),
+                "binary": str(program.get("binary", "")),
+                "image": str(program.get("image") or raw_case.get("image") or ""),
+                "disassembly": str(program.get("disassembly", "")),
+            },
             "validation": raw_case.get("validation", {}) if isinstance(raw_case.get("validation"), dict) else {},
             "metrics": raw_case.get("metrics", {}) if isinstance(raw_case.get("metrics"), dict) else {},
         }

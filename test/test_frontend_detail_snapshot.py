@@ -81,3 +81,81 @@ def test_write_frontend_step_detail_persists_review_snapshot(tmp_path: Path) -> 
 
     workspace_service._remove_frontend_step_detail(step)
     assert not Path(detail_path).exists()
+
+
+def test_write_frontend_step_detail_preserves_sim_program_artifacts(tmp_path: Path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    report_dir = workspace_dir / "sim_verilator" / "report"
+    log_dir = workspace_dir / "sim_verilator" / "log"
+    output_dir = workspace_dir / "sim_verilator" / "output"
+    case_dir = output_dir / "cases" / "add.soc"
+    report_dir.mkdir(parents=True)
+    log_dir.mkdir(parents=True)
+    case_dir.mkdir(parents=True)
+
+    source = workspace_dir / "programs" / "add.c"
+    source.parent.mkdir(parents=True)
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    program_paths = {
+        "source": source,
+        "elf": case_dir / "add.elf",
+        "binary": case_dir / "add.bin",
+        "image": case_dir / "add.soc.bin",
+        "disassembly": case_dir / "add.txt",
+    }
+    for key, path in program_paths.items():
+        if key != "source":
+            path.write_bytes(b"artifact")
+
+    cases_path = report_dir / "cases.json"
+    cases_path.write_text(
+        json.dumps({
+            "suite": "cpu_tests",
+            "run_id": "run-1",
+            "cases": [{
+                "name": "add.soc",
+                "suite": "cpu_tests",
+                "ok": True,
+                "returncode": 0,
+                "image": str(program_paths["image"]),
+                "program": {key: str(path) for key, path in program_paths.items()},
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    step = WorkspaceStep(
+        name="sim",
+        tool="verilator",
+        version="",
+        directory=str(workspace_dir / "sim_verilator"),
+        config={},
+        input={},
+        output={"dir": str(output_dir)},
+        data={},
+        feature={},
+        report={"dir": str(report_dir), "step": ""},
+        log={"file": str(log_dir / "log.txt")},
+        script={},
+        analysis={},
+        subflow={"path": str(workspace_dir / "sim_verilator" / "subflow.json")},
+        checklist={},
+    )
+    workspace = {
+        "directory": str(workspace_dir),
+        "home_path": str(workspace_dir / "home" / "home.json"),
+    }
+
+    detail = workspace_service._build_frontend_step_detail(
+        workspace,
+        step,
+        FakeEngine().get_step("sim", "verilator"),
+    )
+
+    assert detail["cases"][0]["program"] == {
+        key: str(path) for key, path in program_paths.items()
+    }
+    artifact_labels = {item["label"] for item in detail["artifacts"]}
+    assert "add.soc ELF" in artifact_labels
+    assert "add.soc disassembly" in artifact_labels
+    assert "add.soc source" in artifact_labels

@@ -70,10 +70,12 @@ CC="${CROSS_COMPILE}gcc"
 LD="${CROSS_COMPILE}ld"
 OBJDUMP="${CROSS_COMPILE}objdump"
 OBJCOPY="${CROSS_COMPILE}objcopy"
-if ! command -v "${CC}" >/dev/null 2>&1; then
-  echo "Configured cross toolchain prefix is invalid: ${CROSS_COMPILE}" >&2
-  exit 1
-fi
+for TOOL in "${CC}" "${LD}" "${OBJDUMP}" "${OBJCOPY}"; do
+  if ! command -v "${TOOL}" >/dev/null 2>&1; then
+    echo "Required RISC-V tool not found: ${TOOL} (prefix: ${CROSS_COMPILE})" >&2
+    exit 1
+  fi
+done
 
 HEXDUMP="${HEXDUMP_BIN:-hexdump}"
 if ! command -v "${HEXDUMP}" >/dev/null 2>&1; then
@@ -218,7 +220,7 @@ for FILE in "${SRC}" "${COREMARK_SRCS[@]}" "${COMMON_SRCS[@]}"; do
 done
 
 "${LD}" "${LDFLAGS[@]}" -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
-"${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
+"${OBJDUMP}" -d -S -l "${PREFIX}.elf" > "${PREFIX}.txt"
 "${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
 "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
 "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
