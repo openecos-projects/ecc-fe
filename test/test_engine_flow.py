@@ -134,6 +134,14 @@ def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
             "name": "add.soc",
             "ok": False,
             "returncode": 1,
+            "image": "/tmp/add.soc.bin",
+            "program": {
+                "source": "/src/add.c",
+                "elf": "/out/add.elf",
+                "binary": "/out/add.bin",
+                "image": "/out/add.soc.bin",
+                "disassembly": "/out/add.txt",
+            },
             "metrics": {"cycles": 42, "termination": "bad_trap"},
             "failure": {"kind": "bad_trap", "message": "Bad trap"},
         }, {
@@ -156,6 +164,9 @@ def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
     assert sim["history"][0]["ok"] is False
     assert sim["cases"][0]["metrics"]["cycles"] == 42
     assert sim["cases"][0]["failure"]["kind"] == "bad_trap"
+    assert sim["cases"][0]["program"]["source"] == "/src/add.c"
+    assert sim["cases"][0]["program"]["elf"] == "/out/add.elf"
+    assert sim["cases"][0]["program"]["disassembly"] == "/out/add.txt"
     assert sim["cases"][1]["ok"] is True
     assert "failure" not in sim["cases"][1]
 
@@ -1917,8 +1928,17 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
     tb = tmp_path / "tb_main.cpp"
     img = tmp_path / "tests" / "out" / "single.soc.bin"
+    source = tmp_path / "tests" / "programs" / "single.c"
     img.parent.mkdir(parents=True, exist_ok=True)
+    source.parent.mkdir(parents=True, exist_ok=True)
     img.write_bytes(b"\x01")
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    elf = img.with_name("single.elf")
+    binary = img.with_name("single.bin")
+    disassembly = img.with_name("single.txt")
+    elf.write_bytes(b"ELF")
+    binary.write_bytes(b"BIN")
+    disassembly.write_text("80000000 <_start>:\n", encoding="utf-8")
     tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
 
     spec = CreateWorkspaceData(
@@ -1930,6 +1950,7 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws_sim_single_case"))
+    ws["sim_programs_dir"] = str(source.parent)
     run_calls: list[list[str]] = []
 
     def _fake_run(cmd, capture_output=True, text=True):
@@ -1964,6 +1985,13 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
     ).resolve()
     assert Path(simulate_cmd[simulate_cmd.index("--wave") + 1]) == expected_wave
     payload = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert payload["cases"][0]["program"] == {
+        "source": str(source.resolve()),
+        "elf": str(elf.resolve()),
+        "binary": str(binary.resolve()),
+        "image": str(img.resolve()),
+        "disassembly": str(disassembly.resolve()),
+    }
     metrics = payload["cases"][0]["metrics"]
     assert metrics["cycles"] == 42
     assert metrics["max_cycles"] == 100

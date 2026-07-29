@@ -1049,6 +1049,49 @@ def _programs_dir(workspace: dict[str, Any]) -> Path:
     return _invocation_root() / "tests" / "programs"
 
 
+def _sim_case_program(workspace: dict[str, Any], image: str) -> dict[str, str]:
+    """Describe the build artifacts associated with a simulation image."""
+    image_text = str(image).strip()
+    if not image_text:
+        return {
+            "source": "",
+            "elf": "",
+            "binary": "",
+            "image": "",
+            "disassembly": "",
+        }
+
+    image_path = _resolve_path(image_text)
+    image_name = image_path.name
+    program_name = (
+        image_name.removesuffix(".soc.bin")
+        if image_name.endswith(".soc.bin")
+        else image_path.stem
+    )
+    output_prefix = image_path.parent / program_name
+
+    source_path: Path | None = None
+    for candidate in _program_sources_to_build(workspace):
+        if candidate.stem == program_name and candidate.is_file():
+            source_path = candidate.resolve()
+            break
+    if source_path is None:
+        candidate = _programs_dir(workspace) / f"{program_name}.c"
+        if candidate.is_file():
+            source_path = candidate.resolve()
+
+    def existing(path: Path) -> str:
+        return str(path.resolve()) if path.is_file() else ""
+
+    return {
+        "source": str(source_path) if source_path is not None else "",
+        "elf": existing(output_prefix.with_suffix(".elf")),
+        "binary": existing(output_prefix.with_suffix(".bin")),
+        "image": str(image_path),
+        "disassembly": existing(output_prefix.with_suffix(".txt")),
+    }
+
+
 def _prepare_sim_images(workspace: dict[str, Any], *,
                         build_log_path: Path | None = None,
                         case_output_root: Path | None = None) -> tuple[list[str], bool]:
@@ -1800,6 +1843,7 @@ class VerilatorSimStep(BaseStep):
                 "name": case_name,
                 "suite": suite,
                 "image": image,
+                "program": _sim_case_program(workspace, image),
                 "returncode": rc,
                 "ok": case_ok,
                 "log": str(logs["output_log"]),

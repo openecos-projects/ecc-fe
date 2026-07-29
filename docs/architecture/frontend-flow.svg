@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980" role="img" aria-labelledby="title desc">
+  <title id="title">ECC-FE frontend flow and workspace artifacts</title>
+  <desc id="desc">Catalog selections and RTL inputs are validated into a workspace, then processed by prepare, review, elaboration, lint, and simulation stages. Each stage writes durable reports used by ECOS Studio.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#53636f"/>
+    </marker>
+    <style>
+      .canvas { fill: #f5f7f8; }
+      .header { fill: #17242d; }
+      .panel { fill: #ffffff; stroke: #c8d3da; stroke-width: 2; }
+      .blue { fill: #eaf5f8; stroke: #55a2ba; stroke-width: 2; }
+      .green { fill: #eaf6f1; stroke: #48a484; stroke-width: 2; }
+      .amber { fill: #fff6dd; stroke: #d2a142; stroke-width: 2; }
+      .coral { fill: #fff0ed; stroke: #df7566; stroke-width: 2; }
+      .violet { fill: #f3eff9; stroke: #8b72b3; stroke-width: 2; }
+      .title { font: 700 36px Inter, "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: 0; }
+      .subtitle { font: 400 17px Inter, "Segoe UI", Arial, sans-serif; fill: #cbd6dc; letter-spacing: 0; }
+      .eyebrow { font: 700 13px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .heading { font: 700 19px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .step { font: 700 17px Inter, "Segoe UI", Arial, sans-serif; fill: #17242d; letter-spacing: 0; }
+      .body { font: 400 14px Inter, "Segoe UI", Arial, sans-serif; fill: #52616d; letter-spacing: 0; }
+      .small { font: 400 12.5px Inter, "Segoe UI", Arial, sans-serif; fill: #647480; letter-spacing: 0; }
+      .code { font: 600 13px "SFMono-Regular", Consolas, monospace; fill: #304754; letter-spacing: 0; }
+      .line { fill: none; stroke: #53636f; stroke-width: 3; marker-end: url(#arrow); }
+      .soft-line { fill: none; stroke: #91a0aa; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1500" height="980"/>
+  <rect class="header" width="1500" height="118"/>
+  <text class="title" x="64" y="57">Frontend Flow: From Catalog Choice to Waveform</text>
+  <text class="subtitle" x="64" y="87">Every gate answers a different question and leaves durable, machine-readable evidence</text>
+
+  <text class="eyebrow" x="64" y="154">CONFIGURATION AND INPUT CONTRACT</text>
+  <rect class="panel" x="64" y="176" width="320" height="178" rx="8"/>
+  <text class="heading" x="88" y="216">Catalog Selection</text>
+  <rect x="88" y="238" width="126" height="32" rx="6" fill="#eaf5f8"/>
+  <text class="small" x="151" y="259" text-anchor="middle">CPU core</text>
+  <rect x="230" y="238" width="126" height="32" rx="6" fill="#eaf6f1"/>
+  <text class="small" x="293" y="259" text-anchor="middle">SoC harness</text>
+  <rect x="88" y="282" width="126" height="32" rx="6" fill="#fff6dd"/>
+  <text class="small" x="151" y="303" text-anchor="middle">Toolchain</text>
+  <rect x="230" y="282" width="126" height="32" rx="6" fill="#fff0ed"/>
+  <text class="small" x="293" y="303" text-anchor="middle">Test suite</text>
+  <text class="small" x="88" y="338">Compatibility matrix defines valid pairs.</text>
+
+  <rect class="panel" x="430" y="176" width="320" height="178" rx="8"/>
+  <text class="heading" x="454" y="216">Design Inputs</text>
+  <text class="body" x="454" y="249">User or bundled CPU RTL</text>
+  <text class="body" x="454" y="276">CPU and SoC filelists</text>
+  <text class="body" x="454" y="303">Include paths and defines</text>
+  <text class="body" x="454" y="330">Simulation and test options</text>
+
+  <rect class="amber" x="796" y="176" width="302" height="178" rx="8"/>
+  <text class="heading" x="820" y="216">Validation Gate</text>
+  <text class="body" x="820" y="249">Resolve manifests and resources</text>
+  <text class="body" x="820" y="276">Check wrapper/socket contracts</text>
+  <text class="body" x="820" y="303">Normalize paths and defaults</text>
+  <text class="code" x="820" y="333">frontend.validate_config</text>
+
+  <rect class="green" x="1144" y="176" width="292" height="178" rx="8"/>
+  <text class="heading" x="1168" y="216">Workspace State</text>
+  <text class="code" x="1168" y="249">home/parameters.json</text>
+  <text class="code" x="1168" y="276">home/flow.json</text>
+  <text class="code" x="1168" y="303">home/home.json</text>
+  <text class="small" x="1168" y="333">Persistent across runtime restarts</text>
+
+  <path class="line" d="M384 265 H422"/>
+  <path class="line" d="M750 265 H788"/>
+  <path class="line" d="M1098 265 H1136"/>
+
+  <text class="eyebrow" x="64" y="406">EXECUTION PIPELINE</text>
+
+  <rect class="blue" x="64" y="430" width="244" height="218" rx="8"/>
+  <text class="step" x="186" y="474" text-anchor="middle">1  PREPARE</text>
+  <text class="body" x="88" y="512">Merge nested filelists</text>
+  <text class="body" x="88" y="539">Deduplicate RTL and flags</text>
+  <text class="body" x="88" y="566">Validate cpu_top ports</text>
+  <line x1="88" y1="590" x2="284" y2="590" stroke="#b8d9e3"/>
+  <text class="code" x="88" y="616">merged_rtl.f</text>
+  <text class="code" x="88" y="638">prepared_inputs.json</text>
+
+  <rect class="green" x="346" y="430" width="244" height="218" rx="8"/>
+  <text class="step" x="468" y="474" text-anchor="middle">2  REVIEW</text>
+  <text class="body" x="370" y="512">Analyze CPU RTL only</text>
+  <text class="body" x="370" y="539">Track quality findings</text>
+  <text class="body" x="370" y="566">Optional Yosys precheck</text>
+  <line x1="370" y1="590" x2="566" y2="590" stroke="#b9ddcf"/>
+  <text class="code" x="370" y="616">rtl_review.json</text>
+  <text class="code" x="370" y="638">yosys_precheck.json</text>
+
+  <rect class="amber" x="628" y="430" width="244" height="218" rx="8"/>
+  <text class="step" x="750" y="474" text-anchor="middle">3  ELAB</text>
+  <text class="body" x="652" y="512">Parse SystemVerilog</text>
+  <text class="body" x="652" y="539">Resolve hierarchy</text>
+  <text class="body" x="652" y="566">Check semantic consistency</text>
+  <line x1="652" y1="590" x2="848" y2="590" stroke="#ead39d"/>
+  <text class="code" x="652" y="616">elab_summary.json</text>
+  <text class="code" x="652" y="638">elab.rpt</text>
+
+  <rect class="violet" x="910" y="430" width="244" height="218" rx="8"/>
+  <text class="step" x="1032" y="474" text-anchor="middle">4  LINT</text>
+  <text class="body" x="934" y="512">Run Verilator lint-only</text>
+  <text class="body" x="934" y="539">Group diagnostics by rule</text>
+  <text class="body" x="934" y="566">Identify file hotspots</text>
+  <line x1="934" y1="590" x2="1130" y2="590" stroke="#d6cae7"/>
+  <text class="code" x="934" y="616">lint_summary.json</text>
+  <text class="code" x="934" y="638">lint.rpt</text>
+
+  <rect class="coral" x="1192" y="430" width="244" height="218" rx="8"/>
+  <text class="step" x="1314" y="474" text-anchor="middle">5  SIM</text>
+  <text class="body" x="1216" y="512">Compile RTL and C++</text>
+  <text class="body" x="1216" y="539">Build selected programs</text>
+  <text class="body" x="1216" y="566">Run cases and difftest</text>
+  <line x1="1216" y1="590" x2="1412" y2="590" stroke="#ecc6c0"/>
+  <text class="code" x="1216" y="616">cases.json / log.txt</text>
+  <text class="code" x="1216" y="638">wave.vcd</text>
+
+  <path class="line" d="M308 539 H338"/>
+  <path class="line" d="M590 539 H620"/>
+  <path class="line" d="M872 539 H902"/>
+  <path class="line" d="M1154 539 H1184"/>
+
+  <text class="eyebrow" x="64" y="704">CONSUMERS AND FEEDBACK</text>
+  <rect class="panel" x="64" y="728" width="410" height="176" rx="8"/>
+  <text class="heading" x="88" y="770">ECOS Studio Flow View</text>
+  <text class="body" x="88" y="802">Step state, duration, diagnostics and artifacts</text>
+  <text class="body" x="88" y="830">Progress arrives as runtime.event notifications</text>
+  <text class="small" x="88" y="864">A failed gate stops the remaining pipeline.</text>
+
+  <rect class="blue" x="545" y="728" width="410" height="176" rx="8"/>
+  <text class="heading" x="569" y="770">Wave Viewer</text>
+  <text class="body" x="569" y="802">Simulation produces VCD waveforms</text>
+  <text class="body" x="569" y="830">Surfer assets render them offline in the GUI</text>
+  <text class="small" x="569" y="864">The viewer is a separate managed resource.</text>
+
+  <rect class="green" x="1026" y="728" width="410" height="176" rx="8"/>
+  <text class="heading" x="1050" y="770">Provenance Invalidation</text>
+  <text class="body" x="1050" y="802">Inputs, configuration, tools and upstream outputs</text>
+  <text class="body" x="1050" y="830">are fingerprinted after successful steps</text>
+  <text class="small" x="1050" y="864">A changed signature marks downstream work stale.</text>
+
+  <path class="soft-line" d="M468 648 V684 H269 V720"/>
+  <path class="soft-line" d="M1314 648 V700 H750 V720"/>
+  <path class="soft-line" d="M1032 648 V684 H1231 V720"/>
+  <text class="small" x="750" y="950" text-anchor="middle">Passing one stage does not imply that stronger semantic, lint, or behavioral gates will pass.</text>
+</svg>
