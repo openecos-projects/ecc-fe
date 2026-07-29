@@ -224,7 +224,7 @@ for FILE in "${SRC}" "${COREMARK_SRCS[@]}" "${COMMON_SRCS[@]}"; do
 done
 
 "${LD}" "${LDFLAGS[@]}" -o "${PREFIX}.elf" --start-group "${OBJS[@]}" --end-group
-"${OBJDUMP}" -d -S -l "${PREFIX}.elf" > "${PREFIX}.txt"
+"${OBJDUMP}" -d "${PREFIX}.elf" > "${PREFIX}.txt"
 "${OBJCOPY}" -S --set-section-flags .bss=alloc,contents -O binary "${PREFIX}.elf" "${PREFIX}.bin"
 "${OBJCOPY}" -O verilog --change-addresses -"${PMEM_START}" --verilog-data-width 4 "${PREFIX}.elf" "${PREFIX}.hex"
 "${HEXDUMP}" -v -e '/4 "%08x\n"' "${PREFIX}.bin" > "${PREFIX}.mem"
