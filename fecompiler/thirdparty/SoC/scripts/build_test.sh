@@ -52,6 +52,10 @@ fi
 
 if [[ -n "${RISCV_PREFIX:-}" ]]; then
   CROSS_COMPILE="${RISCV_PREFIX}"
+elif command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; then
+  CROSS_COMPILE="riscv64-unknown-elf-"
+elif command -v riscv32-unknown-elf-gcc >/dev/null 2>&1; then
+  CROSS_COMPILE="riscv32-unknown-elf-"
 elif command -v riscv64-none-elf-gcc >/dev/null 2>&1; then
   CROSS_COMPILE="riscv64-none-elf-"
 elif command -v riscv-none-elf-gcc >/dev/null 2>&1; then
