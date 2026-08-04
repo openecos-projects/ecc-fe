@@ -31,6 +31,8 @@ _AUTODISCOVER_SOURCE_LIMIT = 32
 _AUTODISCOVER_EXTENSIONS = (".sv", ".v")
 _SV_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_$]*"
 _MODULE_DECL_RE = re.compile(rf"\bmodule\s+({_SV_IDENTIFIER})\b")
+_ENDMODULE_RE = re.compile(r"\bendmodule\b")
+_DPI_IMPORT_RE = re.compile(r'\bimport\s+"DPI-C"')
 _SIMPLE_INSTANCE_RE = re.compile(rf"(?m)(?:^|[;\n])\s*({_SV_IDENTIFIER})\s+({_SV_IDENTIFIER})\s*\(")
 _PARAM_INSTANCE_RE = re.compile(rf"(?ms)(?:^|[;\n])\s*({_SV_IDENTIFIER})\s*#\s*\(.*?\)\s*({_SV_IDENTIFIER})\s*\(")
 _LINE_COMMENT_RE = re.compile(r"//.*?$", re.MULTILINE)
@@ -54,6 +56,10 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
 
     inputs = _cpu_probe_inputs(workspace)
     top_module = _cpu_top(workspace, inputs)
+    inputs["blackboxed_modules"] = _dpi_blackbox_modules(
+        inputs,
+        exclude={top_module} if top_module else set(),
+    )
     if not inputs["rtl_files"]:
         return _write_probe(paths, {
             "status": "skipped",
@@ -176,7 +182,12 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
     module_risks = _module_risks_from_stat(stat, metrics)
     quality = _quality_from_run(result.returncode, diagnostics, metrics)
     issues = _issues_from_probe(output, diagnostics, metrics, result.returncode)
-    status = "success" if result.returncode == 0 else "failed"
+    if result.returncode == 0:
+        status = "success"
+    elif _only_tool_limit_errors(diagnostics):
+        status = "tool_limited"
+    else:
+        status = "failed"
     reason = "" if status == "success" else _yosys_failure_reason(diagnostics, output, result.returncode)
 
     return _write_probe(paths, {
@@ -261,6 +272,27 @@ def _is_review_excluded_rtl(path: Path) -> bool:
     if name in {"instr_tracer.sv", "instr_tracer_if.sv"} and "/thirdparty/cva6/" in str(path):
         return True
     return False
+
+
+def _dpi_blackbox_modules(inputs: dict[str, Any], *, exclude: set[str]) -> list[str]:
+    """Find non-top modules whose implementation depends on DPI-C simulation code."""
+    modules: list[str] = []
+    seen: set[str] = set()
+    for raw_path in inputs.get("rtl_files", []):
+        text = _strip_sv_comments(_read_rtl_for_scan(Path(str(raw_path))))
+        if not text or not _DPI_IMPORT_RE.search(text):
+            continue
+        for match in _MODULE_DECL_RE.finditer(text):
+            end_match = _ENDMODULE_RE.search(text, match.end())
+            body_end = end_match.start() if end_match else len(text)
+            if not _DPI_IMPORT_RE.search(text, match.end(), body_end):
+                continue
+            name = match.group(1)
+            if name in exclude or name in seen:
+                continue
+            seen.add(name)
+            modules.append(name)
+    return modules
 
 
 def _unique_paths(paths: list[Path]) -> list[str]:
@@ -586,6 +618,8 @@ def _build_read_slang_script(inputs: dict[str, Any], top: str) -> list[str]:
         "--ignore-assertions",
         "-Wduplicate-definition",
     ]
+    for module_name in inputs.get("blackboxed_modules", []):
+        read_args.extend(["--blackboxed-module", _quote_yosys(str(module_name), quote=False)])
     if top:
         read_args.extend(["--top", _quote_yosys(top, quote=False)])
     for incdir in inputs.get("incdirs", []):
