@@ -183,6 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--filelist", default="")
     create.add_argument("--cpu-filelist", default="")
     create.add_argument("--cpu-rtl", action="append", default=[], help="CPU RTL source path; repeatable")
+    create.add_argument("--cpu-top-module", default="", help="User CPU top module name")
     create.add_argument("--soc-filelist", default="")
     create.add_argument("--testbench", default="")
     create.add_argument("--sim-cpp", action="append", default=[])
@@ -219,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--test-suite-id", default="")
     validate.add_argument("--cpu-filelist", default="")
     validate.add_argument("--cpu-rtl", action="append", default=[], help="CPU RTL source path; repeatable")
+    validate.add_argument("--cpu-top-module", default="", help="User CPU top module name")
 
     load = subparsers.add_parser("load", help="Load an existing frontend workspace")
     _add_json_flag(load)
@@ -821,6 +823,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
         ("origin_verilog", "origin_verilog"),
         ("filelist", "filelist"),
         ("cpu_filelist", "cpu_filelist"),
+        ("cpu_top_module", "cpu_top_module"),
         ("soc_filelist", "soc_filelist"),
         ("testbench", "testbench"),
         ("sim_tests_dir", "sim_tests_dir"),
@@ -887,7 +890,14 @@ def _catalog_config_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
     if args.input_json:
         request, base_dir = _load_input_json(args.input_json)
 
-    for field in ("core_id", "soc_harness_id", "toolchain_id", "test_suite_id", "cpu_filelist"):
+    for field in (
+        "core_id",
+        "soc_harness_id",
+        "toolchain_id",
+        "test_suite_id",
+        "cpu_filelist",
+        "cpu_top_module",
+    ):
         value = str(getattr(args, field, "") or "").strip()
         if value:
             request[field] = value
@@ -1017,6 +1027,10 @@ def _frontend_catalog_config_from_create_request(request: dict[str, Any]) -> dic
             )
         ),
         "cpu_filelist": _first_text(request.get("cpu_filelist"), params.get("cpu_filelist")),
+        "cpu_top_module": _first_text(
+            request.get("cpu_top_module"),
+            params.get("cpu_top_module"),
+        ),
     }
 
 

@@ -12,6 +12,7 @@ from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.common.rtl_ownership import classify_rtl_source, ownership_summary
 from fecompiler.tools.common.sv_module import (
     compare_port_contracts,
+    is_simple_sv_identifier,
     module_definitions,
     module_port_contract_from_files,
 )
@@ -21,6 +22,7 @@ from fecompiler.utility.json import json_read, json_write
 
 
 ECOS_CPU_TOP = "cpu_top"
+ECOS_CUSTOM_CPU_TOP_DEFINE = "ECOS_CUSTOM_CPU_TOP"
 
 
 class PrepareStep(BaseStep):
@@ -32,6 +34,7 @@ class PrepareStep(BaseStep):
 
         prepared, source_info = self._collect_inputs(step, workspace)
         cpu_top_contract = self._validate_frontend_cpu_top(step, workspace, prepared["rtl_files"])
+        self._inject_custom_cpu_top_define(workspace, prepared)
         prepared["cpu_top_contract"] = cpu_top_contract
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
         manifest_path = self._write_prepared_manifest(step, prepared)
@@ -181,6 +184,12 @@ class PrepareStep(BaseStep):
             return {"id": "cpu_top", "status": "not_required"}
 
         required_top = str(workspace.get("required_cpu_top_module", "")).strip() or ECOS_CPU_TOP
+        if not is_simple_sv_identifier(required_top):
+            self._fail_cpu_top_contract(
+                step,
+                f"frontend prepare requires a valid SystemVerilog CPU top identifier: {required_top}",
+                {"module": required_top},
+            )
 
         matches = module_definitions(rtl_files, required_top)
         if len(matches) != 1:
@@ -226,6 +235,29 @@ class PrepareStep(BaseStep):
             result,
         )
         return result
+
+    @staticmethod
+    def _inject_custom_cpu_top_define(
+        workspace: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> None:
+        core_id = str(
+            workspace.get("frontend_core_id")
+            or workspace.get("cpu_wrapper_id")
+            or ""
+        ).strip()
+        required_top = str(workspace.get("required_cpu_top_module", "")).strip()
+        if core_id != "custom-filelist" or not required_top:
+            return
+
+        defines = [
+            str(define).strip()
+            for define in prepared.get("defines", [])
+            if str(define).strip()
+            and str(define).split("=", maxsplit=1)[0].strip() != ECOS_CUSTOM_CPU_TOP_DEFINE
+        ]
+        defines.append(f"{ECOS_CUSTOM_CPU_TOP_DEFINE}={required_top}")
+        prepared["defines"] = defines
 
     @staticmethod
     def _expected_cpu_top_contract(workspace: dict[str, Any]) -> list[dict[str, Any]]:

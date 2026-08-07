@@ -116,7 +116,7 @@
   <rect x="64" y="774" width="218" height="8" rx="4" fill="#3b8fa8"/>
   <text class="step" x="173" y="820" text-anchor="middle">PREPARE</text>
   <text class="small" x="173" y="849" text-anchor="middle">Normalize RTL inputs</text>
-  <text class="small" x="173" y="873" text-anchor="middle">Validate cpu_top</text>
+  <text class="small" x="173" y="873" text-anchor="middle">Validate selected CPU top</text>
 
   <rect class="flow" x="338" y="774" width="218" height="126" rx="8"/>
   <rect x="338" y="774" width="218" height="8" rx="4" fill="#48a484"/>

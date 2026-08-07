@@ -76,7 +76,7 @@
   <text class="step" x="186" y="474" text-anchor="middle">1  PREPARE</text>
   <text class="body" x="88" y="512">Merge nested filelists</text>
   <text class="body" x="88" y="539">Deduplicate RTL and flags</text>
-  <text class="body" x="88" y="566">Validate cpu_top ports</text>
+  <text class="body" x="88" y="566">Validate CPU interface</text>
   <line x1="88" y1="590" x2="284" y2="590" stroke="#b8d9e3"/>
   <text class="code" x="88" y="616">merged_rtl.f</text>
   <text class="code" x="88" y="638">prepared_inputs.json</text>

@@ -156,7 +156,8 @@ the shared ECOS contracts:
 The high-level shape is:
 
 ```text
-User CPU RTL -> cpu_top -> fixed ECOS SoC wrapper/harness -> ecos_sim_top
+User CPU RTL -> selected top (cpu_top by default) -> fixed ECOS SoC wrapper/harness
+                                               -> ecos_sim_top
 Bundled CPU RTL -> bundled adapter-owned cpu_top -> fixed ECOS SoC wrapper/harness
                                                    -> Verilator main.cpp / GUI
 ```
@@ -165,9 +166,14 @@ Bundled CPU RTL -> bundled adapter-owned cpu_top -> fixed ECOS SoC wrapper/harne
 
 `ecc-fe` exposes `custom-filelist` as **My CPU Top** in the GUI. The selected
 RTL filelist may include the CPU's implementation files, but it must provide
-exactly one CPU top module named `cpu_top`, with the same IO signal names as
-`examples/cl3/cl3_verilog/cpu_top.sv`. The fixed ECOS SoC instantiates that
-module directly; users do not provide any SoC compatibility alias.
+exactly one module with the configured CPU top name. The default is `cpu_top`;
+the GUI and CLI may set another simple SystemVerilog identifier through
+`cpu_top_module` / `--cpu-top-module`.
+
+The selected module must use the flat YSYX BlackBox interface demonstrated by
+`examples/cl3/cl3_verilog/cpu_top.sv`: `clock`, `reset`, `io_interrupt`, and the
+complete `io_master_*` and `io_slave_*` AXI channels. ECOS passes the selected
+module name to its fixed SoC harness; users do not provide a compatibility alias.
 
 The fixed SoC wrapper preserves the simulator MMIO convention used by CPU tests:
 UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate

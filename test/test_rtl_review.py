@@ -514,7 +514,7 @@ def test_yosys_precheck_tool_limit_does_not_block_review_step(tmp_path: Path, mo
     report = tmp_path / "ws_yosys_tool_limit" / "review_fe" / "report" / "rtl_review.json"
     data = json.loads(report.read_text(encoding="utf-8"))
     probe = data["yosys_precheck"]
-    assert probe["status"] == "failed"
+    assert probe["status"] == "tool_limited"
     assert probe["quality"]["gate"] == "warnings"
     assert probe["diagnostics"][0]["category"] == "tool-limit"
     tooling_issue = next(issue for issue in data["issues"] if issue["category"] == "tooling")
@@ -607,6 +607,69 @@ def test_yosys_precheck_prefers_slang_frontend_when_available(tmp_path: Path, mo
     report = tmp_path / "ws_yosys_slang" / "review_fe" / "report" / "rtl_review.json"
     data = json.loads(report.read_text(encoding="utf-8"))
     assert data["structural_probe"]["frontend"] == "read_slang"
+
+
+def test_yosys_precheck_blackboxes_dpi_modules_with_slang(tmp_path: Path, monkeypatch):
+    cpu = tmp_path / "cpu.sv"
+    support = tmp_path / "difftest.sv"
+    filelist = tmp_path / "filelist.cpu.f"
+    cpu.write_text(
+        "module cpu(input logic clk); difftest_wrapper u_difftest(.clk(clk)); endmodule\n",
+        encoding="utf-8",
+    )
+    support.write_text(
+        """
+module ordinary_helper(input logic value, output logic result);
+  assign result = value;
+endmodule
+
+module difftest_wrapper(input logic clk);
+  import "DPI-C" function int difftest_step(input int values[]);
+  int values[2];
+  int result;
+  always_ff @(posedge clk) result = difftest_step(values);
+endmodule
+""",
+        encoding="utf-8",
+    )
+    filelist.write_text(f"{support}\n{cpu}\n", encoding="utf-8")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+
+    def fake_run(cmd, cwd, capture_output, text, env, timeout):
+        script = Path(cmd[cmd.index("-s") + 1])
+        script_text = script.read_text(encoding="utf-8")
+        assert "--blackboxed-module difftest_wrapper" in script_text
+        assert "--blackboxed-module ordinary_helper" not in script_text
+        assert "--blackboxed-module cpu" not in script_text
+        _stat_path_from_script(script_text).write_text(
+            json.dumps({"modules": {}, "design": {"num_cells": 0, "num_wires": 0}}),
+            encoding="utf-8",
+        )
+        _netlist_path_from_script(script_text).write_text(json.dumps({"modules": {}}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+
+    spec = CreateWorkspaceData(
+        directory=str(tmp_path / "ws_yosys_dpi_blackbox"),
+        parameters={"Design": "demo", "Top module": "cpu"},
+        cpu_filelist=str(filelist),
+    )
+    workspace = create_workspace(spec)
+    assert workspace is not None
+
+    loaded = load_workspace(str(tmp_path / "ws_yosys_dpi_blackbox"))
+    assert loaded is not None
+    engine = EngineFlow(workspace=loaded)
+    engine.create_step_workspaces()
+
+    assert engine.run_step("review", rerun=True) == StateEnum.Success
+    report = tmp_path / "ws_yosys_dpi_blackbox" / "review_fe" / "report" / "rtl_review.json"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    probe = data["yosys_precheck"]
+    assert probe["status"] == "success"
+    assert probe["inputs"]["blackboxed_modules"] == ["difftest_wrapper"]
 
 
 def _stat_path_from_script(script_text: str) -> Path:

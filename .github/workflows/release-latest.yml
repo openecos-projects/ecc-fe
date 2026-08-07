@@ -115,8 +115,8 @@ jobs:
           rtl="${GITHUB_WORKSPACE}/examples/cl3/cl3_verilog/cpu_top.sv"
           hello='{"jsonrpc":"2.0","id":1,"method":"rpc.hello","params":{"version":1}}'
           catalog='{"jsonrpc":"2.0","id":2,"method":"frontend.catalog","params":{}}'
-          validate="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"frontend.validate_config\",\"params\":{\"core_id\":\"custom-filelist\",\"test_suite_id\":\"smoke\",\"cpuRtlFiles\":[\"${rtl}\"]}}"
-          create="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"workspace.create\",\"params\":{\"directory\":\"${workspace}\",\"core_id\":\"custom-filelist\",\"test_suite_id\":\"smoke\",\"top_module\":\"cpu_top\",\"parameters\":{\"Design\":\"runtime-smoke\",\"Top module\":\"cpu_top\"},\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          validate="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"frontend.validate_config\",\"params\":{\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"cpu_top\",\"test_suite_id\":\"smoke\",\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          create="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"workspace.create\",\"params\":{\"directory\":\"${workspace}\",\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"cpu_top\",\"test_suite_id\":\"smoke\",\"top_module\":\"ecos_sim_top\",\"parameters\":{\"Design\":\"runtime-smoke\",\"Top module\":\"ecos_sim_top\"},\"cpuRtlFiles\":[\"${rtl}\"]}}"
           prepare='{"jsonrpc":"2.0","id":5,"method":"flow.run_step","params":{"workspaceId":"workspace-1","step":"prepare","rerun":true}}'
           close='{"jsonrpc":"2.0","id":6,"method":"workspace.close","params":{"workspaceId":"workspace-1"}}'
           shutdown='{"jsonrpc":"2.0","id":7,"method":"rpc.shutdown","params":{}}'

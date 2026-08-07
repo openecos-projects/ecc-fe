@@ -29,7 +29,10 @@ def _custom_filelist_core() -> dict:
     return next(item for item in catalog_payload()["cores"] if item["id"] == "custom-filelist")
 
 
-def _cl3_top_source(ports: list[str] | None = None) -> str:
+def _cl3_top_source(
+    ports: list[str] | None = None,
+    module_name: str = "cpu_top",
+) -> str:
     core = _custom_filelist_core()
     selected_ports = ports or list(core["required_cpu_top_ports"])
     contract = {str(port["name"]): port for port in core["required_cpu_top_port_contract"]}
@@ -39,7 +42,7 @@ def _cl3_top_source(ports: list[str] | None = None) -> str:
         width = int(port["width"])
         packed = f" [{width - 1}:0]" if width > 1 else ""
         port_lines.append(f"  {port['direction']}{packed} {name}")
-    return "module cpu_top(\n" + ",\n".join(port_lines) + "\n);\nendmodule\n"
+    return f"module {module_name}(\n" + ",\n".join(port_lines) + "\n);\nendmodule\n"
 
 
 def test_catalog_payload_includes_full_cpu_soc_compatibility_matrix():
@@ -83,8 +86,8 @@ def test_stable_custom_filelist_combination_supports_declared_suites(tmp_path):
     assert result.normalized["required_cpu_top_module"] == "cpu_top"
     assert result.normalized["cpu_wrapper_top"] == "cpu_top"
     assert "cpu_wrapper_generation" not in result.normalized
-    assert len(result.normalized["required_cpu_top_ports"]) == 39
-    assert len(result.normalized["required_cpu_top_port_contract"]) == 39
+    assert len(result.normalized["required_cpu_top_ports"]) == 61
+    assert len(result.normalized["required_cpu_top_port_contract"]) == 61
     assert result.normalized["required_cpu_reset_vector"] == "0x20000000"
     assert result.normalized["soc_cpu_reset_vector"] == "0x20000000"
     assert result.normalized["core_sim_program_link_base"] == "0x20000000"
@@ -108,6 +111,61 @@ def test_custom_filelist_requires_cpu_top(tmp_path):
     assert any(issue.code == "cpu_top_module_not_found" for issue in result.issues)
 
 
+def test_custom_filelist_accepts_configured_cpu_top_module(tmp_path):
+    module_name = "ysyx_00000000"
+    cpu_top = tmp_path / f"{module_name}.sv"
+    cpu_top.write_text(_cl3_top_source(module_name=module_name), encoding="utf-8")
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text(f"{cpu_top.name}\n", encoding="utf-8")
+
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+        "cpu_top_module": module_name,
+    })
+
+    assert result.ok is True
+    assert result.normalized["cpu_top_module"] == module_name
+    assert result.normalized["required_cpu_top_module"] == module_name
+    assert result.normalized["cpu_wrapper_top"] == module_name
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["bad-name", "1cpu", "cpu top", "module", "always_ff"],
+)
+def test_custom_filelist_rejects_invalid_cpu_top_identifier(tmp_path, module_name):
+    cpu_top = tmp_path / "cpu_top.sv"
+    cpu_top.write_text(_cl3_top_source(), encoding="utf-8")
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+
+    result = validate_frontend_config({
+        "core_id": "custom-filelist",
+        "cpu_filelist": str(user_filelist),
+        "cpu_top_module": module_name,
+    })
+
+    assert result.ok is False
+    assert any(issue.code == "invalid_cpu_top_module" for issue in result.issues)
+
+
+def test_builtin_core_rejects_cpu_top_module_override():
+    result = validate_frontend_config({
+        "core_id": "picorv32",
+        "cpu_top_module": "ysyx_00000000",
+    })
+
+    assert result.ok is False
+    assert any(
+        issue.code == "builtin_core_does_not_accept_cpu_top_module"
+        for issue in result.issues
+    )
+
+
 def test_custom_filelist_requires_cpu_top_ports(tmp_path):
     required_ports = list(_custom_filelist_core()["required_cpu_top_ports"])
     cpu_top = tmp_path / "cpu_top.sv"
@@ -129,8 +187,8 @@ def test_custom_filelist_requires_cpu_top_ports(tmp_path):
 @pytest.mark.parametrize(
     "before,after",
     [
-        ("output [31:0] io_master_aw_bits_awaddr", "input [31:0] io_master_aw_bits_awaddr"),
-        ("output [31:0] io_master_aw_bits_awaddr", "output [15:0] io_master_aw_bits_awaddr"),
+        ("output [31:0] io_master_awaddr", "input [31:0] io_master_awaddr"),
+        ("output [31:0] io_master_awaddr", "output [15:0] io_master_awaddr"),
     ],
 )
 def test_custom_filelist_rejects_wrong_cpu_top_direction_or_width(tmp_path, before, after):
