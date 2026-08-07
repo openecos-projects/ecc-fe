@@ -186,6 +186,7 @@ _METHOD_FIELDS: dict[str, set[str] | None] = {
     "frontend.catalog": set(),
     "frontend.validate_config": {
         "core_id",
+        "cpu_top_module",
         "soc_harness_id",
         "toolchain_id",
         "test_suite_id",
@@ -194,6 +195,7 @@ _METHOD_FIELDS: dict[str, set[str] | None] = {
     },
     "workspace.create": {
         "core_id",
+        "cpu_top_module",
         "cpu_filelist",
         "cpu_rtl_files",
         "directory",

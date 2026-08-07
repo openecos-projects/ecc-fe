@@ -203,6 +203,10 @@ def _make_fake_soc_root(fe_root: Path, directory_name: str) -> Path:
     (driver_dir / "main.cpp").write_text("int main(){return 0;}\n", encoding="utf-8")
     (driver_dir / "dpi_mem.cpp").write_text("int dpi_mem(){return 0;}\n", encoding="utf-8")
     (driver_dir / "difftest.cpp").write_text("int difftest(){return 0;}\n", encoding="utf-8")
+    (driver_dir / "difftest_stub.cpp").write_text(
+        "int difftest_stub(){return 0;}\n",
+        encoding="utf-8",
+    )
     (scripts_dir / "build_test.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     return soc_root.resolve()
 
@@ -271,13 +275,13 @@ def _custom_cpu_top_contract() -> list[dict]:
     return list(custom["required_cpu_top_port_contract"])
 
 
-def _cpu_top_source(contract: list[dict]) -> str:
+def _cpu_top_source(contract: list[dict], module_name: str = "cpu_top") -> str:
     ports: list[str] = []
     for port in contract:
         width = int(port["width"])
         packed = f" [{width - 1}:0]" if width > 1 else ""
         ports.append(f"  {port['direction']}{packed} {port['name']}")
-    return "module cpu_top(\n" + ",\n".join(ports) + "\n);\nendmodule\n"
+    return f"module {module_name}(\n" + ",\n".join(ports) + "\n);\nendmodule\n"
 
 
 # ── _format_runtime ────────────────────────────────────────────────────────────
@@ -635,10 +639,11 @@ def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
 
 def test_frontend_create_persists_custom_cpu_top_contract(tmp_path):
     contract = _custom_cpu_top_contract()
-    cpu_top = tmp_path / "cpu_top.sv"
+    module_name = "ysyx_00000000"
+    cpu_top = tmp_path / f"{module_name}.sv"
     filelist = tmp_path / "filelist.cpu.f"
-    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
-    filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+    cpu_top.write_text(_cpu_top_source(contract, module_name), encoding="utf-8")
+    filelist.write_text(f"{cpu_top.name}\n", encoding="utf-8")
     request = tmp_path / "create_custom_cpu.json"
     request.write_text(json.dumps({
         "directory": str(tmp_path / "ws_custom_cpu"),
@@ -647,15 +652,23 @@ def test_frontend_create_persists_custom_cpu_top_contract(tmp_path):
         "toolchain_id": "riscv32-unknown-elf",
         "test_suite_id": "cpu-tests",
         "cpu_filelist": str(filelist),
+        "cpu_top_module": module_name,
         "parameters": {"Design": "chip", "Top module": "ecos_sim_top"},
     }), encoding="utf-8")
 
     assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
     workspace = load_workspace(str(tmp_path / "ws_custom_cpu"))
 
-    assert workspace["required_cpu_top_module"] == "cpu_top"
+    assert workspace["required_cpu_top_module"] == module_name
+    assert workspace["cpu_wrapper_top"] == module_name
     assert workspace["required_cpu_top_ports"] == [port["name"] for port in contract]
     assert workspace["required_cpu_top_port_contract"] == contract
+
+    engine = EngineFlow(workspace=workspace)
+    engine.create_step_workspaces()
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    prepared = json.loads(Path(workspace["prepared_manifest"]).read_text(encoding="utf-8"))
+    assert f"ECOS_CUSTOM_CPU_TOP={module_name}" in prepared["defines"]
 
 
 def test_frontend_create_accepts_selected_cpu_rtl_files(tmp_path):
@@ -909,7 +922,11 @@ def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, m
     soc_root = _make_fake_soc_root(fe_root, "SoC")
     cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
     cpu_filelist.parent.mkdir()
-    cpu_filelist.write_text("", encoding="utf-8")
+    (cpu_filelist.parent / "cpu_top.sv").write_text(
+        _cpu_top_source(_custom_cpu_top_contract()),
+        encoding="utf-8",
+    )
+    cpu_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
     request = tmp_path / "create.json"
     request.write_text(
         json.dumps(
@@ -939,7 +956,7 @@ def test_workspace_create_fills_soc_defaults_for_empty_gui_sim_lists(tmp_path, m
     assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
     assert ws["sim_cpp_sources"] == [
         str(soc_root / "driver" / "dpi_mem.cpp"),
-        str(soc_root / "driver" / "difftest.cpp"),
+        str(soc_root / "driver" / "difftest_stub.cpp"),
     ]
     assert ws["sim_cflags"] == [f"-I{soc_root}"]
     assert ws["sim_ldflags"] == ["-ldl"]
@@ -954,7 +971,11 @@ def test_workspace_create_discovers_external_soc_resource_root(tmp_path, monkeyp
     _write_fake_soc_manifests(soc_root)
     cpu_filelist = tmp_path / "cpu" / "filelist.cpu.f"
     cpu_filelist.parent.mkdir()
-    cpu_filelist.write_text("", encoding="utf-8")
+    (cpu_filelist.parent / "cpu_top.sv").write_text(
+        _cpu_top_source(_custom_cpu_top_contract()),
+        encoding="utf-8",
+    )
+    cpu_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
     request = tmp_path / "create_external_soc.json"
     request.write_text(
         json.dumps(
@@ -984,7 +1005,7 @@ def test_workspace_create_discovers_external_soc_resource_root(tmp_path, monkeyp
     assert ws["testbench"] == str(soc_root / "driver" / "main.cpp")
     assert ws["sim_cpp_sources"] == [
         str(soc_root / "driver" / "dpi_mem.cpp"),
-        str(soc_root / "driver" / "difftest.cpp"),
+        str(soc_root / "driver" / "difftest_stub.cpp"),
     ]
 
 
@@ -1187,6 +1208,7 @@ def test_workspace_create_help_lists_gui_compatible_options(capsys):
     assert "--input-json" in output
     assert "--cpu-filelist" in output
     assert "--cpu-rtl" in output
+    assert "--cpu-top-module" in output
     assert "--soc-variant" in output
     assert "--sim-cpp" in output
     assert "--sim-program-source" in output

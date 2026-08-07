@@ -156,6 +156,32 @@ def test_frontend_validation_returns_structured_failed_result() -> None:
     assert response["result"]["message"] == ["invalid config"]
 
 
+def test_runtime_passes_cpu_top_module_to_validation_and_create(tmp_path) -> None:
+    application = FakeApplication()
+    server = RuntimeServer(WorkspaceRuntimeApi(application=application))
+    module_name = "ysyx_00000000"
+
+    _dispatch(
+        server,
+        "frontend.validate_config",
+        {"core_id": "custom-filelist", "cpu_top_module": module_name},
+    )
+    _dispatch(
+        server,
+        "workspace.create",
+        {"directory": str(tmp_path / "workspace"), "cpu_top_module": module_name},
+    )
+
+    assert application.calls[0] == (
+        "validate-config",
+        {"core_id": "custom-filelist", "cpu_top_module": module_name},
+    )
+    assert application.calls[1] == (
+        "create",
+        {"directory": str(tmp_path / "workspace"), "cpu_top_module": module_name},
+    )
+
+
 def test_runtime_rejects_unknown_and_duplicate_fields() -> None:
     server = RuntimeServer(WorkspaceRuntimeApi(application=FakeApplication()))
 

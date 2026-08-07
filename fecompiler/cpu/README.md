@@ -18,12 +18,16 @@ AM SoC harness.  A compatible CPU wrapper should expose:
   - `io_master_b*`
   - `io_master_ar*`
   - `io_master_r*`
-- Optional slave channels, tied off by wrappers that do not use them.
+- Complete `io_slave_aw*`, `io_slave_w*`, `io_slave_b*`, `io_slave_ar*`, and
+  `io_slave_r*` channels. A CPU that does not implement a slave must expose and
+  tie off its response outputs.
 
-The current CL3 integration uses `cpu_top` as the only public CPU entrypoint.
+The current CL3 integration uses `cpu_top` as its default public CPU entrypoint.
+Custom filelists may select another top name through `cpu_top_module`; the
+selected module must implement the flat YSYX AXI master/slave interface.
 The fixed SoC socket instantiates it directly and provides the UART/trap side
-effects used by CPU tests. Bundled adapters now expose the same `cpu_top`
-entrypoint in their own adapter filelists.
+effects used by CPU tests. Bundled adapters keep their legacy `cpu_top` socket
+behind a separate harness branch.
 
 ## Integration Rule
 

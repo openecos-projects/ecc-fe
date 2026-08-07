@@ -110,6 +110,25 @@ def test_builtin_cpu_adapters_expose_cpu_top_without_bridge_file():
     assert failures == []
 
 
+def test_custom_cpu_harness_selects_configured_ysyx_top():
+    root = Path(__file__).resolve().parent.parent
+    harness = (
+        root / "fecompiler/thirdparty/SoC/perip/easy_box/easy_box_core_wrapper.v"
+    ).read_text(encoding="utf-8")
+    custom = next(
+        core for core in catalog_payload()["cores"]
+        if core["id"] == "custom-filelist"
+    )
+
+    assert "`ifdef ECOS_CUSTOM_CPU_TOP" in harness
+    assert "`ECOS_CUSTOM_CPU_TOP u_core" in harness
+    assert "`else\n  cpu_top u_core" in harness
+    assert [
+        port for port in custom["required_cpu_top_ports"]
+        if f".{port}" not in harness
+    ] == []
+
+
 def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
     payload = catalog_payload()
     cores = {str(item["id"]): item for item in payload["cores"]}

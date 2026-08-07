@@ -63,6 +63,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         filelist: Annotated[str | None, typer.Option("--filelist")] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
         cpu_rtl: Annotated[list[str] | None, typer.Option("--cpu-rtl", help="CPU RTL source path; repeatable")] = None,
+        cpu_top_module: Annotated[str | None, typer.Option("--cpu-top-module", help="User CPU top module name")] = None,
         soc_filelist: Annotated[str | None, typer.Option("--soc-filelist")] = None,
         testbench: Annotated[str | None, typer.Option("--testbench")] = None,
         sim_cpp: Annotated[list[str] | None, typer.Option("--sim-cpp")] = None,
@@ -97,6 +98,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             filelist=filelist or "",
             cpu_filelist=cpu_filelist or "",
             cpu_rtl=list(cpu_rtl or []),
+            cpu_top_module=cpu_top_module or "",
             soc_filelist=soc_filelist or "",
             testbench=testbench or "",
             sim_cpp=list(sim_cpp or []),
@@ -144,6 +146,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         test_suite_id: Annotated[str | None, typer.Option("--test-suite-id")] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
         cpu_rtl: Annotated[list[str] | None, typer.Option("--cpu-rtl", help="CPU RTL source path; repeatable")] = None,
+        cpu_top_module: Annotated[str | None, typer.Option("--cpu-top-module", help="User CPU top module name")] = None,
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
         args = argparse.Namespace(
@@ -154,6 +157,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             test_suite_id=test_suite_id or "",
             cpu_filelist=cpu_filelist or "",
             cpu_rtl=list(cpu_rtl or []),
+            cpu_top_module=cpu_top_module or "",
         )
         finish("validate-config", json_output, lambda: handlers.validate_config(args))
 

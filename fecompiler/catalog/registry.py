@@ -12,7 +12,11 @@ from typing import Any
 from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
 from fecompiler.resources import catalog_manifest_roots, frontend_repo_root, resolve_thirdparty_path
-from fecompiler.tools.common.sv_module import module_definitions, module_port_contract_from_files
+from fecompiler.tools.common.sv_module import (
+    is_simple_sv_identifier,
+    module_definitions,
+    module_port_contract_from_files,
+)
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -77,6 +81,27 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         if entry is None:
             issues.append(ValidationIssue("error", "unknown_catalog_id", f"Unknown {field}: {entry_id}", field))
 
+    requested_cpu_top = str(config.get("cpu_top_module", "")).strip()
+    if requested_cpu_top and core is not None and core.id != DEFAULT_CORE_ID:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "builtin_core_does_not_accept_cpu_top_module",
+                "CPU top module can only be set when My CPU Top is selected.",
+                "cpu_top_module",
+            )
+        )
+    if requested_cpu_top and not is_simple_sv_identifier(requested_cpu_top):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "invalid_cpu_top_module",
+                f"CPU top module is not a valid SystemVerilog identifier: {requested_cpu_top}",
+                "cpu_top_module",
+            )
+        )
+    required_cpu_top = _required_user_cpu_top_module(core, requested_cpu_top)
+
     user_cpu_filelist = str(config.get("cpu_filelist", "")).strip()
     core_cpu_filelist = _core_cpu_filelist(core)
     requires_user_cpu_filelist = core is None or bool(core.data.get("requires_filelist"))
@@ -84,7 +109,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
     if user_cpu_filelist and not Path(user_cpu_filelist).expanduser().exists():
         issues.append(ValidationIssue("error", "cpu_filelist_not_found", f"CPU filelist not found: {user_cpu_filelist}", "cpu_filelist"))
     elif user_cpu_filelist and core is not None and bool(core.data.get("requires_filelist")):
-        issues.extend(_validate_user_cpu_filelist_contract(core, Path(user_cpu_filelist).expanduser()))
+        issues.extend(
+            _validate_user_cpu_filelist_contract(
+                core,
+                Path(user_cpu_filelist).expanduser(),
+                required_cpu_top,
+            )
+        )
     elif user_cpu_filelist and core is not None:
         issues.append(
             ValidationIssue(
@@ -217,8 +248,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "core_capability": core.integration_level if core is not None else "",
         "cpu_wrapper_contract": str(core.data.get("cpu_wrapper_contract", "")) if core is not None else "",
         "cpu_socket_contract": str(core.data.get("cpu_socket_contract", "")) if core is not None else "",
-        "cpu_wrapper_top": str(core.data.get("cpu_wrapper_top", "")) if core is not None else "",
-        "required_cpu_top_module": _required_user_cpu_top_module(core),
+        "cpu_top_module": required_cpu_top,
+        "cpu_wrapper_top": (
+            required_cpu_top
+            if core is not None and core.id == DEFAULT_CORE_ID
+            else str(core.data.get("cpu_wrapper_top", "")) if core is not None else ""
+        ),
+        "required_cpu_top_module": required_cpu_top,
         "required_cpu_top_ports": _required_user_cpu_top_ports(core),
         "required_cpu_top_port_contract": _required_user_cpu_top_port_contract(core),
         "required_cpu_reset_vector": str(core.data.get("cpu_reset_vector", "")) if core is not None else "",
@@ -414,8 +450,11 @@ def _core_cpu_filelist(core: CatalogEntry | None) -> str:
     return str(resolve_thirdparty_path(frontend_repo_root() / path))
 
 
-def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path) -> list[ValidationIssue]:
-    required_top = _required_user_cpu_top_module(core)
+def _validate_user_cpu_filelist_contract(
+    core: CatalogEntry,
+    filelist_path: Path,
+    required_top: str,
+) -> list[ValidationIssue]:
     if not required_top:
         return []
 
@@ -495,9 +534,11 @@ def _validate_user_cpu_filelist_contract(core: CatalogEntry, filelist_path: Path
     return issues
 
 
-def _required_user_cpu_top_module(core: CatalogEntry | None) -> str:
+def _required_user_cpu_top_module(core: CatalogEntry | None, requested_top: str = "") -> str:
     if core is None or not bool(core.data.get("requires_filelist")):
         return ""
+    if core.id == DEFAULT_CORE_ID and requested_top:
+        return requested_top
     return str(
         core.data.get("required_cpu_top_module")
         or core.data.get("cpu_wrapper_top")
