@@ -215,6 +215,9 @@ int main(int argc, char **argv, char **) {
 
   if (trap_seen) {
     if (trap_code == 0) {
+      if (args.diff && !difftest_check_complete()) {
+        return 1;
+      }
       std::cerr << "[soc-sim] HIT GOOD TRAP after " << cycles << " cycles\n";
       return 0;
     }
@@ -227,6 +230,9 @@ int main(int argc, char **argv, char **) {
     difftest_dump_progress();
     std::cerr << "[soc-sim] timeout after " << cycles << " cycles\n";
     return args.timeout_ok ? 0 : 1;
+  }
+  if (args.diff && !difftest_check_complete()) {
+    return 1;
   }
   std::cerr << "[soc-sim] finish after " << cycles << " cycles\n";
   return 0;

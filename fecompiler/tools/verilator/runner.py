@@ -72,14 +72,16 @@ _DIFFTEST_PROGRESS_RE = re.compile(
     r"(?:.*?\blast_npc=(?P<last_npc>0x[0-9a-fA-F]+))?",
     re.IGNORECASE,
 )
+_DIFFTEST_PASSED_RE = re.compile(
+    r"\[soc-sim\]\[difftest\]\s+passed:\s+commits=(?P<commits>[0-9]+)\s+compared=(?P<compared>[0-9]+)",
+    re.IGNORECASE,
+)
 _COREMARK_ITERATIONS_RE = re.compile(r"^\s*Iterations\s*:\s*(?P<value>[0-9]+)\s*$", re.MULTILINE)
 _COREMARK_ITERATIONS_PER_SEC_RE = re.compile(r"^\s*Iterations/Sec\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
 _COREMARK_PER_MHZ_RE = re.compile(r"^\s*CoreMark/MHz\s*:\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*$", re.MULTILINE)
 _DIFFTEST_SOURCE_NAME = "difftest.cpp"
 _DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
 _DIFFTEST_UNSUPPORTED_CPU_IDS = {
-    "custom-filelist",
-    "standard-cpu-filelist",
     "picorv32",
     "scr1",
     "ibex",
@@ -90,6 +92,7 @@ _DIFFTEST_UNSUPPORTED_CPU_IDS = {
     "vexriscv",
     "darkriscv",
 }
+_DIFFTEST_CUSTOM_CPU_IDS = {"custom-filelist", "standard-cpu-filelist"}
 _DIFFTEST_ARG_VALUE_OPTIONS = {"--ref", "--diff-image-offset", "--diff-reset-vector"}
 
 
@@ -176,10 +179,13 @@ def _sim_run_args(workspace: dict[str, Any]) -> list[str]:
 
 def _sim_difftest_supported(workspace: dict[str, Any]) -> bool:
     cpu_id = _workspace_cpu_id(workspace)
+    raw_cpu_support = workspace.get("cpu_supports_difftest")
     if cpu_id in _DIFFTEST_UNSUPPORTED_CPU_IDS:
         return False
+    if cpu_id in _DIFFTEST_CUSTOM_CPU_IDS and raw_cpu_support is None:
+        return False
     return (
-        _bool_workspace_value(workspace.get("cpu_supports_difftest"), True)
+        _bool_workspace_value(raw_cpu_support, True)
         and _bool_workspace_value(workspace.get("soc_supports_difftest"), True)
     )
 
@@ -447,9 +453,13 @@ def _sim_case_metrics(
     bad_trap = _SIM_BAD_TRAP_RE.search(output)
     timed_out = "timeout after" in output
     has_good_trap = "HIT GOOD TRAP" in output
+    difftest_passed = _DIFFTEST_PASSED_RE.search(output)
+    difftest_enabled = _arg_present(args, "--diff") or "[difftest] enabled" in output.lower()
 
     if mismatch:
         termination = "difftest_mismatch"
+    elif difftest_enabled and not difftest_passed and returncode == 0 and has_good_trap:
+        termination = "difftest_incomplete"
     elif bad_trap:
         termination = "bad_trap"
     elif timed_out:
@@ -468,12 +478,11 @@ def _sim_case_metrics(
         except ValueError:
             trap_code = None
 
-    difftest_enabled = _arg_present(args, "--diff") or "[difftest] enabled" in output.lower()
     if mismatch:
         difftest_status = "mismatch"
     elif not difftest_enabled:
         difftest_status = "disabled"
-    elif ok:
+    elif ok and difftest_passed:
         difftest_status = "passed"
     else:
         difftest_status = "incomplete"
@@ -498,6 +507,8 @@ def _sim_case_metrics(
         "difftest": {
             "enabled": difftest_enabled,
             "status": difftest_status,
+            "commits": int(difftest_passed.group("commits")) if difftest_passed else None,
+            "compared": int(difftest_passed.group("compared")) if difftest_passed else None,
             "last_pc": progress.group("last_pc") if progress else None,
             "last_npc": progress.group("last_npc") if progress else None,
             "first_mismatch": first_mismatch,
@@ -508,6 +519,7 @@ def _sim_case_metrics(
 def _first_sim_error(output: str) -> str:
     markers = (
         "mismatch",
+        "difftest] incomplete",
         "HIT BAD TRAP",
         "timeout after",
         "image not found",
@@ -534,6 +546,9 @@ def _simulation_failure(
     if termination == "difftest_mismatch":
         kind = "difftest_mismatch"
         message = "Difftest found an architectural mismatch."
+    elif termination == "difftest_incomplete":
+        kind = "difftest_incomplete"
+        message = "Difftest ended without completing an architectural comparison."
     elif termination == "bad_trap":
         kind = "bad_trap"
         message = "The program terminated with a bad trap."
@@ -727,7 +742,7 @@ def _coremark_metrics(workspace: dict[str, Any], output: str, ok: bool) -> dict[
     return metrics
 
 
-def _coremark_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
+def _program_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
     preset = str(workspace.get("sim_compile_preset", "balanced") or "balanced").strip().lower()
     if preset not in _COREMARK_COMPILE_PRESETS:
         preset = "balanced"
@@ -738,11 +753,6 @@ def _coremark_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
     if opt_level not in _COREMARK_ALLOWED_OPT_LEVELS:
         opt_level = _COREMARK_COMPILE_PRESETS[preset]
 
-    iterations = _positive_int(workspace.get("sim_coremark_iterations"), _COREMARK_ITERATIONS)
-    total_data_size = _positive_int(
-        workspace.get("sim_coremark_total_data_size"),
-        _COREMARK_DEFAULT_TOTAL_DATA_SIZE,
-    )
     extra_cflags = _normalize_string_list(workspace.get("sim_compile_extra_cflags", []))
     return {
         "preset": preset,
@@ -750,8 +760,17 @@ def _coremark_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
         "march": str(workspace.get("sim_compile_march", "rv32im_zicsr") or "rv32im_zicsr").strip(),
         "mabi": str(workspace.get("sim_compile_mabi", "ilp32") or "ilp32").strip(),
         "extra_cflags": extra_cflags,
-        "iterations": iterations,
-        "total_data_size": total_data_size,
+    }
+
+
+def _coremark_compile_settings(workspace: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **_program_compile_settings(workspace),
+        "iterations": _positive_int(workspace.get("sim_coremark_iterations"), _COREMARK_ITERATIONS),
+        "total_data_size": _positive_int(
+            workspace.get("sim_coremark_total_data_size"),
+            _COREMARK_DEFAULT_TOTAL_DATA_SIZE,
+        ),
         "has_float": _bool_workspace_value(workspace.get("sim_coremark_has_float"), _COREMARK_DEFAULT_HAS_FLOAT),
     }
 
@@ -793,19 +812,39 @@ def _normalize_string_list(value: Any) -> list[str]:
     return out
 
 
-def _apply_coremark_build_env(workspace: dict[str, Any], env: dict[str, str], log_lines: list[str]) -> None:
-    settings = _coremark_compile_settings(workspace)
+def _apply_program_compile_env(
+    settings: dict[str, Any],
+    env: dict[str, str],
+) -> list[str]:
     env["ECOS_SIM_OPT_LEVEL"] = str(settings["opt_level"])
     env["ECOS_SIM_MARCH"] = str(settings["march"])
     env["ECOS_SIM_MABI"] = str(settings["mabi"])
-    env["ECOS_COREMARK_ITERATIONS"] = str(settings["iterations"])
-    env["ECOS_COREMARK_TOTAL_DATA_SIZE"] = str(settings["total_data_size"])
-    env["ECOS_COREMARK_HAS_FLOAT"] = "1" if settings["has_float"] else "0"
 
     extra_cflags = [str(item) for item in settings["extra_cflags"]]
     if extra_cflags:
         env["ECOS_SIM_EXTRA_CFLAGS_LINES"] = "\n".join(extra_cflags)
         env["ECOS_SIM_EXTRA_CFLAGS"] = " ".join(shlex.quote(flag) for flag in extra_cflags)
+    return extra_cflags
+
+
+def _apply_program_build_env(workspace: dict[str, Any], env: dict[str, str], log_lines: list[str]) -> None:
+    settings = _program_compile_settings(workspace)
+    extra_cflags = _apply_program_compile_env(settings, env)
+    log_lines.append(
+        "[build_program] compile "
+        f"preset={settings['preset']} opt={settings['opt_level']} "
+        f"march={settings['march']} mabi={settings['mabi']} "
+        f"extra_cflags={' '.join(extra_cflags) if extra_cflags else '-'}"
+    )
+
+
+def _apply_coremark_build_env(workspace: dict[str, Any], env: dict[str, str], log_lines: list[str]) -> None:
+    settings = _coremark_compile_settings(workspace)
+    extra_cflags = _apply_program_compile_env(settings, env)
+    env["ECOS_COREMARK_ITERATIONS"] = str(settings["iterations"])
+    env["ECOS_COREMARK_TOTAL_DATA_SIZE"] = str(settings["total_data_size"])
+    env["ECOS_COREMARK_HAS_FLOAT"] = "1" if settings["has_float"] else "0"
+
     flags_for_report = [
         str(settings["opt_level"]),
         f"-march={settings['march']}",
@@ -1128,6 +1167,8 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     _apply_cpu_program_build_env(workspace, env, lines)
     if any(src.stem == "coremark" for src in sources):
         _apply_coremark_build_env(workspace, env, lines)
+    else:
+        _apply_program_build_env(workspace, env, lines)
     link_base = str(workspace.get("sim_program_link_base", "")).strip()
     if link_base:
         env["SOC_PROGRAM_LINK_BASE"] = link_base
@@ -1819,6 +1860,12 @@ class VerilatorSimStep(BaseStep):
                 rc, output = _run_sim_process([str(sim_bin), *run_args])
 
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
+            if (
+                case_ok
+                and _arg_present(run_args, "--diff")
+                and _DIFFTEST_PASSED_RE.search(output) is None
+            ):
+                case_ok = False
             metrics = _sim_case_metrics(run_args, rc, output, case_ok)
             if _is_coremark_case(case_name, image):
                 metrics.update(_coremark_metrics(workspace, output, case_ok))

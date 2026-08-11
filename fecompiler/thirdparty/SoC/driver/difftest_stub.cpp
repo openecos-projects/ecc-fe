@@ -24,6 +24,10 @@ bool difftest_enabled() {
   return false;
 }
 
+bool difftest_check_complete() {
+  return false;
+}
+
 void difftest_dump_progress() {}
 
 extern "C" int difftest_step(int n,

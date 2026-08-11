@@ -12,6 +12,7 @@ void difftest_configure(const Vecos_sim_top *top,
                         uint32_t image_offset,
                         uint32_t reset_vector);
 bool difftest_enabled();
+bool difftest_check_complete();
 void difftest_dump_progress();
 
 #endif  // FE_COMPILER_THIRDPARTY_SOC_DRIVER_DIFFTEST_H_

@@ -59,6 +59,18 @@ DEFAULT_COREMARK_HAS_FLOAT = True
 CLI_LOG_TAIL_BYTES = 24 * 1024
 DIFFTEST_SOURCE_NAME = "difftest.cpp"
 DIFFTEST_STUB_SOURCE_NAME = "difftest_stub.cpp"
+_DIFFTEST_CUSTOM_CPU_IDS = {"custom-filelist", "standard-cpu-filelist"}
+_DIFFTEST_UNSUPPORTED_BUILTIN_CPU_IDS = {
+    "picorv32",
+    "scr1",
+    "ibex",
+    "cv32e40p",
+    "cva6",
+    "serv",
+    "femtorv32",
+    "vexriscv",
+    "darkriscv",
+}
 
 _PATH_FIELDS = {
     "directory",
@@ -1747,9 +1759,11 @@ def _fallback_soc_supported_test_suites(workspace: dict[str, Any]) -> list[str]:
 
 def _cpu_supports_difftest(workspace: dict[str, Any]) -> bool:
     core_id = str(workspace.get("cpu_wrapper_id") or workspace.get("frontend_core_id") or "").strip()
-    if core_id in {"picorv32", "scr1", "ibex", "cv32e40p", "cva6", "serv", "femtorv32", "vexriscv", "darkriscv", "custom-filelist", "standard-cpu-filelist"}:
-        return False
     raw = workspace.get("cpu_supports_difftest")
+    if core_id in _DIFFTEST_UNSUPPORTED_BUILTIN_CPU_IDS:
+        return False
+    if core_id in _DIFFTEST_CUSTOM_CPU_IDS:
+        return _normalize_bool(raw) if raw is not None else False
     if raw is not None:
         return _normalize_bool(raw)
     return True
