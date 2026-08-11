@@ -25,95 +25,99 @@ alias(
     actual = ":fecompiler_bin",
 )
 
-# ── Example run: CL3 CPU + SoC full frontend flow ────────────────────────────
+# ── Example run: ysyx_00000000 CPU + SoC frontend flow ──────────────────────
 #
-#   bazel run //:run_cl3_soc
+#   bazel run //:run_ysyx_00000000_soc
 #
 # Equivalent to:
 #   python3 -m fecompiler.cli.main \
-#       --design cl3_soc_phase2_full \
-#       --top ysyxSoCTop \
-#       --cpu-filelist examples/cl3/filelist.cpu.f \
+#       --design ysyx_00000000_soc \
+#       --top ecos_sim_top \
+#       --cpu-top-module ysyx_00000000 \
+#       --cpu-filelist examples/ysyx_00000000/filelist.cpu.f \
 #       --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
 #       --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
 #       --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
+#       --sim-cpp fecompiler/thirdparty/SoC/driver/difftest.cpp \
 #       --sim-cflag=-Ifecompiler/thirdparty/SoC \
-#       --sim-image fecompiler/thirdparty/SoC/tests/out/min2.soc.bin \
+#       --sim-ldflag=-ldl \
+#       --sim-program add \
+#       --sim-compile-march rv32i_zicsr \
+#       --sim-compile-mabi ilp32 \
+#       --sim-compile-opt-level=-O2 \
 #       --sim-arg=--max-cycles \
-#       --sim-arg=2000000 \
+#       --sim-arg=50000000 \
+#       --sim-arg=--diff \
+#       --sim-arg=--ref \
+#       --sim-arg=fecompiler/thirdparty/SoC/tools/riscv32-spike-so \
+#       --sim-arg=--diff-image-offset \
+#       --sim-arg=0x100 \
+#       --sim-arg=--diff-reset-vector \
+#       --sim-arg=0x80000000 \
 #       --rerun
 
 py_binary(
-    name = "run_cl3_soc",
+    name = "run_ysyx_00000000_soc",
     srcs = ["fecompiler/cli/main.py"],
     main = "fecompiler/cli/main.py",
     args = [
-        "--design", "cl3_soc_phase2_full",
-        "--top", "ysyxSoCTop",
-        "--cpu-filelist", "examples/cl3/filelist.cpu.f",
+        "--design", "ysyx_00000000_soc",
+        "--top", "ecos_sim_top",
+        "--cpu-top-module", "ysyx_00000000",
+        "--cpu-filelist", "examples/ysyx_00000000/filelist.cpu.f",
         "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
         "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
         "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
+        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/difftest.cpp",
         "--sim-cflag=-Ifecompiler/thirdparty/SoC",
-        "--sim-image", "fecompiler/thirdparty/SoC/tests/out/min2.soc.bin",
+        "--sim-ldflag=-ldl",
+        "--sim-program", "add",
+        "--sim-compile-march", "rv32i_zicsr",
+        "--sim-compile-mabi", "ilp32",
+        "--sim-compile-opt-level=-O2",
         "--sim-arg=--max-cycles",
-        "--sim-arg=2000000",
+        "--sim-arg=50000000",
+        "--sim-arg=--diff",
+        "--sim-arg=--ref",
+        "--sim-arg=fecompiler/thirdparty/SoC/tools/riscv32-spike-so",
+        "--sim-arg=--diff-image-offset",
+        "--sim-arg=0x100",
+        "--sim-arg=--diff-reset-vector",
+        "--sim-arg=0x80000000",
         "--rerun",
     ],
     deps = [":fecompiler"],
     data = glob([
-        "examples/cl3/**",
-        "fecompiler/thirdparty/SoC/**",
-    ]),
-)
-
-# ── Example run: CL3 CPU + SoC full flow with all prebuilt *.soc.bin tests ───
-#
-#   bazel run //:run_cl3_soc_all_tests
-
-py_binary(
-    name = "run_cl3_soc_all_tests",
-    srcs = ["fecompiler/cli/main.py"],
-    main = "fecompiler/cli/main.py",
-    args = [
-        "--design", "cl3_soc_phase2_full",
-        "--top", "ysyxSoCTop",
-        "--cpu-filelist", "examples/cl3/filelist.cpu.f",
-        "--soc-filelist", "fecompiler/thirdparty/SoC/filelist.soc.f",
-        "--testbench", "fecompiler/thirdparty/SoC/driver/main.cpp",
-        "--sim-cpp", "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp",
-        "--sim-cflag=-Ifecompiler/thirdparty/SoC",
-        "--sim-all-tests",
-        "--sim-arg=--max-cycles",
-        "--sim-arg=2000000",
-        "--rerun",
-    ],
-    deps = [":fecompiler"],
-    data = glob([
-        "examples/cl3/**",
+        "examples/ysyx_00000000/**",
         "fecompiler/thirdparty/SoC/**",
     ]),
 )
 
 # ── Example run: re-run only sim on existing workspace (reuse compiled binary) ─
 #
-#   bazel run //:run_cl3_soc_sim_only_all_tests
+#   bazel run //:run_ysyx_00000000_soc_sim_only
 #
-# Requires workspace_projects/cl3_soc_phase2_full to already exist.
+# Requires workspace_projects/ysyx_00000000_soc to already exist.
 
 py_binary(
-    name = "run_cl3_soc_sim_only_all_tests",
+    name = "run_ysyx_00000000_soc_sim_only",
     srcs = ["fecompiler/cli/main.py"],
     main = "fecompiler/cli/main.py",
     args = [
-        "--design", "cl3_soc_phase2_full",
-        "--top", "ysyxSoCTop",
-        "--workspace", "workspace_projects/cl3_soc_phase2_full",
+        "--design", "ysyx_00000000_soc",
+        "--top", "ecos_sim_top",
+        "--workspace", "workspace_projects/ysyx_00000000_soc",
         "--sim-only",
         "--sim-reuse-binary",
-        "--sim-all-tests",
         "--sim-arg=--max-cycles",
-        "--sim-arg=2000000",
+        "--sim-arg=50000000",
+        "--sim-arg=--diff",
+        "--sim-arg=--ref",
+        "--sim-arg=fecompiler/thirdparty/SoC/tools/riscv32-spike-so",
+        "--sim-arg=--diff-image-offset",
+        "--sim-arg=0x100",
+        "--sim-arg=--diff-reset-vector",
+        "--sim-arg=0x80000000",
     ],
     deps = [":fecompiler"],
     data = glob([
@@ -170,7 +174,7 @@ py_test(
     imports = ["."],
     deps = [":fecompiler"],
     data = glob([
-        "examples/cl3/**",
+        "examples/ysyx_00000000/**",
         "fecompiler/thirdparty/SoC/**",
     ]),
 )
@@ -183,10 +187,8 @@ py_test(
     imports = ["."],
     deps = [":fecompiler"],
     data = glob([
-        "examples/cl3/**",
+        "examples/ysyx_00000000/**",
         "fecompiler/thirdparty/SoC/**",
-        "fecompiler/thirdparty/SoC2/**",
-        "fecompiler/thirdparty/SoC3/**",
     ]),
 )
 

@@ -129,6 +129,19 @@ def test_custom_cpu_harness_selects_configured_ysyx_top():
     ] == []
 
 
+def test_difftest_bridge_uses_commit_contract_instead_of_cpu_hierarchy():
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "fecompiler/thirdparty/SoC/driver/difftest.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "apply_commit_state" in source
+    assert '#include "Vecos_sim_top.h"' not in source
+    assert "Vecos_sim_top___024root.h" not in source
+    assert "SOC_ROOT_FIELD" not in source
+    assert "__DOT__" not in source
+
+
 def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
     payload = catalog_payload()
     cores = {str(item["id"]): item for item in payload["cores"]}
@@ -158,6 +171,7 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
         }
         if bool(item.get("requires_cpu_filelist")):
             request["cpu_filelist"] = _cpu_filelist_for_required_core(tmp_path, core_id)
+            request["cpu_top_module"] = "ysyx_00000000"
         create_request.write_text(json.dumps(request), encoding="utf-8")
 
         create_rc = workspace_cli.run(["create", "--input-json", str(create_request), "--json"])
@@ -189,12 +203,13 @@ def test_all_creatable_catalog_pairs_prepare_with_one_cpu_top(tmp_path):
         if prepare_errors:
             failures.extend(f"{core_id}+{soc_id}: {error}" for error in prepare_errors)
 
+        expected_top = str(workspace.get("required_cpu_top_module", "")).strip() or "cpu_top"
         cpu_tops = [
             path for path in manifest.get("rtl_files", [])
-            if PrepareStep._file_defines_module(Path(path), "cpu_top")
+            if PrepareStep._file_defines_module(Path(path), expected_top)
         ]
         if len(cpu_tops) != 1:
-            failures.append(f"{core_id}+{soc_id}: cpu_top count={len(cpu_tops)}")
+            failures.append(f"{core_id}+{soc_id}: {expected_top} count={len(cpu_tops)}")
 
     assert failures == []
 
@@ -273,12 +288,18 @@ def _prepare_mismatches(
 
 def _expected_cpu_filelist(core: dict, requires_cpu_filelist: bool) -> str:
     if requires_cpu_filelist:
-        return str(Path(__file__).resolve().parent.parent / "examples/cl3/filelist.cpu.f")
+        return str(
+            Path(__file__).resolve().parent.parent
+            / "examples/ysyx_00000000/filelist.cpu.f"
+        )
     return str((Path(__file__).resolve().parent.parent / str(core["cpu_filelist"])).resolve())
 
 
 def _cpu_filelist_for_required_core(tmp_path: Path, core_id: str) -> str:
-    return str(Path(__file__).resolve().parent.parent / "examples/cl3/filelist.cpu.f")
+    return str(
+        Path(__file__).resolve().parent.parent
+        / "examples/ysyx_00000000/filelist.cpu.f"
+    )
 
 
 def _expected_soc_rtl_files(workspace: dict) -> set[str]:

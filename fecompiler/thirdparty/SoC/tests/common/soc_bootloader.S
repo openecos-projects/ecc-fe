@@ -32,7 +32,7 @@ _start:
   j 2b
 
 2:
-  # CL3 currently does not implement fence/fence.i reliably in this flow.
+  # Keep the boot handoff compatible with CPUs that do not implement fence.i.
   nop
   lui t0, %hi(_payload_exec)
   addi t0, t0, %lo(_payload_exec)

@@ -10,8 +10,8 @@ find_default_cpu_root() {
     local -a resource_roots
     IFS=':' read -r -a resource_roots <<< "${roots}"
     for root in "${resource_roots[@]}"; do
-      for candidate in "${root}/examples/cl3" "${root}/cl3"; do
-        if [[ -f "${candidate}/filelist.cpu.f" || -f "${candidate}/cl3_verilog/filelist.f" ]]; then
+      for candidate in "${root}/examples/ysyx_00000000" "${root}/ysyx_00000000"; do
+        if [[ -f "${candidate}/filelist.cpu.f" ]]; then
           cd "${candidate}" && pwd
           return 0
         fi
@@ -20,10 +20,10 @@ find_default_cpu_root() {
   fi
 
   for candidate in \
-    "${ROOT}/../../../examples/cl3" \
-    "${ROOT}/examples/cl3" \
-    "${PWD}/examples/cl3"; do
-    if [[ -f "${candidate}/filelist.cpu.f" || -f "${candidate}/cl3_verilog/filelist.f" ]]; then
+    "${ROOT}/../../../examples/ysyx_00000000" \
+    "${ROOT}/examples/ysyx_00000000" \
+    "${PWD}/examples/ysyx_00000000"; do
+    if [[ -f "${candidate}/filelist.cpu.f" ]]; then
       cd "${candidate}" && pwd
       return 0
     fi
@@ -34,7 +34,7 @@ find_default_cpu_root() {
 
 if [[ -z "${CPU_ROOT:-}" ]]; then
   if ! CPU_ROOT="$(find_default_cpu_root)"; then
-    echo "[gen_filelists] CPU_ROOT is not set and examples/cl3 was not found." >&2
+    echo "[gen_filelists] CPU_ROOT is not set and examples/ysyx_00000000 was not found." >&2
     echo "[gen_filelists] Set CPU_ROOT or install the ecc-fe-examples resource." >&2
     exit 1
   fi
@@ -48,9 +48,5 @@ SOC_LIST="${ROOT}/filelist.soc.f"
   find "${ROOT}/perip" -type f -name '*.v' | sort | sed "s#^${ROOT}/##"
 } > "${SOC_LIST}"
 
-{
-  sed 's#^#cl3_verilog/#' "${CPU_ROOT}/cl3_verilog/filelist.f"
-} > "${CPU_LIST}"
-
 echo "[gen_filelists] generated: ${SOC_LIST}"
-echo "[gen_filelists] generated: ${CPU_LIST}"
+echo "[gen_filelists] using: ${CPU_LIST}"
