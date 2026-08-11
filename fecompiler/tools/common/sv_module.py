@@ -57,19 +57,30 @@ def module_definitions(files: list[str | Path], module_name: str) -> list[Path]:
 def module_port_contract_from_files(
     files: list[str | Path],
     module_name: str,
+    *,
+    defined_macros: set[str] | frozenset[str] | None = None,
 ) -> tuple[Path | None, list[dict[str, Any]]]:
     for path in module_definitions(files, module_name):
         try:
-            contract = module_port_contract(path.read_text(encoding="utf-8", errors="ignore"), module_name)
+            contract = module_port_contract(
+                path.read_text(encoding="utf-8", errors="ignore"),
+                module_name,
+                defined_macros=defined_macros,
+            )
         except OSError:
             continue
         return path, contract
     return None, []
 
 
-def module_port_contract(text: str, module_name: str) -> list[dict[str, Any]]:
+def module_port_contract(
+    text: str,
+    module_name: str,
+    *,
+    defined_macros: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
     """Parse an ANSI or legacy-style module port contract."""
-    stripped = strip_sv_comments(text)
+    stripped = strip_sv_comments(_apply_sv_conditional_directives(text, defined_macros))
     header = _module_port_header(stripped, module_name)
     if header is None:
         return []
@@ -123,6 +134,59 @@ def compare_port_contracts(
 def strip_sv_comments(text: str) -> str:
     without_block = re.sub(r"/\*[\s\S]*?\*/", "", text)
     return re.sub(r"//.*", "", without_block)
+
+
+def _apply_sv_conditional_directives(
+    text: str,
+    defined_macros: set[str] | frozenset[str] | None,
+) -> str:
+    """Select simple `ifdef branches before parsing a module declaration."""
+    macros = set(defined_macros or ())
+    output: list[str] = []
+    # Each frame stores (parent active, a prior branch matched, current active).
+    stack: list[tuple[bool, bool, bool]] = []
+    directive = re.compile(
+        r"^\s*`(?P<kind>ifdef|ifndef|elsif|else|endif|define|undef)"
+        r"(?:\s+(?P<name>[A-Za-z_][A-Za-z0-9_$]*))?"
+    )
+
+    for line in text.splitlines(keepends=True):
+        match = directive.match(line)
+        active = stack[-1][2] if stack else True
+        if match is None:
+            if active:
+                output.append(line)
+            continue
+
+        kind = match.group("kind")
+        name = match.group("name") or ""
+        if kind in {"define", "undef"}:
+            if active and name:
+                if kind == "define":
+                    macros.add(name)
+                else:
+                    macros.discard(name)
+            continue
+        if kind in {"ifdef", "ifndef"}:
+            matched = name in macros
+            if kind == "ifndef":
+                matched = not matched
+            stack.append((active, matched, active and matched))
+            continue
+        if not stack:
+            continue
+
+        parent_active, branch_taken, _ = stack[-1]
+        if kind == "elsif":
+            matched = not branch_taken and name in macros
+            stack[-1] = (parent_active, branch_taken or matched, parent_active and matched)
+        elif kind == "else":
+            matched = not branch_taken
+            stack[-1] = (parent_active, True, parent_active and matched)
+        else:
+            stack.pop()
+
+    return "".join(output)
 
 
 def _module_port_header(text: str, module_name: str) -> str | None:
