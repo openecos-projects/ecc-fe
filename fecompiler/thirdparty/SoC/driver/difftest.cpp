@@ -1,12 +1,8 @@
 #include "driver/difftest.h"
 
-#include "Vecos_sim_top.h"
-#include "Vecos_sim_top___024root.h"
-
 #include <dlfcn.h>
 #include <svdpi.h>
 
-#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -51,7 +47,6 @@ using RefInit = void (*)(int port);
 
 CoreContext g_dut = {};
 CoreContext g_ref = {};
-const Vecos_sim_top *g_top = nullptr;
 void *g_ref_handle = nullptr;
 RefMemcpy g_ref_memcpy = nullptr;
 RefRegcpy g_ref_regcpy = nullptr;
@@ -62,13 +57,11 @@ bool g_started = false;
 bool g_waiting_printed = false;
 bool g_seen_commit = false;
 uint64_t g_commit_count = 0;
+uint64_t g_compare_count = 0;
 uint32_t g_last_pc = 0;
 uint32_t g_last_npc = 0;
 uint32_t g_last_inst = 0;
 std::vector<uint8_t> g_ref_image;
-
-#define SOC_ROOT_FIELD(name) \
-  ecos_sim_top__DOT__dut__DOT__dut__DOT__asic__DOT__cpu__DOT__cpu__DOT__u_core__DOT__cl3_top__DOT__##name
 
 [[noreturn]] void fatal(const char *msg) {
   std::fprintf(stderr, "[soc-sim][difftest] fatal: %s\n", msg);
@@ -136,89 +129,44 @@ void *load_symbol(const char *name) {
 }
 
 uint32_t read_gpr(int idx) {
-  assert(g_top != nullptr);
-  const auto *root = g_top->rootp;
-  switch (idx) {
-    case 0:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_0);
-    case 1:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_1);
-    case 2:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_2);
-    case 3:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_3);
-    case 4:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_4);
-    case 5:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_5);
-    case 6:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_6);
-    case 7:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_7);
-    case 8:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_8);
-    case 9:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_9);
-    case 10:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_10);
-    case 11:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_11);
-    case 12:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_12);
-    case 13:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_13);
-    case 14:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_14);
-    case 15:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_15);
-    case 16:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_16);
-    case 17:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_17);
-    case 18:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_18);
-    case 19:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_19);
-    case 20:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_20);
-    case 21:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_21);
-    case 22:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_22);
-    case 23:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_23);
-    case 24:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_24);
-    case 25:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_25);
-    case 26:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_26);
-    case 27:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_27);
-    case 28:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_28);
-    case 29:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_29);
-    case 30:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_30);
-    case 31:
-      return root->SOC_ROOT_FIELD(core__DOT__issue__DOT__rf__DOT__regs_31);
+  return idx >= 0 && idx < kGprNum ? g_dut.gpr[idx] : 0;
+}
+
+void update_csr(uint16_t address, uint32_t value) {
+  switch (address) {
+    case kCsrMepc:
+      g_dut.csr[0] = value;
+      break;
+    case kCsrMcause:
+      g_dut.csr[1] = value;
+      break;
+    case kCsrMtvec:
+      g_dut.csr[2] = value;
+      break;
+    case kCsrMstatus:
+      g_dut.csr[3] = value;
+      break;
+    case kCsrMtval:
+      g_dut.csr[4] = value;
+      break;
     default:
-      return 0;
+      break;
   }
 }
 
-void update_dut_state() {
-  assert(g_top != nullptr);
-  const auto *root = g_top->rootp;
-  for (int i = 0; i < kGprNum; ++i) {
-    g_dut.gpr[i] = read_gpr(i);
+void apply_commit_state(uint16_t rdidx,
+                        uint16_t wen,
+                        uint32_t wdata,
+                        uint16_t csr_wen,
+                        uint16_t csr_waddr,
+                        uint32_t csr_wdata) {
+  if (wen != 0 && rdidx > 0 && rdidx < kGprNum) {
+    g_dut.gpr[rdidx] = wdata;
   }
-  g_dut.csr[0] = root->SOC_ROOT_FIELD(core__DOT__csr__DOT__csr_rf__DOT__csr_mepc_q);
-  g_dut.csr[1] = root->SOC_ROOT_FIELD(core__DOT__csr__DOT__csr_rf__DOT__csr_mcause_q);
-  g_dut.csr[2] = root->SOC_ROOT_FIELD(core__DOT__csr__DOT__csr_rf__DOT__csr_mtvec_q);
-  g_dut.csr[3] = root->SOC_ROOT_FIELD(core__DOT__csr__DOT__csr_rf__DOT__csr_sr_q);
-  g_dut.csr[4] = root->SOC_ROOT_FIELD(core__DOT__csr__DOT__csr_rf__DOT__csr_mtval_q);
+  g_dut.gpr[0] = 0;
+  if (csr_wen != 0) {
+    update_csr(csr_waddr, csr_wdata);
+  }
 }
 
 const char *gpr_name(int idx) {
@@ -313,7 +261,6 @@ void difftest_configure(const Vecos_sim_top *top,
     reset_vector = kDefaultResetVector;
   }
 
-  g_top = top;
   g_reset_vector = reset_vector;
   g_ref_handle = dlopen(ref_so_file, RTLD_LAZY | RTLD_LOCAL);
   if (g_ref_handle == nullptr) {
@@ -347,6 +294,7 @@ void difftest_configure(const Vecos_sim_top *top,
   g_waiting_printed = false;
   g_seen_commit = false;
   g_commit_count = 0;
+  g_compare_count = 0;
   g_last_pc = 0;
   g_last_npc = 0;
   g_last_inst = 0;
@@ -355,6 +303,20 @@ void difftest_configure(const Vecos_sim_top *top,
 
 bool difftest_enabled() {
   return g_enabled;
+}
+
+bool difftest_check_complete() {
+  if (!g_enabled || g_compare_count == 0) {
+    std::fprintf(stderr,
+                 "[soc-sim][difftest] incomplete: no architectural instruction was compared\n");
+    difftest_dump_progress();
+    return false;
+  }
+  std::fprintf(stderr,
+               "[soc-sim][difftest] passed: commits=%llu compared=%llu\n",
+               static_cast<unsigned long long>(g_commit_count),
+               static_cast<unsigned long long>(g_compare_count));
+  return true;
 }
 
 void difftest_dump_progress() {
@@ -418,6 +380,7 @@ extern "C" int difftest_step(int n,
     }
     saw_commit = true;
     record_commit(pc[i], npc[i], inst[i]);
+    apply_commit_state(rdidx[i], wen[i], wdata[i], csr_wen[i], csr_waddr[i], csr_wdata[i]);
 
     if (is_boot_or_mrom_pc(pc[i])) {
       if (!g_waiting_printed) {
@@ -433,10 +396,10 @@ extern "C" int difftest_step(int n,
     if (!g_started) {
       g_started = true;
       std::fprintf(stderr, "[soc-sim][difftest] compare starts at pc=0x%08x\n", pc[i]);
-      update_dut_state();
       uint32_t last_npc = npc[i];
       for (int j = i + 1; j < n; ++j) {
         if (commit[j] != 0 && !is_boot_or_mrom_pc(pc[j])) {
+          apply_commit_state(rdidx[j], wen[j], wdata[j], csr_wen[j], csr_waddr[j], csr_wdata[j]);
           last_npc = npc[j];
         }
       }
@@ -446,12 +409,13 @@ extern "C" int difftest_step(int n,
       return 0;
     }
 
-    if (skip[i] != 0 || should_skip_inst(inst[i]) || should_skip_csr(csr_waddr[i]) ||
+    if (skip[i] != 0 || should_skip_inst(inst[i]) ||
+        (csr_wen[i] != 0 && should_skip_csr(csr_waddr[i])) ||
         should_skip_mmio_store(inst[i]) || irq_en[i] != 0) {
-      update_dut_state();
       uint32_t last_npc = npc[i];
       for (int j = i + 1; j < n; ++j) {
         if (commit[j] != 0 && !is_boot_or_mrom_pc(pc[j])) {
+          apply_commit_state(rdidx[j], wen[j], wdata[j], csr_wen[j], csr_waddr[j], csr_wdata[j]);
           last_npc = npc[j];
         }
       }
@@ -464,6 +428,7 @@ extern "C" int difftest_step(int n,
     try {
       g_ref_exec(1);
       g_ref_regcpy(&g_ref, kDiffTestToDut);
+      ++g_compare_count;
     } catch (...) {
       std::fprintf(stderr, "[DIFFTEST] reference threw while executing DUT pc=0x%08x inst=0x%08x\n", pc[i], inst[i]);
       return 1;
@@ -488,7 +453,6 @@ extern "C" int difftest_step(int n,
       mismatch = true;
     }
     if (mismatch) {
-      update_dut_state();
       dump_slots(n, pc, npc, inst, commit, irq_en);
       dump_regs();
       return 1;
@@ -499,7 +463,6 @@ extern "C" int difftest_step(int n,
     return 0;
   }
 
-  update_dut_state();
   uint32_t gpr_mask = 0;
   for (int i = 0; i < kGprNum; ++i) {
     if (g_dut.gpr[i] != g_ref.gpr[i]) {
@@ -515,9 +478,5 @@ extern "C" int difftest_step(int n,
     return 1;
   }
 
-  (void)csr_wen;
-  (void)csr_wdata;
   return 0;
 }
-
-#undef SOC_ROOT_FIELD

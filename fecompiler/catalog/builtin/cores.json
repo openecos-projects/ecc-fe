@@ -143,6 +143,8 @@
     "status": "stable",
     "supports_difftest": false,
     "supported_test_suites": ["smoke", "cpu-tests", "coremark"],
+    "sim_compile_march": "rv32i_zicsr",
+    "sim_compile_mabi": "ilp32",
     "sim_coremark_use_difftest": false,
     "license": "user-provided",
     "repository": "",
@@ -152,7 +154,7 @@
   {
     "id": "picorv32",
     "name": "PicoRV32",
-    "description": "Small RV32IM Verilog core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests are supported without CL3 difftest.",
+    "description": "Small RV32IM Verilog core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests run without a reference-model integration.",
     "source": "opensource",
     "isa": ["rv32i", "rv32im"],
     "rtl_language": ["verilog"],

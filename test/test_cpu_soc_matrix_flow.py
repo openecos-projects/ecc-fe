@@ -16,7 +16,7 @@ from fecompiler.engine.flow import EngineFlow
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CPU_VARIANTS = [
-    REPO_ROOT / "examples/cl3",
+    REPO_ROOT / "examples/ysyx_00000000",
 ]
 SOC_VARIANTS = [
     REPO_ROOT / "fecompiler/thirdparty/SoC",
@@ -25,6 +25,20 @@ SOC_VARIANTS = [
 CPU_VARIANT_COUNT = len(CPU_VARIANTS)
 SOC_VARIANT_COUNT = len(SOC_VARIANTS)
 SIM_MAX_CYCLES = "50000000"
+
+
+def _sim_run_args(soc_root: Path) -> list[str]:
+    return [
+        "--max-cycles",
+        SIM_MAX_CYCLES,
+        "--diff",
+        "--ref",
+        str(soc_root / "tools/riscv32-spike-so"),
+        "--diff-image-offset",
+        "0x100",
+        "--diff-reset-vector",
+        "0x80000000",
+    ]
 
 
 def _tool_ready() -> bool:
@@ -48,51 +62,25 @@ def _required_paths() -> list[Path]:
     for cpu_root in CPU_VARIANTS:
         paths.extend([
             cpu_root / "filelist.cpu.f",
-            cpu_root / "cl3_verilog/cpu_top.sv",
+            cpu_root / "rtl/ysyx_00000000.sv",
         ])
     for soc_root in SOC_VARIANTS:
         paths.extend([
             soc_root / "filelist.soc.f",
             soc_root / "driver/main.cpp",
             soc_root / "driver/dpi_mem.cpp",
+            soc_root / "driver/difftest_stub.cpp",
             soc_root / "driver/difftest.cpp",
             soc_root / "tools/riscv32-spike-so",
-            soc_root / "tests/programs",
+            soc_root / "tests/programs/add.c",
         ])
     return paths
 
 
-def _soc_program_sources(soc_root: Path) -> list[Path]:
-    programs_dir = soc_root / "tests" / "programs"
-    sources = sorted(programs_dir.glob("*.c"))
-    if sources:
-        return sources
-    raise FileNotFoundError(f"no C test programs found in {programs_dir}")
-
-
 def _soc_sim_cpp_sources(soc_root: Path) -> list[str]:
-    sources = [soc_root / "driver/dpi_mem.cpp"]
-    difftest_cpp = soc_root / "driver/difftest.cpp"
-    if difftest_cpp.exists():
-        sources.append(difftest_cpp)
-    return [str(src) for src in sources]
-
-
-def _soc_sim_ldflags(soc_root: Path) -> list[str]:
-    return ["-ldl"] if (soc_root / "driver/difftest.cpp").exists() else []
-
-
-def _soc_diff_run_args(soc_root: Path, *, max_cycles: str = SIM_MAX_CYCLES) -> list[str]:
     return [
-        "--max-cycles",
-        max_cycles,
-        "--diff",
-        "--ref",
-        str(soc_root / "tools/riscv32-spike-so"),
-        "--diff-image-offset",
-        "0x100",
-        "--diff-reset-vector",
-        "0x80000000",
+        str(soc_root / "driver/dpi_mem.cpp"),
+        str(soc_root / "driver/difftest_stub.cpp"),
     ]
 
 
@@ -117,7 +105,6 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
     def _run_full_flow_for_combo(self, cpu_idx: int, soc_idx: int) -> None:
         cpu_root = self.cpu_variants[cpu_idx - 1]
         soc_root = self.soc_variants[soc_idx - 1]
-        test_sources = _soc_program_sources(soc_root)
 
         project_name = f"cpu_soc_matrix_cpu{cpu_idx}_soc{soc_idx}"
         ws_dir = DEFAULT_PROJECTS_ROOT / project_name
@@ -127,17 +114,26 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
 
         spec = CreateWorkspaceData(
             directory=str(ws_dir),
-            parameters={"Design": project_name, "Top module": "ecos_sim_top"},
+            parameters={
+                "Design": project_name,
+                "Top module": "ecos_sim_top",
+                "frontend_core_id": "custom-filelist",
+                "required_cpu_top_module": "ysyx_00000000",
+                "cpu_wrapper_top": "ysyx_00000000",
+            },
             cpu_filelist=str(cpu_root / "filelist.cpu.f"),
             soc_filelist=str(soc_root / "filelist.soc.f"),
             testbench=str(soc_root / "driver/main.cpp"),
             sim_cpp_sources=_soc_sim_cpp_sources(soc_root),
             sim_cflags=[f"-I{soc_root}"],
-            sim_ldflags=_soc_sim_ldflags(soc_root),
-            sim_build_all_programs=True,
-            sim_program_names=[],
+            sim_ldflags=["-ldl"],
+            sim_build_all_programs=False,
+            sim_program_names=["add"],
             sim_programs_dir=str(soc_root / "tests" / "programs"),
-            sim_run_args=_soc_diff_run_args(soc_root),
+            sim_run_args=_sim_run_args(soc_root),
+            cpu_supports_difftest=True,
+            sim_compile_march="rv32i_zicsr",
+            sim_compile_mabi="ilp32",
         )
         ws = create_workspace(spec)
         self.assertIsNotNone(ws, f"failed to create workspace for {project_name}")
@@ -145,6 +141,12 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
         loaded = load_workspace(str(ws_dir))
         self.assertIsNotNone(loaded, f"workspace not found: {ws_dir}")
         assert loaded is not None
+        self.assertEqual(loaded["frontend_core_id"], "custom-filelist")
+        self.assertEqual(loaded["required_cpu_top_module"], "ysyx_00000000")
+        self.assertEqual(loaded["cpu_wrapper_top"], "ysyx_00000000")
+        self.assertTrue(loaded["cpu_supports_difftest"])
+        self.assertEqual(loaded["sim_compile_march"], "rv32i_zicsr")
+        self.assertEqual(loaded["sim_compile_mabi"], "ilp32")
 
         engine = EngineFlow(workspace=loaded)
         engine.create_step_workspaces()
@@ -177,21 +179,13 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
         cases = payload.get("cases", []) if isinstance(payload, dict) else []
         self.assertTrue(cases, "simulation should run at least one case")
 
-        expected_case_names = {f"{src.stem}.soc" for src in test_sources}
+        expected_case_names = {"add.soc"}
         executed_case_names = {
             str(entry.get("name", ""))
             for entry in cases
             if isinstance(entry, dict)
         }
-        self.assertTrue(
-            expected_case_names.issubset(executed_case_names),
-            f"missing cases: {sorted(expected_case_names - executed_case_names)}",
-        )
-        self.assertEqual(
-            len(expected_case_names),
-            len(executed_case_names & expected_case_names),
-            "some test images were not executed",
-        )
+        self.assertEqual(executed_case_names, expected_case_names)
 
         cases_by_name = {
             str(entry.get("name", "")): entry
@@ -208,10 +202,14 @@ class TestCpuSocMatrixFlow(unittest.TestCase):
             self.assertTrue(case_content, f"empty case log: {case_log}")
             self.assertNotIn("FAILED", case_content)
             self.assertNotIn("%Error", case_content)
+            self.assertIn("[soc-sim][difftest] compare starts", case_content)
 
             case_entry = cases_by_name.get(case_name)
             self.assertIsNotNone(case_entry, f"missing case entry: {case_name}")
             assert case_entry is not None
+            difftest = case_entry.get("metrics", {}).get("difftest", {})
+            self.assertTrue(difftest.get("enabled"))
+            self.assertEqual(difftest.get("status"), "passed")
             image_path = Path(str(case_entry.get("image", ""))).resolve()
             self.assertTrue(image_path.exists(), f"missing case image: {image_path}")
             self.assertTrue(

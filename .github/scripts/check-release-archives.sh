@@ -171,9 +171,10 @@ check_examples() {
   local archive
   archive="$(archive_path ecc-fe-examples-latest.tar.gz)"
   check_archive "${archive}" || return
-  require_entry "${archive}" "ecc-fe-examples-latest/examples/cl3/filelist.cpu.f"
-  require_entry "${archive}" "ecc-fe-examples-latest/examples/cl3/cl3_verilog/cpu_top.sv"
-  forbid_entry_prefix "${archive}" "ecc-fe-examples-latest/examples/cl3_std/"
+  require_entry "${archive}" "ecc-fe-examples-latest/examples/ysyx_00000000/filelist.cpu.f"
+  require_entry "${archive}" "ecc-fe-examples-latest/examples/ysyx_00000000/rtl/ysyx_00000000.sv"
+  require_entry "${archive}" "ecc-fe-examples-latest/examples/ysyx_00000000/rtl/ysyx_00000000_difftest.sv"
+  forbid_entry_prefix "${archive}" "ecc-fe-examples-latest/examples/cl3/"
 }
 
 if (( $# == 0 )); then

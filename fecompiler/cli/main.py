@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from fecompiler.catalog import cpu_filelist_supports_difftest
 from fecompiler.config import DEFAULT_PROJECTS_ROOT
 from fecompiler.data.workspace import (
     CreateWorkspaceData,
@@ -34,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rtl",       default="", help="RTL verilog file path (optional)")
     parser.add_argument("--filelist",  default="", help="Filelist path (optional)")
     parser.add_argument("--cpu-filelist", default="", help="CPU filelist path (optional)")
+    parser.add_argument(
+        "--cpu-top-module",
+        default="",
+        help="Top module in a custom CPU filelist (default: cpu_top)",
+    )
     parser.add_argument("--soc-filelist", default="", help="SoC filelist path (optional)")
     parser.add_argument("--testbench", default="", help="Main C++ testbench path for sim (optional)")
     parser.add_argument(
@@ -97,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Output directory for built *.soc.bin (default: sim output cases)",
     )
+    parser.add_argument("--sim-compile-march", default="", help="RISC-V test program ISA")
+    parser.add_argument("--sim-compile-mabi", default="", help="RISC-V test program ABI")
+    parser.add_argument("--sim-compile-opt-level", default="", help="Test program optimization level")
     parser.add_argument(
         "--sim-only",
         action="store_true",
@@ -157,14 +166,25 @@ def _workspace_dir(args: argparse.Namespace) -> str:
 
 def _create_workspace(args: argparse.Namespace, workspace_dir: str,
                       sim_images: list[str]) -> dict[str, object] | None:
+    parameters: dict[str, object] = {
+        "Design":               args.design,
+        "Top module":           args.top,
+        "Clock":                args.clock,
+        "Frequency max [MHz]":  args.freq,
+    }
+    if args.cpu_filelist:
+        cpu_top_module = args.cpu_top_module.strip() or "cpu_top"
+        parameters.update({
+            "Design Tool":             "frontend",
+            "frontend_core_id":        "custom-filelist",
+            "cpu_wrapper_id":          "custom-filelist",
+            "cpu_wrapper_top":         cpu_top_module,
+            "required_cpu_top_module": cpu_top_module,
+        })
+
     spec = CreateWorkspaceData(
         directory=workspace_dir,
-        parameters={
-            "Design":               args.design,
-            "Top module":           args.top,
-            "Clock":                args.clock,
-            "Frequency max [MHz]":  args.freq,
-        },
+        parameters=parameters,
         origin_verilog=args.rtl,
         filelist=args.filelist,
         cpu_filelist=args.cpu_filelist,
@@ -178,15 +198,26 @@ def _create_workspace(args: argparse.Namespace, workspace_dir: str,
         sim_all_tests=args.sim_all_tests,
         sim_tests_dir=args.sim_tests_dir,
         sim_build_all_programs=args.sim_build_all_programs,
+        cpu_supports_difftest=(
+            cpu_filelist_supports_difftest(args.cpu_filelist)
+            if args.cpu_filelist
+            else True
+        ),
         sim_program_names=args.sim_program,
         sim_programs_dir=args.sim_programs_dir,
         sim_tests_out_dir=args.sim_tests_out_dir,
+        sim_compile_march=args.sim_compile_march,
+        sim_compile_mabi=args.sim_compile_mabi,
+        sim_compile_opt_level=args.sim_compile_opt_level,
     )
     return create_workspace(spec)
 
 
-def _runtime_overrides(args: argparse.Namespace,
-                       sim_images: list[str]) -> dict[str, object]:
+def _runtime_overrides(
+    args: argparse.Namespace,
+    sim_images: list[str],
+    workspace: dict[str, object],
+) -> dict[str, object]:
     updates = build_parameter_overrides(
         testbench=args.testbench.strip(),
         sim_cpp_sources=args.sim_cpp if args.sim_cpp else None,
@@ -197,9 +228,14 @@ def _runtime_overrides(args: argparse.Namespace,
         sim_all_tests=bool(args.sim_all_tests),
         sim_tests_dir=args.sim_tests_dir if args.sim_all_tests else "",
         sim_build_all_programs=bool(args.sim_build_all_programs),
+        cpu_supports_difftest=bool(workspace.get("cpu_supports_difftest", True)),
+        soc_supports_difftest=bool(workspace.get("soc_supports_difftest", True)),
         sim_program_names=args.sim_program if args.sim_program else None,
         sim_programs_dir=args.sim_programs_dir if (args.sim_build_all_programs or args.sim_program) else "",
         sim_tests_out_dir=args.sim_tests_out_dir if (args.sim_build_all_programs or args.sim_program) else "",
+        sim_compile_march=args.sim_compile_march,
+        sim_compile_mabi=args.sim_compile_mabi,
+        sim_compile_opt_level=args.sim_compile_opt_level,
     )
     if (args.sim_build_all_programs or args.sim_program) and not args.sim_tests_out_dir:
         updates["sim_tests_out_dir"] = ""
@@ -263,7 +299,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     if ws is None:
         return _print_error("failed to create workspace")
 
-    updates = _runtime_overrides(args, sim_images)
+    updates = _runtime_overrides(args, sim_images, ws)
     ws.update(updates)
     ws["sim_reuse_binary"] = bool(args.sim_reuse_binary or args.sim_only)
     _persist_parameter_overrides(ws, updates)

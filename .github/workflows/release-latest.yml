@@ -70,6 +70,7 @@ jobs:
             test/test_allflow_builder.py \
             test/test_catalog_compatibility.py \
             test/test_catalog_contract.py \
+            test/test_cli_main.py \
             test/test_data_step.py \
             test/test_data_workspace.py \
             test/test_examples.py \
@@ -78,6 +79,7 @@ jobs:
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \
             test/test_runtime_transport.py \
+            test/test_sv_module.py \
             test/test_utility.py \
             test/test_workspace_application.py
 
@@ -112,11 +114,11 @@ jobs:
 
           response="${RUNNER_TEMP}/ecc-fe-runtime-response.txt"
           workspace="${RUNNER_TEMP}/ecc-fe-runtime-workspace"
-          rtl="${GITHUB_WORKSPACE}/examples/cl3/cl3_verilog/cpu_top.sv"
+          rtl="${GITHUB_WORKSPACE}/examples/ysyx_00000000/rtl/ysyx_00000000.sv"
           hello='{"jsonrpc":"2.0","id":1,"method":"rpc.hello","params":{"version":1}}'
           catalog='{"jsonrpc":"2.0","id":2,"method":"frontend.catalog","params":{}}'
-          validate="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"frontend.validate_config\",\"params\":{\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"cpu_top\",\"test_suite_id\":\"smoke\",\"cpuRtlFiles\":[\"${rtl}\"]}}"
-          create="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"workspace.create\",\"params\":{\"directory\":\"${workspace}\",\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"cpu_top\",\"test_suite_id\":\"smoke\",\"top_module\":\"ecos_sim_top\",\"parameters\":{\"Design\":\"runtime-smoke\",\"Top module\":\"ecos_sim_top\"},\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          validate="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"frontend.validate_config\",\"params\":{\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"ysyx_00000000\",\"test_suite_id\":\"smoke\",\"cpuRtlFiles\":[\"${rtl}\"]}}"
+          create="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"workspace.create\",\"params\":{\"directory\":\"${workspace}\",\"core_id\":\"custom-filelist\",\"cpu_top_module\":\"ysyx_00000000\",\"test_suite_id\":\"smoke\",\"top_module\":\"ecos_sim_top\",\"parameters\":{\"Design\":\"runtime-smoke\",\"Top module\":\"ecos_sim_top\"},\"cpuRtlFiles\":[\"${rtl}\"]}}"
           prepare='{"jsonrpc":"2.0","id":5,"method":"flow.run_step","params":{"workspaceId":"workspace-1","step":"prepare","rerun":true}}'
           close='{"jsonrpc":"2.0","id":6,"method":"workspace.close","params":{"workspaceId":"workspace-1"}}'
           shutdown='{"jsonrpc":"2.0","id":7,"method":"rpc.shutdown","params":{}}'

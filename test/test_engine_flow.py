@@ -41,6 +41,7 @@ from fecompiler.tools.verilator.runner import (
     _sim_cflags_args,
     _sim_cpp_sources,
     _sim_case_metrics,
+    _sim_difftest_supported,
     _sim_output_ok,
     _sim_run_args,
 )
@@ -95,6 +96,8 @@ def test_sim_metrics_capture_difftest_mismatch_and_progress():
     assert metrics["difftest"] == {
         "enabled": True,
         "status": "mismatch",
+        "commits": None,
+        "compared": None,
         "last_pc": "0x80000010",
         "last_npc": "0x80000014",
         "first_mismatch": {
@@ -102,6 +105,27 @@ def test_sim_metrics_capture_difftest_mismatch_and_progress():
             "pc": "0x80000014",
         },
     }
+
+
+def test_sim_metrics_require_explicit_difftest_completion() -> None:
+    incomplete = _sim_case_metrics(
+        ["--diff"],
+        0,
+        "[soc-sim][difftest] enabled\nHIT GOOD TRAP\n",
+        True,
+    )
+    passed = _sim_case_metrics(
+        ["--diff"],
+        0,
+        "[soc-sim][difftest] passed: commits=138 compared=120\nHIT GOOD TRAP\n",
+        True,
+    )
+
+    assert incomplete["difftest"]["status"] == "incomplete"
+    assert incomplete["termination"] == "difftest_incomplete"
+    assert passed["difftest"]["status"] == "passed"
+    assert passed["difftest"]["commits"] == 138
+    assert passed["difftest"]["compared"] == 120
 
 
 def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
@@ -701,6 +725,38 @@ def test_frontend_create_accepts_selected_cpu_rtl_files(tmp_path):
     assert workspace["required_cpu_top_port_contract"] == contract
 
 
+def test_frontend_selected_cpu_rtl_detects_difftest_adapter(tmp_path):
+    contract = _custom_cpu_top_contract()
+    cpu_top = tmp_path / "cpu_top.sv"
+    adapter = tmp_path / "cpu_difftest.sv"
+    cpu_top.write_text(_cpu_top_source(contract), encoding="utf-8")
+    adapter.write_text(
+        'module cpu_difftest;\n'
+        '  import "DPI-C" function int difftest_step();\n'
+        'endmodule\n',
+        encoding="utf-8",
+    )
+    request = tmp_path / "create_selected_cpu_difftest.json"
+    request.write_text(json.dumps({
+        "directory": str(tmp_path / "ws_selected_cpu_difftest"),
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_rtl_files": [str(adapter), str(cpu_top)],
+        "parameters": {"Design": "chip", "Top module": "ecos_sim_top"},
+    }), encoding="utf-8")
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    workspace = load_workspace(str(tmp_path / "ws_selected_cpu_difftest"))
+    generated = Path(workspace["cpu_filelist"])
+
+    assert workspace["cpu_supports_difftest"] is True
+    assert workspace["sim_compile_march"] == "rv32i_zicsr"
+    assert "+define+ECOS_DIFFTEST" in generated.read_text(encoding="utf-8")
+    assert "ECOS_DIFFTEST" in PrepareStep._parse_sv_filelist(str(generated))["defines"]
+
+
 def test_frontend_validate_accepts_selected_cpu_rtl_files_without_exposing_temp_path(
     tmp_path,
     capsys,
@@ -1030,9 +1086,16 @@ def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
     shutil.copytree(source_soc, soc_root)
 
     examples_root = tmp_path / "ecc-fe-examples"
-    cpu_root = examples_root / "examples" / "cl3"
-    (cpu_root / "cl3_verilog").mkdir(parents=True)
-    (cpu_root / "cl3_verilog" / "filelist.f").write_text("cpu_top.sv\n", encoding="utf-8")
+    cpu_root = examples_root / "examples" / "ysyx_00000000"
+    (cpu_root / "rtl").mkdir(parents=True)
+    (cpu_root / "rtl" / "ysyx_00000000.sv").write_text(
+        "module ysyx_00000000(); endmodule\n",
+        encoding="utf-8",
+    )
+    (cpu_root / "filelist.cpu.f").write_text(
+        "rtl/ysyx_00000000.sv\n",
+        encoding="utf-8",
+    )
 
     env = {
         **os.environ,
@@ -1049,7 +1112,7 @@ def test_soc_filelist_script_discovers_examples_resource_root(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (cpu_root / "filelist.cpu.f").read_text(encoding="utf-8").splitlines() == [
-        "cl3_verilog/cpu_top.sv",
+        "rtl/ysyx_00000000.sv",
     ]
 
 
@@ -1278,9 +1341,11 @@ def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
     build_script.chmod(0o755)
 
     run_calls: list[list[str]] = []
+    captured_env: dict[str, str] = {}
 
     def _fake_run(cmd, capture_output=True, text=True, env=None):
         run_calls.append(list(cmd))
+        captured_env.update(env or {})
         name = cmd[cmd.index("--name") + 1]
         out_dir = Path(cmd[cmd.index("--out_dir") + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1294,6 +1359,9 @@ def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
             "soc_filelist": str(soc_root / "filelist.soc.f"),
             "sim_build_all_programs": True,
             "sim_programs_dir": str(programs_dir),
+            "sim_compile_opt_level": "-Os",
+            "sim_compile_march": "rv32i_zicsr",
+            "sim_compile_mabi": "ilp32",
         },
         case_output_root=tmp_path / "cases",
     )
@@ -1301,6 +1369,9 @@ def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
     assert ok is True
     assert [call[call.index("--name") + 1] for call in run_calls] == ["add"]
     assert {Path(image).name for image in images} == {"add.soc.bin"}
+    assert captured_env["ECOS_SIM_OPT_LEVEL"] == "-Os"
+    assert captured_env["ECOS_SIM_MARCH"] == "rv32i_zicsr"
+    assert captured_env["ECOS_SIM_MABI"] == "ilp32"
 
 
 def test_coremark_build_env_uses_workspace_compile_options(tmp_path, monkeypatch):
@@ -2338,7 +2409,7 @@ def test_coremark_validation_errors_fail_sim_case(tmp_path, monkeypatch):
     assert "Errors detected: yes" in log_text
 
 
-def test_legacy_custom_cpu_workspace_forces_difftest_stub(tmp_path):
+def test_explicit_custom_cpu_difftest_capability_uses_real_driver(tmp_path):
     soc_root = tmp_path / "SoC"
     driver = soc_root / "driver"
     driver.mkdir(parents=True)
@@ -2369,10 +2440,50 @@ def test_legacy_custom_cpu_workspace_forces_difftest_stub(tmp_path):
         "soc_supports_difftest": True,
     }
 
-    assert _sim_cpp_sources(workspace) == [str(main_cpp), str(dpi_cpp), str(stub_cpp)]
-    assert _sim_run_args(workspace) == ["--max-cycles", "50000000"]
+    assert _sim_cpp_sources(workspace) == [str(main_cpp), str(dpi_cpp), str(difftest_cpp)]
+    assert _sim_run_args(workspace) == workspace["sim_run_args"]
     contracts = workspace_cli._build_prepare_contracts(workspace, {"inputs": {}})
-    assert any(item["label"] == "Difftest" and item["status"] == "Stub" for item in contracts)
+    assert any(
+        item["label"] == "Difftest"
+        and item["status"] == "OK"
+        and item["detail"] == "Enabled"
+        for item in contracts
+    )
+
+
+def test_builtin_cpu_cannot_override_difftest_capability() -> None:
+    workspace = {
+        "cpu_wrapper_id": "picorv32",
+        "frontend_core_id": "picorv32",
+        "cpu_supports_difftest": True,
+        "soc_supports_difftest": True,
+    }
+
+    assert workspace_cli._cpu_supports_difftest(workspace) is False
+    assert _sim_difftest_supported(workspace) is False
+
+
+def test_custom_cpu_without_explicit_difftest_capability_uses_stub(tmp_path):
+    soc_root = tmp_path / "SoC"
+    driver = soc_root / "driver"
+    driver.mkdir(parents=True)
+    main_cpp = driver / "main.cpp"
+    difftest_cpp = driver / "difftest.cpp"
+    stub_cpp = driver / "difftest_stub.cpp"
+    for path in (main_cpp, difftest_cpp, stub_cpp):
+        path.write_text("int placeholder() { return 0; }\n", encoding="utf-8")
+
+    workspace = {
+        "testbench": str(main_cpp),
+        "sim_cpp_sources": [str(difftest_cpp)],
+        "sim_run_args": ["--diff", "--ref", "/tmp/ref.so"],
+        "cpu_wrapper_id": "custom-filelist",
+        "frontend_core_id": "custom-filelist",
+        "soc_supports_difftest": True,
+    }
+
+    assert _sim_cpp_sources(workspace) == [str(main_cpp), str(stub_cpp)]
+    assert _sim_run_args(workspace) == []
 
 
 def test_build_all_programs_emit_separate_case_images(tmp_path, monkeypatch):

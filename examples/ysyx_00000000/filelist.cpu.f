@@ -1,0 +1,9 @@
++define+ECOS_DIFFTEST
+rtl/ysyx_00000000_decode.sv
+rtl/ysyx_00000000_execute.sv
+rtl/ysyx_00000000_regfile.sv
+rtl/ysyx_00000000_csr.sv
+rtl/ysyx_00000000_core.sv
+rtl/ysyx_00000000_difftest.sv
+rtl/ysyx_00000000_axi.sv
+rtl/ysyx_00000000.sv

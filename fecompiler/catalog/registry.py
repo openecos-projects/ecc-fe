@@ -17,6 +17,7 @@ from fecompiler.tools.common.sv_module import (
     module_definitions,
     module_port_contract_from_files,
 )
+from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -24,6 +25,7 @@ DEFAULT_SOC_HARNESS_ID = "ysyx-am-soc"
 DEFAULT_TOOLCHAIN_ID = "riscv32-unknown-elf"
 DEFAULT_TEST_SUITE_ID = "cpu-tests"
 ECOS_CPU_TOP = "cpu_top"
+ECOS_DIFFTEST_DEFINE = "ECOS_DIFFTEST"
 _RTL_SUFFIXES = (".v", ".sv", ".vh", ".svh")
 
 _CATEGORY_FILES = {
@@ -258,7 +260,10 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
         "required_cpu_top_ports": _required_user_cpu_top_ports(core),
         "required_cpu_top_port_contract": _required_user_cpu_top_port_contract(core),
         "required_cpu_reset_vector": str(core.data.get("cpu_reset_vector", "")) if core is not None else "",
-        "cpu_supports_difftest": _core_supports_difftest(core),
+        "cpu_supports_difftest": _cpu_config_supports_difftest(
+            core,
+            effective_cpu_filelist,
+        ),
         "core_supported_test_suites": _core_supported_test_suites(core),
         "core_sim_program_link_base": str(core.data.get("sim_program_link_base", "")) if core is not None else "",
         "core_sim_compile_preset": str(core.data.get("sim_compile_preset", "")) if core is not None else "",
@@ -576,20 +581,24 @@ def _required_user_cpu_top_port_contract(core: CatalogEntry | None) -> list[dict
     return ports
 
 
-def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = None) -> dict[str, list[Path]]:
+def _parse_user_cpu_filelist(
+    filelist_path: Path,
+    visited: set[Path] | None = None,
+) -> dict[str, list[Any]]:
     resolved = filelist_path.expanduser().resolve()
     if visited is None:
         visited = set()
     if resolved in visited:
-        return {"files": [], "missing": []}
+        return {"files": [], "missing": [], "defines": []}
     visited.add(resolved)
 
     files: list[Path] = []
     missing: list[Path] = []
+    defines: list[str] = []
     try:
         lines = resolved.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
-        return {"files": [], "missing": [resolved]}
+        return {"files": [], "missing": [resolved], "defines": []}
 
     for raw_line in lines:
         tokens = _filelist_tokens(raw_line)
@@ -612,8 +621,17 @@ def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = No
                     nested_result = _parse_user_cpu_filelist(nested_path, visited)
                     files.extend(nested_result["files"])
                     missing.extend(nested_result["missing"])
+                    defines.extend(nested_result["defines"])
                 else:
                     missing.append(nested_path)
+                continue
+
+            if token.startswith("+define+"):
+                defines.extend(
+                    define.strip()
+                    for define in token.removeprefix("+define+").split("+")
+                    if define.strip()
+                )
                 continue
 
             if not _is_rtl_path_token(token):
@@ -623,7 +641,22 @@ def _parse_user_cpu_filelist(filelist_path: Path, visited: set[Path] | None = No
                 files.append(path)
             else:
                 missing.append(path)
-    return {"files": files, "missing": missing}
+    return {"files": files, "missing": missing, "defines": defines}
+
+
+def cpu_filelist_supports_difftest(filelist_path: str | Path) -> bool:
+    """Return whether a CPU filelist explicitly provides the ECC DPI adapter."""
+    path = Path(filelist_path).expanduser()
+    if not path.is_file():
+        return False
+    parsed = _parse_user_cpu_filelist(path)
+    has_capability_define = any(
+        str(define).partition("=")[0].strip() == ECOS_DIFFTEST_DEFINE
+        for define in parsed["defines"]
+    )
+    if not has_capability_define:
+        return False
+    return rtl_sources_provide_difftest_adapter(parsed["files"])
 
 
 def _filelist_tokens(raw_line: str) -> list[str]:
@@ -738,6 +771,15 @@ def _core_supports_difftest(core: CatalogEntry | None) -> bool:
     if core is None:
         return True
     return bool(core.data.get("supports_difftest", True))
+
+
+def _cpu_config_supports_difftest(
+    core: CatalogEntry | None,
+    cpu_filelist: str,
+) -> bool:
+    if core is not None and bool(core.data.get("requires_filelist")):
+        return cpu_filelist_supports_difftest(cpu_filelist)
+    return _core_supports_difftest(core)
 
 
 def _soc_supports_difftest(soc: CatalogEntry | None) -> bool:

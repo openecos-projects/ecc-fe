@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""CPU+SoC integration flow tests using backend APIs only."""
+"""ysyx_00000000 + SoC integration flow tests using backend APIs only."""
 
 from __future__ import annotations
 
+import json
 import shutil
 import unittest
 from pathlib import Path
@@ -14,22 +15,26 @@ from fecompiler.engine.flow import EngineFlow
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CPU_FILELIST = REPO_ROOT / "examples/cl3/filelist.cpu.f"
+CPU_ROOT = REPO_ROOT / "examples/ysyx_00000000"
+CPU_FILELIST = CPU_ROOT / "filelist.cpu.f"
+CPU_TOP = CPU_ROOT / "rtl/ysyx_00000000.sv"
 SOC_FILELIST = REPO_ROOT / "fecompiler/thirdparty/SoC/filelist.soc.f"
 TESTBENCH = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/main.cpp"
 DPI_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/dpi_mem.cpp"
+DIFFTEST_STUB_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/difftest_stub.cpp"
 DIFFTEST_CPP = REPO_ROOT / "fecompiler/thirdparty/SoC/driver/difftest.cpp"
 SOC_INC = REPO_ROOT / "fecompiler/thirdparty/SoC"
-REF_SO = REPO_ROOT / "fecompiler/thirdparty/SoC/tools/riscv32-spike-so"
+DIFFTEST_REF = SOC_INC / "tools/riscv32-spike-so"
 SOC_TEST_PROGRAMS_DIR = REPO_ROOT / "fecompiler/thirdparty/SoC/tests/programs"
-SOC_TEST_OUT_DIR = REPO_ROOT / "fecompiler/thirdparty/SoC/tests/out"
+SMOKE_PROGRAM = "add"
+SMOKE_PROGRAM_SOURCE = SOC_TEST_PROGRAMS_DIR / f"{SMOKE_PROGRAM}.c"
 SIM_MAX_CYCLES = "50000000"
-DIFF_SIM_RUN_ARGS = [
+SIM_RUN_ARGS = [
     "--max-cycles",
     SIM_MAX_CYCLES,
     "--diff",
     "--ref",
-    str(REF_SO),
+    str(DIFFTEST_REF),
     "--diff-image-offset",
     "0x100",
     "--diff-reset-vector",
@@ -44,7 +49,17 @@ def _tool_ready() -> bool:
 
 
 def _required_paths() -> list[Path]:
-    return [CPU_FILELIST, SOC_FILELIST, TESTBENCH, DPI_CPP, DIFFTEST_CPP, REF_SO, SOC_TEST_PROGRAMS_DIR]
+    return [
+        CPU_FILELIST,
+        CPU_TOP,
+        SOC_FILELIST,
+        TESTBENCH,
+        DPI_CPP,
+        DIFFTEST_STUB_CPP,
+        DIFFTEST_CPP,
+        DIFFTEST_REF,
+        SMOKE_PROGRAM_SOURCE,
+    ]
 
 
 def _riscv_toolchain_ready() -> bool:
@@ -70,10 +85,6 @@ def _new_engine() -> tuple[EngineFlow, dict]:
 
 class TestCpuSocFlow(unittest.TestCase):
     @classmethod
-    def _program_sources(cls) -> list[Path]:
-        return sorted(SOC_TEST_PROGRAMS_DIR.glob("*.c"))
-
-    @classmethod
     def setUpClass(cls):
         if not _tool_ready():
             raise unittest.SkipTest("slang/verilator not available")
@@ -83,22 +94,31 @@ class TestCpuSocFlow(unittest.TestCase):
         missing = [str(p) for p in _required_paths() if not p.exists()]
         if missing:
             raise unittest.SkipTest(f"required files missing: {missing}")
-        if not cls._program_sources():
-            raise unittest.SkipTest(f"no C tests in {SOC_TEST_PROGRAMS_DIR}")
-
         if WS_DIR.exists():
             shutil.rmtree(WS_DIR)
 
         spec = CreateWorkspaceData(
             directory=str(WS_DIR),
-            parameters={"Design": "cpu_soc_test", "Top module": "ysyxSoCTop"},
+            parameters={
+                "Design": "cpu_soc_test",
+                "Top module": "ecos_sim_top",
+                "frontend_core_id": "custom-filelist",
+                "required_cpu_top_module": "ysyx_00000000",
+                "cpu_wrapper_top": "ysyx_00000000",
+            },
             cpu_filelist=str(CPU_FILELIST),
             soc_filelist=str(SOC_FILELIST),
             testbench=str(TESTBENCH),
-            sim_cpp_sources=[str(DPI_CPP), str(DIFFTEST_CPP)],
+            sim_cpp_sources=[str(DPI_CPP), str(DIFFTEST_STUB_CPP)],
             sim_cflags=[f"-I{SOC_INC}"],
             sim_ldflags=["-ldl"],
-            sim_run_args=DIFF_SIM_RUN_ARGS,
+            sim_run_args=SIM_RUN_ARGS,
+            sim_build_all_programs=False,
+            sim_program_names=[SMOKE_PROGRAM],
+            sim_programs_dir=str(SOC_TEST_PROGRAMS_DIR),
+            cpu_supports_difftest=True,
+            sim_compile_march="rv32i_zicsr",
+            sim_compile_mabi="ilp32",
         )
         ws = create_workspace(spec)
         if ws is None:
@@ -111,6 +131,12 @@ class TestCpuSocFlow(unittest.TestCase):
         self.assertTrue(Path(ws["flow_path"]).exists())
         self.assertTrue(Path(ws["parameters_path"]).exists())
         self.assertEqual(Path(ws["directory"]).name, "cpu_soc_test")
+        self.assertEqual(ws["frontend_core_id"], "custom-filelist")
+        self.assertEqual(ws["required_cpu_top_module"], "ysyx_00000000")
+        self.assertEqual(ws["cpu_wrapper_top"], "ysyx_00000000")
+        self.assertTrue(ws["cpu_supports_difftest"])
+        self.assertEqual(ws["sim_compile_march"], "rv32i_zicsr")
+        self.assertEqual(ws["sim_compile_mabi"], "ilp32")
 
     def test_cpu_soc_prepare_step_success(self):
         engine, ws = _new_engine()
@@ -121,6 +147,7 @@ class TestCpuSocFlow(unittest.TestCase):
 
     def test_cpu_soc_elab_step_success(self):
         engine, ws = _new_engine()
+        self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
         state = engine.run_step("elab", rerun=True)
         self.assertEqual(state, StateEnum.Success)
         log_path = Path(ws["directory"]) / "elab_slang" / "report" / "log.txt"
@@ -128,26 +155,25 @@ class TestCpuSocFlow(unittest.TestCase):
 
     def test_cpu_soc_lint_step_success(self):
         engine, ws = _new_engine()
+        self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
         state = engine.run_step("lint", rerun=True)
         self.assertEqual(state, StateEnum.Success)
         log_path = Path(ws["directory"]) / "lint_verilator" / "report" / "log.txt"
         self.assertTrue(log_path.exists())
         self.assertNotIn("%Error", log_path.read_text(encoding="utf-8"))
 
-    def test_cpu_soc_sim_each_program_success(self):
+    def test_cpu_soc_sim_add_success(self):
         engine, ws = _new_engine()
         sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "cpu_soc_test_sim"
         self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
 
-        ws["sim_build_all_programs"] = True
+        ws["sim_build_all_programs"] = False
+        ws["sim_program_names"] = [SMOKE_PROGRAM]
         ws["sim_programs_dir"] = str(SOC_TEST_PROGRAMS_DIR)
-        ws["sim_tests_out_dir"] = str(SOC_TEST_OUT_DIR)
-        # Only run images built from tests/programs/*.c in this test.
         ws["sim_all_tests"] = False
-        ws["sim_tests_dir"] = str(SOC_TEST_OUT_DIR)
         ws["sim_images"] = []
         ws["sim_program_sources"] = []
-        ws["sim_run_args"] = DIFF_SIM_RUN_ARGS
+        ws["sim_run_args"] = SIM_RUN_ARGS
         ws["sim_reuse_binary"] = sim_bin.exists()
 
         state = engine.run_step("sim", rerun=True)
@@ -157,15 +183,13 @@ class TestCpuSocFlow(unittest.TestCase):
         cases_payload = (report_dir / "cases.json").read_text(encoding="utf-8")
         self.assertTrue(cases_payload)
 
-        import json
-
         data = json.loads(cases_payload)
         cases = data.get("cases", [])
-        self.assertTrue(cases, "cases.json should contain all executed cases")
+        self.assertTrue(cases, "cases.json should contain the executed smoke case")
 
-        expected_names = {f"{p.stem}.soc" for p in self._program_sources()}
+        expected_names = {f"{SMOKE_PROGRAM}.soc"}
         executed_names = {str(c.get("name", "")) for c in cases if isinstance(c, dict)}
-        self.assertTrue(expected_names.issubset(executed_names))
+        self.assertEqual(executed_names, expected_names)
 
         for name in sorted(expected_names):
             output_log = Path(ws["directory"]) / "sim_verilator" / "output" / "cases" / name / "log.txt"
@@ -173,18 +197,30 @@ class TestCpuSocFlow(unittest.TestCase):
             content = output_log.read_text(encoding="utf-8")
             self.assertNotIn("FAILED", content)
             self.assertNotIn("%Error", content)
+            self.assertIn("[soc-sim][difftest] compare starts", content)
 
-    def test_cpu_soc_sim_batch_has_separate_logs_for_each_program(self):
+        metrics = cases[0].get("metrics", {}).get("difftest", {})
+        self.assertTrue(metrics.get("enabled"))
+        self.assertEqual(metrics.get("status"), "passed")
+
+    def test_cpu_soc_sim_run_history_retains_add_logs(self):
         engine, ws = _new_engine()
         self.assertEqual(engine.run_step("prepare", rerun=True), StateEnum.Success)
-        first_src = self._program_sources()[0]
-        case_name = f"{first_src.stem}.soc"
-        image_path = SOC_TEST_OUT_DIR / f"{first_src.stem}.soc.bin"
-        ws["sim_program_sources"] = [str(first_src)]
-        ws["sim_tests_out_dir"] = str(SOC_TEST_OUT_DIR)
+        case_name = f"{SMOKE_PROGRAM}.soc"
+        image_path = (
+            Path(ws["directory"])
+            / "sim_verilator"
+            / "output"
+            / "cases"
+            / case_name
+            / f"{case_name}.bin"
+        )
+        ws["sim_program_sources"] = []
+        ws["sim_program_names"] = [SMOKE_PROGRAM]
+        ws["sim_build_all_programs"] = False
         ws["sim_all_tests"] = False
         ws["sim_images"] = []
-        ws["sim_run_args"] = DIFF_SIM_RUN_ARGS
+        ws["sim_run_args"] = SIM_RUN_ARGS
 
         sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "cpu_soc_test_sim"
         ws["sim_reuse_binary"] = sim_bin.exists()
@@ -195,6 +231,7 @@ class TestCpuSocFlow(unittest.TestCase):
 
         # second run reuses the compiled image, so we can verify run-log history
         ws["sim_program_sources"] = []
+        ws["sim_program_names"] = []
         ws["sim_images"] = [str(image_path)]
         ws["sim_reuse_binary"] = True
 
