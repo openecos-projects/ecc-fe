@@ -1,7 +1,7 @@
 {
   "id": "picorv32",
   "name": "PicoRV32",
-  "description": "Small RV32IM Verilog core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests are supported without CL3 difftest.",
+  "description": "Small RV32IM Verilog core with an ECOS CPU wrapper for the ysyx AXI CPU socket. CPU tests run without a reference-model integration.",
   "source": "opensource",
   "isa": [
     "rv32i",

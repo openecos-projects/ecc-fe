@@ -67,8 +67,8 @@
   <rect class="violet" x="1240" y="204" width="240" height="126" rx="8"/>
   <text class="heading" x="1264" y="241">Examples</text>
   <text class="code" x="1264" y="269">examples/</text>
-  <text class="small" x="1264" y="293">CL3 project collateral</text>
-  <text class="small" x="1264" y="316">and filelists</text>
+  <text class="small" x="1264" y="293">ysyx_00000000 RTL</text>
+  <text class="small" x="1264" y="316">and its filelist</text>
 
   <rect class="slate" x="538" y="394" width="484" height="76" rx="8"/>
   <text class="heading" x="780" y="426" text-anchor="middle">Changed-path Package Selector</text>

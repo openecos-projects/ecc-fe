@@ -82,7 +82,7 @@ ecc-fe/
 │   ├── architecture/*.svg      # system and delivery architecture diagrams
 │   └── *.md                    # user and developer documentation
 ├── examples/
-│   └── cl3/                    # CL3 CPU example collateral
+│   └── ysyx_00000000/          # Bundled RV32I + Zicsr CPU example
 ├── fecompiler/
 │   ├── allflow/                # DEFAULT_FLOW_STEPS
 │   ├── cli/                    # ecc-fe command line entry point
@@ -171,9 +171,15 @@ the GUI and CLI may set another simple SystemVerilog identifier through
 `cpu_top_module` / `--cpu-top-module`.
 
 The selected module must use the flat YSYX BlackBox interface demonstrated by
-`examples/cl3/cl3_verilog/cpu_top.sv`: `clock`, `reset`, `io_interrupt`, and the
-complete `io_master_*` and `io_slave_*` AXI channels. ECOS passes the selected
-module name to its fixed SoC harness; users do not provide a compatibility alias.
+`examples/ysyx_00000000/rtl/ysyx_00000000.sv`: `clock`, `reset`,
+`io_interrupt`, and the complete `io_master_*` and `io_slave_*` AXI channels.
+ECOS passes the selected module name to its fixed SoC harness; users do not
+provide a compatibility alias.
+
+The bundled `ysyx_00000000` example is an RV32I + Zicsr core. It uses the
+native `ysyx_00000000` module as its CPU top and includes a single-retirement
+ECC-FE difftest adapter. Compile its test programs with `-march=rv32i_zicsr`
+and `-mabi=ilp32`; the GUI enables the packaged reference model automatically.
 
 The fixed SoC wrapper preserves the simulator MMIO convention used by CPU tests:
 UART writes to `0x1000_0000` are printed, and writes to `0x1000_000c` terminate
@@ -182,7 +188,7 @@ the run as GOOD/BAD TRAP depending on the written value.
 The CPU must reset its first instruction fetch to `0x2000_0000`. Normal CPU
 tests are linked at that address. This address is part of the catalog contract
 and is stored in every workspace; changing it requires a matching CPU wrapper,
-SoC harness, linker, and difftest configuration.
+SoC harness, linker, and simulation configuration.
 
 Before claiming a new adapter is runnable, run the static catalog check:
 
@@ -301,18 +307,29 @@ internal Python modules directly.  The legacy `fecompiler` console script and
 cd /home/luyoung/ecc-fe
 
 ecc-fe \
-  --design cl3_soc \
+  --design ysyx_00000000_soc \
   --top ecos_sim_top \
-  --cpu-filelist examples/cl3/filelist.cpu.f \
+  --cpu-top-module ysyx_00000000 \
+  --cpu-filelist examples/ysyx_00000000/filelist.cpu.f \
   --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
   --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
   --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
   --sim-cpp fecompiler/thirdparty/SoC/driver/difftest.cpp \
   --sim-cflag=-Ifecompiler/thirdparty/SoC \
   --sim-ldflag=-ldl \
+  --sim-compile-march rv32i_zicsr \
+  --sim-compile-mabi ilp32 \
+  --sim-compile-opt-level=-O2 \
   --sim-program add \
   --sim-arg=--max-cycles \
   --sim-arg=10000000 \
+  --sim-arg=--diff \
+  --sim-arg=--ref \
+  --sim-arg=fecompiler/thirdparty/SoC/tools/riscv32-spike-so \
+  --sim-arg=--diff-image-offset \
+  --sim-arg=0x100 \
+  --sim-arg=--diff-reset-vector \
+  --sim-arg=0x80000000 \
   --rerun
 ```
 
@@ -330,9 +347,8 @@ ecc-fe workspace get-home --directory /path/to/workspace --json
 ## Bazel Commands
 
 ```bash
-# CL3 CPU + SoC examples
-bazel run //:run_cl3_soc
-bazel run //:run_cl3_soc_all_tests
+# ysyx_00000000 CPU + SoC example
+bazel run //:run_ysyx_00000000_soc
 
 # Main regressions
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
@@ -365,7 +381,7 @@ binary change does not require republishing the complete SoC harness.
 | `ecc-fe-soc-ysyx-am` | `fecompiler/thirdparty/SoC`: wrapper RTL, peripherals, manifest, catalog, C++ simulator driver, build scripts, CPU tests, and CoreMark sources. | Removes `tools/riscv32-spike-so`; the reference model is independently versioned. |
 | `ecc-fe-cpu-rtl` | Only RTL trees required by built-in adapter filelists, plus applicable license and notice files. | Excludes unrelated upstream DV, benches, examples, dependencies, generated output, and waveform trees. It is a curated package, not a full submodule mirror. |
 | `ecc-fe-difftest-ref` | `tools/riscv32-spike-so`. | Contains the reference shared object only. Difftest support remains part of compatible simulation configurations. |
-| `ecc-fe-examples` | The `examples/` tree and its filelists. | Demo collateral can evolve independently from runtime code. |
+| `ecc-fe-examples` | The `examples/` tree, including the bundled `ysyx_00000000` RTL and filelist. | Demo collateral can evolve independently from runtime code. |
 
 Each archive has a deterministic root name and is published with:
 

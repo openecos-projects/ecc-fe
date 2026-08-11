@@ -39,7 +39,7 @@ CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 # 单独跑 CPU+SoC 全流程
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
 
-# 跑 example CL3 CPU + SoC matrix
+# 跑 example ysyx_00000000 CPU + SoC matrix
 bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"
 
 # 跑全部 Bazel 测试
@@ -225,18 +225,20 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 ### 测什么
 
-基于 `examples/cl3` 的示例文件完整性检查：
+基于 `examples/ysyx_00000000` 的示例文件完整性检查：
 
-- `examples/cl3/filelist.cpu.f` 存在。
-- `examples/cl3/cl3_verilog/filelist.f` 存在。
-- 两级 filelist 中列出的 RTL 路径都能在本地解析到实际文件。
+- `filelist.cpu.f` 和 `README.md` 存在。
+- filelist 声明 `ECOS_DIFFTEST` 并精确列出 8 个 RTL 文件，且路径都能解析。
+- 原生顶层模块 `ysyx_00000000` 只在顶层 RTL 中定义一次。
+- `ysyx_00000000` 是仓库内唯一随包发布的 example 目录。
+- RTL 包含 ECC-FE `difftest_step` DPI 适配器。
 - 该测试不运行 `prepare/elab/lint/sim`，只保证仓库内示例 collateral 没有断链。
 
 ### 怎么测
 
-- 直接读取 `examples/cl3/filelist.cpu.f`。
-- 再读取嵌套的 `examples/cl3/cl3_verilog/filelist.f`。
-- 逐行检查相对路径是否存在。
+- 直接读取 `examples/ysyx_00000000/filelist.cpu.f`。
+- 检查 filelist 顺序、相对路径、元数据文件、顶层模块定义和 example 目录集合。
+- 扫描 RTL，确认存在 `difftest_step` DPI 导入。
 
 ### 用到的 API
 
@@ -255,9 +257,10 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 单 workspace (`cpu_soc_test`) 的 CPU+SoC 全流程回归：
 
 - `prepare/elab/lint/sim` 逐步成功。
-- 使用 CL3 CPU + `fecompiler/thirdparty/SoC`。
-- `sim` 支持在同一个项目里先编译 `SoC/tests/programs/*.c`，再批量执行生成的 `.soc.bin`。
-- 默认打开 difftest，使用 `SoC/tools/riscv32-spike-so` 作为参考模型。
+- 使用固定版本的 `ysyx_00000000` CPU + `fecompiler/thirdparty/SoC`。
+- CPU 顶层是 `ysyx_00000000`，程序按 `rv32i_zicsr` / `ilp32` 编译。
+- `sim` 只构建并运行 `SoC/tests/programs/add.c` 这一条 smoke case。
+- 加载 Spike 参考模型，从 payload 入口开始逐条执行 difftest。
 - 每个 case 的最新日志落到 `sim_verilator/output/cases/<case>/log.txt`。
 - 每次运行都保留历史日志到 `sim_verilator/report/runs/<run_id>/cases/<case>/log.txt`（不覆盖旧日志）。
 
@@ -266,12 +269,16 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 - `setUpClass` 里创建 `workspace_projects/cpu_soc_test`。
 - 分别验证 workspace 创建、`prepare`、`elab`、`lint`。
 - sim 阶段用后端 API 参数：
-  - `sim_cpp_sources=[dpi_mem.cpp, difftest.cpp]`
+  - `required_cpu_top_module=ysyx_00000000`
+  - `sim_cpp_sources=[dpi_mem.cpp, difftest_stub.cpp]`（runner 根据能力声明替换为 `difftest.cpp`）
+  - `sim_ldflags=[-ldl]`
   - `sim_cflags=["-I.../SoC"]`
-  - `sim_ldflags=["-ldl"]`
-  - `sim_run_args=[--max-cycles, 50000000, --diff, --ref, ...]`
-- `test_cpu_soc_sim_each_program_success` 构建并运行 `SoC/tests/programs/*.c` 对应的所有 case。
-- `test_cpu_soc_sim_batch_has_separate_logs_for_each_program` 单独跑一个 case 两次，校验历史 run log 保留。
+  - `sim_compile_march=rv32i_zicsr`
+  - `sim_compile_mabi=ilp32`
+  - `sim_program_names=[add]`
+  - `sim_run_args` 包含 `--diff`、参考模型、image offset 和 reset vector。
+- `test_cpu_soc_sim_add_success` 构建并运行 `add.soc`。
+- `test_cpu_soc_sim_run_history_retains_add_logs` 连续跑同一 case，校验历史 run log 保留。
 
 ### 用到的 API
 
@@ -290,20 +297,20 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 CPU 变体 + 单一真实 SoC 组合回归：
 
 - CPU 变体：
-  - `examples/cl3`
+  - `examples/ysyx_00000000`
 - SoC 变体：
   - `fecompiler/thirdparty/SoC`
 - 动态生成 1 条测试：`test_full_flow_cpu1_soc1`。
 - 每个组合都跑完整 `prepare -> elab -> lint -> sim`。
-- 每个 SoC 的 `tests/programs/*.c` 都应被编译成 `.soc.bin` 并执行。
-- 每个组合默认打开 difftest，参考模型来自对应 SoC 的 `tools/riscv32-spike-so`。
+- 每个组合只编译并执行 `tests/programs/add.c`，形成 `add.soc` smoke case。
+- 每个组合都使用 `ysyx_00000000` 原生顶层、`rv32i_zicsr` / `ilp32`，并启用 difftest。
 
 ### 怎么测
 
-- `setUpClass` 先检查 `slang/verilator`、RISC-V GCC toolchain、CL3 CPU example 和真实 SoC 必要文件。
+- `setUpClass` 先检查 `slang/verilator`、RISC-V GCC toolchain、`ysyx_00000000` example 和真实 SoC 必要文件。
 - 每个组合创建独立 workspace：
   - `workspace_projects/cpu_soc_matrix_cpu<cpu_idx>_soc<soc_idx>`
-- 每个 workspace 使用对应 CPU filelist、SoC filelist、testbench、`dpi_mem.cpp`、`difftest.cpp`。
+- 每个 workspace 使用对应 CPU filelist、SoC filelist、testbench、`dpi_mem.cpp`、真实 `difftest.cpp` 和 Spike reference。
 - `engine.run_all(rerun=True)` 跑完整流程。
 - 校验：
   - 非 `sim` 步骤必须成功。
@@ -311,7 +318,7 @@ CPU 变体 + 单一真实 SoC 组合回归：
   - `prepare_fe/output/merged_rtl.f` 存在。
   - `elab_slang/report/log.txt` 存在。
   - `lint_verilator/report/log.txt` 不含 `%Error`。
-  - `sim_verilator/report/cases.json` 记录了所有 expected cases。
+  - `sim_verilator/report/cases.json` 只记录 `add.soc`。
   - `sim_verilator/output/cases/<case>/log.txt` 存在且不含 `FAILED` / `%Error`。
   - 每个构建出来的 `.soc.bin` 位于对应的 `sim_verilator/output/cases/<case>/` 目录下。
 
@@ -343,7 +350,7 @@ python3 -m pytest test/test_cpu_soc_matrix_flow.py::TestCpuSocMatrixFlow::test_f
   - `python3 -m pytest test/test_data_workspace.py test/test_engine_flow.py -q`
 - 改动 CPU+SoC 普通仿真后跑：
   - `bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"`
-- 改动 SoC/CPU 兼容性或 difftest 后跑：
+- 改动 SoC/CPU 兼容性后跑：
   - `bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"`
 - 发布前跑一次：
   - `bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"`

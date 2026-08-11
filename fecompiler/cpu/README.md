@@ -22,12 +22,19 @@ AM SoC harness.  A compatible CPU wrapper should expose:
   `io_slave_r*` channels. A CPU that does not implement a slave must expose and
   tie off its response outputs.
 
-The current CL3 integration uses `cpu_top` as its default public CPU entrypoint.
-Custom filelists may select another top name through `cpu_top_module`; the
-selected module must implement the flat YSYX AXI master/slave interface.
-The fixed SoC socket instantiates it directly and provides the UART/trap side
+Custom filelists may select their native top name through `cpu_top_module`; the
+selected module must implement the flat YSYX AXI master/slave interface. The
+fixed SoC socket instantiates it directly and provides the UART/trap side
 effects used by CPU tests. Bundled adapters keep their legacy `cpu_top` socket
 behind a separate harness branch.
+
+The shipped `examples/ysyx_00000000` filelist demonstrates the native-top path.
+It selects `ysyx_00000000` and implements RV32I + Zicsr. Compile programs with
+`-march=rv32i_zicsr -mabi=ilp32`. Its filelist explicitly declares the
+`ECOS_DIFFTEST` capability and includes the single-retirement DPI adapter;
+selecting those RTL files directly makes ECC-FE generate the same declaration.
+Custom inputs without both the declaration and DPI entrypoint continue to use
+the disabled stub.
 
 ## Integration Rule
 
