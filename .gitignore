@@ -60,6 +60,7 @@ ipython_config.py
 # Third-party build directories (sources are tracked)
 /fecompiler/thirdparty/slang/build/
 /fecompiler/thirdparty/verilator/build/
+/fecompiler/thirdparty/SoC/build/
 
 # SoC generated test artifacts:
 # keep runnable test images (*.soc.bin) tracked, ignore other volatile outputs.
