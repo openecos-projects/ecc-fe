@@ -21,21 +21,14 @@ class RtlReviewStep(BaseStep):
         init_review_subflow(step)
         previous_report = _load_previous_report(step)
         report = build_rtl_review(workspace)
-        probe = run_structural_probe(workspace, step)
-        report = merge_structural_probe(report, probe)
-        report = finalize_review_report(
-            report,
-            previous_report,
-            workspace.get("review_waivers", []),
-            workspace,
-        )
-        self._write_outputs(step, report)
         update_substep_ok(
             step,
             ReviewSubFlowEnum.collect_sources.value,
             bool(report.get("source_files")),
             info={"source_files": len(report.get("source_files", []))},
         )
+        probe = run_structural_probe(workspace, step)
+        report = merge_structural_probe(report, probe)
         update_substep_ok(
             step,
             ReviewSubFlowEnum.scan_rtl.value,
@@ -45,12 +38,19 @@ class RtlReviewStep(BaseStep):
                 "yosys_precheck": probe.get("status", ""),
             },
         )
+        report = finalize_review_report(
+            report,
+            previous_report,
+            workspace.get("review_waivers", []),
+            workspace,
+        )
         update_substep_ok(
             step,
             ReviewSubFlowEnum.analyze_quality.value,
             not _review_is_blocked_by_yosys_precheck(report),
             info=report.get("summary", {}),
         )
+        self._write_outputs(step, report)
         update_substep_ok(step, ReviewSubFlowEnum.report.value, True)
 
     def check_result(self, step: WorkspaceStep) -> bool:

@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Any
 
 from fecompiler.data.step import StateEnum
-from fecompiler.utility.json import json_read, json_write
+from fecompiler.tools.fe.subflow import reset_subflow
+from fecompiler.utility.json import json_read
 
 
 class PrepareSubFlowEnum(Enum):
@@ -35,5 +36,4 @@ def init_prepare_subflow(workspace_step: Any) -> None:
         workspace_step.subflow["steps"] = [
             _template(s.value) for s in PrepareSubFlowEnum
         ]
-        if path:
-            json_write(path, workspace_step.subflow)
+    reset_subflow(workspace_step)

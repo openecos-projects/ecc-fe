@@ -126,6 +126,32 @@ def workspace_event_sink(sink: WorkspaceEventSink | None) -> Iterator[None]:
         _workspace_event_sink.reset(token)
 
 
+class _FrontendSubflowObserver:
+    def __init__(self, *, cmd: str, directory: str, json_output: bool) -> None:
+        self.cmd = cmd
+        self.directory = directory
+        self.json_output = json_output
+
+    def on_subflow_stage(self, workspace_step: Any, subflow_step: dict[str, Any]) -> None:
+        name = str(subflow_step.get("name", ""))
+        _emit_event(
+            self.cmd,
+            "subflow.stage",
+            {
+                "directory": self.directory,
+                "peak_memory_mb": subflow_step.get("peak memory (mb)", 0),
+                "runtime": str(subflow_step.get("runtime", "")),
+                "state": str(subflow_step.get("state", StateEnum.Unstart.value)),
+                "step": str(workspace_step.name),
+                "subflow_path": str(workspace_step.subflow.get("path", "")),
+                "subflow_step": name,
+                "tool": str(workspace_step.tool),
+            },
+            [f"frontend subflow {workspace_step.name}/{name} updated"],
+            json_output=self.json_output,
+        )
+
+
 class WorkspaceApplicationService:
     """Execute workspace operations independently of their transport."""
 
@@ -586,25 +612,39 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         _clear_frontend_step_details(engine)
 
     json_output = bool(getattr(args, "json", False))
+    observer = _FrontendSubflowObserver(
+        cmd="rtl2gds",
+        directory=workspace["directory"],
+        json_output=json_output,
+    )
     reports: list[dict[str, Any]] = []
     failed_step = ""
     failed_state = StateEnum.Incomplete
     prepare_refreshed = False
     for workspace_step in engine.workspace_steps:
         if not prepare_refreshed and workspace_step.name != "prepare":
-            prepare_refreshed = _refresh_prepare_if_stale(workspace, engine, workspace_step.name)
+            prepare_refreshed = _refresh_prepare_if_stale(
+                workspace,
+                engine,
+                workspace_step.name,
+                observer=observer,
+            )
 
         if workspace_step.name == "sim":
             _apply_default_sim_smoke_suite(workspace)
 
         _emit_event(
             "rtl2gds",
-            "stdout",
+            "started",
             {"directory": workspace["directory"], "step": workspace_step.name, "tool": workspace_step.tool},
             [f"start frontend step {workspace_step.name}: {workspace['directory']}"],
             json_output=json_output,
         )
-        state = engine.run_step(workspace_step.name, rerun=bool(args.rerun))
+        state = engine.run_step(
+            workspace_step.name,
+            rerun=bool(args.rerun),
+            observer=observer,
+        )
         report = _step_report_payload(workspace, workspace_step, state)
         report["detail_path"] = _write_frontend_step_detail(
             workspace,
@@ -615,7 +655,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         reports.append(report)
         _emit_event(
             "rtl2gds",
-            "stdout",
+            "completed" if state == StateEnum.Success else "failed",
             {"directory": workspace["directory"], **report},
             [f"frontend step {workspace_step.name} {state.value}: {workspace['directory']}"],
             json_output=json_output,
@@ -668,8 +708,14 @@ def _run_step(args: argparse.Namespace) -> CliResult:
             },
         )
 
+    json_output = bool(getattr(args, "json", False))
+    observer = _FrontendSubflowObserver(
+        cmd="run_step",
+        directory=workspace["directory"],
+        json_output=json_output,
+    )
     force_rerun = False
-    _refresh_prepare_if_stale(workspace, engine, step)
+    _refresh_prepare_if_stale(workspace, engine, step, observer=observer)
     if step == "sim":
         suite_name = str(args.sim_test_suite or "").strip()
         if suite_name and suite_name.lower() != "default":
@@ -685,7 +731,6 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         else:
             _apply_default_sim_smoke_suite(workspace)
 
-    json_output = bool(getattr(args, "json", False))
     _emit_event(
         "run_step",
         "started",
@@ -695,7 +740,11 @@ def _run_step(args: argparse.Namespace) -> CliResult:
     )
     if args.rerun or force_rerun:
         _remove_frontend_step_detail(workspace_step)
-    state = engine.run_step(step, rerun=bool(args.rerun or force_rerun))
+    state = engine.run_step(
+        step,
+        rerun=bool(args.rerun or force_rerun),
+        observer=observer,
+    )
     data: dict[str, Any] = {"step": step, "state": state.value, "directory": workspace["directory"]}
     if workspace_step is not None:
         data.update(_step_report_payload(workspace, workspace_step, state))
@@ -719,7 +768,13 @@ def _run_step(args: argparse.Namespace) -> CliResult:
     )
 
 
-def _refresh_prepare_if_stale(workspace: dict[str, Any], engine: EngineFlow, target_step: str) -> bool:
+def _refresh_prepare_if_stale(
+    workspace: dict[str, Any],
+    engine: EngineFlow,
+    target_step: str,
+    *,
+    observer: Any | None = None,
+) -> bool:
     if target_step == "prepare" or prepared_inputs_current(workspace):
         return False
 
@@ -727,7 +782,7 @@ def _refresh_prepare_if_stale(workspace: dict[str, Any], engine: EngineFlow, tar
     if prepare_step is None:
         return False
 
-    state = engine.run_step("prepare", rerun=True)
+    state = engine.run_step("prepare", rerun=True, observer=observer)
     if state != StateEnum.Success:
         raise WorkspaceCliError(
             "run_step",
