@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import BinaryIO
 
 from fecompiler.runtime.server import RuntimeServer
@@ -13,6 +16,16 @@ from fecompiler.runtime.transport import (
 
 
 def run_stdio_server(
+    input_stream: BinaryIO,
+    output_stream: BinaryIO,
+    *,
+    server: RuntimeServer | None = None,
+) -> int:
+    with _stable_protocol_output(output_stream) as protocol_output:
+        return _serve_stdio(input_stream, protocol_output, server=server)
+
+
+def _serve_stdio(
     input_stream: BinaryIO,
     output_stream: BinaryIO,
     *,
@@ -50,6 +63,21 @@ def run_stdio_server(
                 break
 
     return 0
+
+
+@contextmanager
+def _stable_protocol_output(output_stream: BinaryIO) -> Iterator[BinaryIO]:
+    """Keep protocol frames on the original stdout while handlers redirect FD 1."""
+
+    try:
+        output_fd = output_stream.fileno()
+        protocol_fd = os.dup(output_fd)
+    except (AttributeError, OSError):
+        yield output_stream
+        return
+
+    with os.fdopen(protocol_fd, "wb", buffering=0) as protocol_output:
+        yield protocol_output
 
 
 def _read_chunk(input_stream: BinaryIO) -> bytes:
