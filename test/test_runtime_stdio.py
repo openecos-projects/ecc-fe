@@ -71,3 +71,50 @@ def test_rpc_stdio_subprocess_smoke() -> None:
     assert len(responses) == 2
     assert responses[0]["result"]["version"] == 1
     assert responses[1]["result"] == {"ok": True}
+
+
+def test_rpc_stdio_keeps_runtime_notifications_on_protocol_stdout() -> None:
+    script = r"""
+import sys
+
+from fecompiler.runtime.server import RuntimeServer
+from fecompiler.runtime.stdio_server import run_stdio_server
+
+server = RuntimeServer()
+
+def notify(_params):
+    server._emit_runtime_event({
+        "type": "event",
+        "phase": "completed",
+        "cmd": "rtl2gds",
+        "data": {"step": "prepare", "state": "Success"},
+    })
+    return {"ok": True}
+
+server._handlers["test.notify"] = notify
+raise SystemExit(run_stdio_server(sys.stdin.buffer, sys.stdout.buffer, server=server))
+"""
+    requests = _rpc_request(1, "test.notify") + _rpc_request(2, "rpc.shutdown")
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        input=requests,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+    frames = _decode_frames(completed.stdout)
+    assert frames[0] == {
+        "jsonrpc": "2.0",
+        "method": "runtime.event",
+        "params": {
+            "type": "event",
+            "phase": "completed",
+            "cmd": "rtl2gds",
+            "data": {"step": "prepare", "state": "Success"},
+        },
+    }
+    assert frames[1] == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+    assert frames[2] == {"jsonrpc": "2.0", "id": 2, "result": {"ok": True}}
+    assert b"runtime.event" not in completed.stderr

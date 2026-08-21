@@ -2,7 +2,14 @@
 
 from .builder import build_step, build_step_space, build_step_config
 from .base import BaseStep
-from .subflow import EccSubFlowEnum, build_subflow, init_subflow, update_substep, update_substep_ok
+from .subflow import (
+    EccSubFlowEnum,
+    build_subflow,
+    init_subflow,
+    reset_subflow,
+    update_substep,
+    update_substep_ok,
+)
 from .service import get_step_info
 
 _STEP_REGISTRY: dict[str, BaseStep] | None = None
@@ -35,6 +42,7 @@ __all__ = [
     "EccSubFlowEnum",
     "build_subflow",
     "init_subflow",
+    "reset_subflow",
     "update_substep",
     "update_substep_ok",
     "get_step_info",

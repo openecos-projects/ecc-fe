@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Any
 
 from fecompiler.data.step import StateEnum
-from fecompiler.utility.json import json_read, json_write
+from fecompiler.tools.fe.subflow import reset_subflow
+from fecompiler.utility.json import json_read
 
 
 # ── lint sub-steps ─────────────────────────────────────────────────────────────
@@ -43,8 +44,7 @@ def _init(workspace_step: Any, sub_steps: list[Enum]) -> None:
         workspace_step.subflow["steps"] = existing["steps"]
     else:
         workspace_step.subflow["steps"] = [_template(s.value) for s in sub_steps]
-        if path:
-            json_write(path, workspace_step.subflow)
+    reset_subflow(workspace_step)
 
 
 def init_lint_subflow(workspace_step: Any) -> None:

@@ -16,6 +16,7 @@ from fecompiler.tools.common.sv_module import (
     module_definitions,
     module_port_contract_from_files,
 )
+from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
 from fecompiler.resources import resolve_thirdparty_path
 from fecompiler.utility.json import json_read, json_write
@@ -453,14 +454,4 @@ class PrepareStep(BaseStep):
     @staticmethod
     def _update_substep(step: WorkspaceStep, name: str, ok: bool,
                         info: dict | None = None) -> None:
-        from fecompiler.data.step import StateEnum
-
-        state = StateEnum.Success.value if ok else StateEnum.Incomplete.value
-        for entry in step.subflow.get("steps", []):
-            if entry["name"] == name:
-                entry["state"] = state
-                entry["info"] = info or {}
-                break
-        path = step.subflow.get("path", "")
-        if path:
-            json_write(path, step.subflow)
+        update_substep_ok(step, name, ok, info=info)

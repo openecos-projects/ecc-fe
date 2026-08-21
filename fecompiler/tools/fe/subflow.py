@@ -36,11 +36,32 @@ def init_subflow(workspace_step: Any) -> None:
             json_write(path, workspace_step.subflow)
 
 
-def save_subflow(workspace_step: Any) -> None:
+def save_subflow(workspace_step: Any) -> bool:
     """Persist workspace_step.subflow to its JSON file."""
     path = workspace_step.subflow.get("path", "")
     if path:
-        json_write(path, workspace_step.subflow)
+        return json_write(path, workspace_step.subflow)
+    return False
+
+
+def reset_subflow(workspace_step: Any) -> None:
+    """Reset all declared sub-steps before a new step execution."""
+    for entry in workspace_step.subflow.get("steps", []):
+        entry["state"] = StateEnum.Unstart.value
+        entry["runtime"] = ""
+        entry["peak memory (mb)"] = 0
+        entry["info"] = {}
+    saved = save_subflow(workspace_step)
+    if not saved:
+        return
+
+    from fecompiler.runtime.subflow_events import publish_subflow_stage
+
+    # Publish the complete skeleton before tools start completing stages. This
+    # is required for a workspace's first run, when subflow.json was empty when
+    # the GUI initially opened the step.
+    for entry in workspace_step.subflow.get("steps", []):
+        publish_subflow_stage(workspace_step, entry)
 
 
 def update_substep(
@@ -62,7 +83,11 @@ def update_substep(
             entry["runtime"] = runtime
             entry["peak memory (mb)"] = peak_memory
             entry["info"] = info or {}
-            save_subflow(workspace_step)
+            saved = save_subflow(workspace_step)
+            if saved:
+                from fecompiler.runtime.subflow_events import publish_subflow_stage
+
+                publish_subflow_stage(workspace_step, entry)
             return True
     return False
 
@@ -81,4 +106,3 @@ def update_substep_ok(
         StateEnum.Success if ok else StateEnum.Incomplete,
         info=info,
     )
-

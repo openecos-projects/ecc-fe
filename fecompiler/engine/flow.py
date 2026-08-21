@@ -233,7 +233,13 @@ class EngineFlow:
                 return False, reports
         return True, reports
 
-    def run_step(self, step_name: str, rerun: bool = False) -> StateEnum:
+    def run_step(
+        self,
+        step_name: str,
+        rerun: bool = False,
+        *,
+        observer: Any | None = None,
+    ) -> StateEnum:
         ws_step = self.get_workspace_step(step_name)
         if ws_step is None:
             return StateEnum.Invalid
@@ -255,8 +261,11 @@ class EngineFlow:
         self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
         self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
         restore_signal_handlers = _install_interruption_handlers()
+        from fecompiler.runtime.subflow_events import subflow_observer
+
         try:
-            self._run_single_step(ws_step)
+            with subflow_observer(observer):
+                self._run_single_step(ws_step)
             success = self._check_step_result(ws_step)
             runtime = _format_runtime(time.time() - start)
             if success:

@@ -141,6 +141,59 @@ def test_workspace_session_lifecycle_and_flow_events(tmp_path) -> None:
     assert missing["error"]["code"] == -32010
 
 
+def test_real_run_step_emits_each_saved_subflow_stage(tmp_path) -> None:
+    rtl = tmp_path / "chip_top.v"
+    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    directory = tmp_path / "workspace"
+    create_workspace(
+        CreateWorkspaceData(
+            directory=str(directory),
+            origin_verilog=str(rtl),
+            parameters={"Design": "demo", "Top module": "chip_top"},
+        ),
+    )
+    notifications: list[dict[str, Any]] = []
+    server = RuntimeServer(notification_sink=notifications.append)
+    opened = _dispatch(server, "workspace.open", {"directory": str(directory)})
+
+    result = _dispatch(
+        server,
+        "flow.run_step",
+        {
+            "workspaceId": opened["result"]["workspaceId"],
+            "step": "prepare",
+            "rerun": True,
+        },
+    )
+
+    assert result["result"]["state"] == "Success"
+    events = [notification["params"] for notification in notifications]
+    subflow_events = [event for event in events if event["phase"] == "subflow.stage"]
+    pending_events = [
+        event for event in subflow_events if event["data"]["state"] == "Unstart"
+    ]
+    completed_events = [
+        event for event in subflow_events if event["data"]["state"] == "Success"
+    ]
+    expected_steps = [
+        "collect inputs",
+        "merge filelist",
+        "persist state",
+        "report",
+    ]
+    assert [event["data"]["subflow_step"] for event in pending_events] == expected_steps
+    assert [event["data"]["subflow_step"] for event in completed_events] == expected_steps
+    assert all(event["data"]["step"] == "prepare" for event in subflow_events)
+    assert events.index(subflow_events[0]) < next(
+        index for index, event in enumerate(events) if event["phase"] == "completed"
+    )
+
+    persisted = json.loads(
+        (directory / "prepare_fe" / "subflow.json").read_text(encoding="utf-8"),
+    )
+    assert persisted["steps"][-1]["state"] == "Success"
+
+
 def test_frontend_validation_returns_structured_failed_result() -> None:
     application = FakeApplication()
     server = RuntimeServer(WorkspaceRuntimeApi(application=application))
