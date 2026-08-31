@@ -115,6 +115,10 @@ _workspace_event_sink: ContextVar[WorkspaceEventSink | None] = ContextVar(
     "workspace_event_sink",
     default=None,
 )
+_runtime_operation_marker: ContextVar[dict[str, Any] | None] = ContextVar(
+    "runtime_operation_marker",
+    default=None,
+)
 
 
 @contextmanager
@@ -126,11 +130,25 @@ def workspace_event_sink(sink: WorkspaceEventSink | None) -> Iterator[None]:
         _workspace_event_sink.reset(token)
 
 
+@contextmanager
+def runtime_operation_marker(marker: dict[str, Any] | None) -> Iterator[None]:
+    token = _runtime_operation_marker.set(dict(marker) if marker else None)
+    try:
+        yield
+    finally:
+        _runtime_operation_marker.reset(token)
+
+
 class _FrontendSubflowObserver:
     def __init__(self, *, cmd: str, directory: str, json_output: bool) -> None:
         self.cmd = cmd
         self.directory = directory
         self.json_output = json_output
+
+    @property
+    def runtime_operation(self) -> dict[str, Any] | None:
+        marker = _runtime_operation_marker.get()
+        return dict(marker) if marker else None
 
     def on_subflow_stage(self, workspace_step: Any, subflow_step: dict[str, Any]) -> None:
         name = str(subflow_step.get("name", ""))
@@ -183,11 +201,12 @@ class WorkspaceApplicationService:
         *,
         base_dir: str | Path | None = None,
         event_sink: WorkspaceEventSink | None = None,
+        runtime_operation: dict[str, Any] | None = None,
     ) -> CliResult:
         request = dict(payload or {})
         resolved_base_dir = Path(base_dir or Path.cwd()).expanduser().resolve()
         normalized_command = _normalize_application_command(command)
-        with workspace_event_sink(event_sink):
+        with workspace_event_sink(event_sink), runtime_operation_marker(runtime_operation):
             return self.call(
                 normalized_command,
                 lambda: _dispatch_payload(
@@ -578,7 +597,11 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
 def _load(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="load_workspace")
     repaired = _repair_workspace_sim_defaults(workspace)
-    recovered = engine.clear_stale_ongoing_states()
+    recovered = (
+        engine.clear_stale_ongoing_states()
+        if bool(getattr(args, "recover_stale_ongoing", True))
+        else False
+    )
     return CliResult(
         cmd="load_workspace",
         response="success",
@@ -2957,6 +2980,7 @@ def _dispatch_payload(
         "id": "",
         "json": False,
         "rerun": False,
+        "recover_stale_ongoing": True,
         "sim_compile_extra_cflag": [],
         "sim_compile_mabi": "",
         "sim_compile_march": "",

@@ -35,6 +35,7 @@ class RuntimeServer:
             "frontend.validate_config": self.api.validate_config,
             "workspace.create": self.api.create_workspace,
             "workspace.open": self.api.open_workspace,
+            "workspace.recover_interrupted": self.api.recover_interrupted,
             "workspace.close": self.api.close_workspace,
             "workspace.home": self.api.workspace_home,
             "workspace.info": self.api.workspace_info,
@@ -180,6 +181,7 @@ _COMMON_ALIASES = {
     "simCompileExtraCflags": "sim_compile_extra_cflags",
     "simCpuTestCases": "sim_cpu_test_cases",
     "workspaceId": "workspace_id",
+    "operationId": "operation_id",
 }
 
 _METHOD_FIELDS: dict[str, set[str] | None] = {
@@ -240,17 +242,19 @@ _METHOD_FIELDS: dict[str, set[str] | None] = {
         "top_module",
     },
     "workspace.open": {"directory"},
+    "workspace.recover_interrupted": {"workspace_id", "operation_id"},
     "workspace.close": {"workspace_id"},
     "workspace.home": {"workspace_id"},
     "workspace.info": {"workspace_id", "step", "info_id"},
     "workspace.refresh_config": {"workspace_id"},
     "workspace.sync_config": {"workspace_id", "config_path"},
     "workspace.reset_flow": {"workspace_id"},
-    "flow.run": {"workspace_id", "rerun"},
+    "flow.run": {"workspace_id", "rerun", "operation_id"},
     "flow.run_step": {
         "workspace_id",
         "step",
         "rerun",
+        "operation_id",
         "sim_test_suite",
         "sim_cpu_test_mode",
         "sim_cpu_test_cases",

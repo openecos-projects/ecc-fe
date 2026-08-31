@@ -136,6 +136,9 @@ class EngineFlow:
             step["state"] = StateEnum.Incomplete.value
             step["runtime"] = step.get("runtime") or ""
             step["peak memory (mb)"] = step.get("peak memory (mb)", 0)
+            info = step.get("info")
+            if isinstance(info, dict):
+                info.pop("runtime_operation", None)
             changed = True
         if changed:
             self.save()
@@ -155,6 +158,7 @@ class EngineFlow:
         state: StateEnum,
         runtime: str | None = None,
         peak_memory: float | None = None,
+        clear_runtime_operation: bool = False,
     ) -> bool:
         step = self.get_step(name, tool)
         if step is None:
@@ -164,8 +168,31 @@ class EngineFlow:
             step["runtime"] = runtime
         if peak_memory is not None:
             step["peak memory (mb)"] = peak_memory
+        if clear_runtime_operation:
+            info = step.get("info")
+            if isinstance(info, dict):
+                info.pop("runtime_operation", None)
         self.save()
         return True
+
+    def _start_step(self, step: WorkspaceStep, observer: Any | None, started_at: float) -> None:
+        flow_step = self.get_step(step.name, step.tool)
+        if flow_step is None:
+            raise RuntimeError(f"cannot persist runtime operation marker for {step.name}({step.tool})")
+        marker = getattr(observer, "runtime_operation", None)
+        flow_step["state"] = StateEnum.Ongoing.value
+        info = flow_step.get("info")
+        if not isinstance(info, dict):
+            info = {}
+            flow_step["info"] = info
+        if marker:
+            info["runtime_operation"] = {
+                **marker,
+                "started_at": started_at,
+            }
+        else:
+            info.pop("runtime_operation", None)
+        self.save()
 
     def is_flow_success(self) -> bool:
         return all(x.get("state") == StateEnum.Success.value for x in self.flow.get("steps", []))
@@ -258,7 +285,7 @@ class EngineFlow:
         provenance["started_at"] = _utc_now()
         self._clear_step_stale(flow_step)
         start = time.time()
-        self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
+        self._start_step(ws_step, observer, start)
         self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
         restore_signal_handlers = _install_interruption_handlers()
         from fecompiler.runtime.subflow_events import subflow_observer
@@ -308,6 +335,7 @@ class EngineFlow:
             state=state,
             runtime=runtime,
             peak_memory=0.0,
+            clear_runtime_operation=True,
         )
 
     def _run_single_step(self, step: WorkspaceStep) -> None:

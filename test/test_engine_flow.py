@@ -527,12 +527,45 @@ def test_run_step_interruption_clears_ongoing_state(tmp_path, monkeypatch):
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
 
 
+def test_run_step_persists_and_clears_runtime_operation_marker(tmp_path, monkeypatch):
+    engine, ws = _build_engine(tmp_path)
+    observed_marker = None
+
+    def inspect_marker(_step):
+        nonlocal observed_marker
+        persisted = json.loads(Path(ws["flow_path"]).read_text(encoding="utf-8"))
+        observed_marker = persisted["steps"][0]["info"]["runtime_operation"]
+
+    monkeypatch.setattr(engine, "_run_single_step", inspect_marker)
+    observer = SimpleNamespace(
+        runtime_operation={
+            "schema": 1,
+            "operation_id": "operation-frontend",
+            "runtime_instance_id": "runtime-frontend",
+        },
+    )
+
+    engine.run_step(FIRST_STEP, observer=observer)
+
+    assert observed_marker is not None
+    assert observed_marker["schema"] == 1
+    assert observed_marker["operation_id"] == "operation-frontend"
+    assert observed_marker["runtime_instance_id"] == "runtime-frontend"
+    assert isinstance(observed_marker["started_at"], float)
+    assert "runtime_operation" not in engine.get_step(FIRST_STEP, FIRST_TOOL)["info"]
+
+
 def test_clear_stale_ongoing_states_marks_incomplete(tmp_path):
     engine, _ = _build_engine(tmp_path)
     engine.set_state(name=FIRST_STEP, tool=FIRST_TOOL, state=StateEnum.Ongoing)
+    engine.get_step(FIRST_STEP, FIRST_TOOL).setdefault("info", {})["runtime_operation"] = {
+        "schema": 1,
+    }
+    engine.save()
 
     assert engine.clear_stale_ongoing_states() is True
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+    assert "runtime_operation" not in engine.get_step(FIRST_STEP, FIRST_TOOL)["info"]
     assert engine.clear_stale_ongoing_states() is False
 
 
