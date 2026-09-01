@@ -75,6 +75,7 @@ jobs:
             test/test_data_workspace.py \
             test/test_examples.py \
             test/test_frontend_detail_snapshot.py \
+            test/test_qor_analysis.py \
             test/test_rtl_review.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \

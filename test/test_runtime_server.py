@@ -193,6 +193,19 @@ def test_recover_interrupted_is_scoped_idempotent_and_legacy_compatible(tmp_path
     second["state"] = "Ongoing"
     second["info"] = None
     flow_path.write_text(json.dumps(flow), encoding="utf-8")
+    stale_paths = []
+    for step in (first, second):
+        step_root = directory / f"{step['name']}_{step['tool']}"
+        for relative in (
+            "analysis/qor_metrics.json",
+            "analysis/qor_summary.json",
+            "analysis/qor_hotspots.json",
+            "report/frontend_detail.json",
+        ):
+            path = step_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"generation":"stale"}', encoding="utf-8")
+            stale_paths.append(path)
 
     mismatch = _dispatch(
         server,
@@ -252,6 +265,7 @@ def test_recover_interrupted_is_scoped_idempotent_and_legacy_compatible(tmp_path
     assert persisted["steps"][0]["state"] == "Incomplete"
     assert "runtime_operation" not in persisted["steps"][0]["info"]
     assert persisted["steps"][1]["state"] == "Incomplete"
+    assert all(not path.exists() for path in stale_paths)
 
 
 def test_real_run_step_emits_each_saved_subflow_stage(tmp_path) -> None:

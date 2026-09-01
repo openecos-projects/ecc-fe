@@ -1913,7 +1913,13 @@ def _build_step_info(
     if info_id in {"analysis", "metrics"}:
         analysis = _step_section(step, "analysis")
         info: dict[str, Any] = {}
-        for key in ("metrics", "statis_csv"):
+        for key in (
+            "metrics",
+            "qor_metrics",
+            "qor_summary",
+            "qor_hotspots",
+            "statis_csv",
+        ):
             path = analysis.get(key, "")
             if path and os.path.exists(path):
                 info[key] = path
@@ -2034,6 +2040,7 @@ def _build_frontend_step_detail(
         "runtime": runtime,
         "peak_memory_mb": peak_memory,
         "summary": _build_frontend_step_summary(step, state, runtime),
+        "qor": _build_frontend_step_qor(step),
         "logs": _build_frontend_step_logs(step_log_path, report_log_path),
         "reports": _build_frontend_step_reports(step),
         "artifacts": _build_frontend_step_artifacts(workspace, step),
@@ -2103,6 +2110,20 @@ def _build_frontend_step_detail(
             })
 
     return detail
+
+
+def _build_frontend_step_qor(step: Any) -> dict[str, Any]:
+    analysis = _step_section(step, "analysis")
+
+    def read_record(key: str) -> dict[str, Any] | None:
+        payload = _json_read(analysis.get(key, ""))
+        return payload if isinstance(payload, dict) else None
+
+    return {
+        "metrics": read_record("qor_metrics"),
+        "summary": read_record("qor_summary"),
+        "hotspots": read_record("qor_hotspots"),
+    }
 
 
 def _write_frontend_step_detail(

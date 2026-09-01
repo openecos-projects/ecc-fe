@@ -76,6 +76,9 @@ def build_step(
         analysis={
             "dir":        f"{sd}/analysis",
             "metrics":    f"{sd}/analysis/{step_name}_metrics.json",
+            "qor_metrics": f"{sd}/analysis/qor_metrics.json",
+            "qor_summary": f"{sd}/analysis/qor_summary.json",
+            "qor_hotspots": f"{sd}/analysis/qor_hotspots.json",
             "statis_csv": f"{sd}/analysis/{step_name}_statis.csv",
         },
         subflow={

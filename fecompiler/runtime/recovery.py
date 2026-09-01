@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from fecompiler.analysis import clear_step_qor
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import load_workspace
 from fecompiler.engine.flow import EngineFlow
@@ -38,6 +39,7 @@ def recover_interrupted_operations(
         info = step.get("info")
         if isinstance(info, dict):
             info.pop("runtime_operation", None)
+        clear_step_qor(Path(directory) / f"{name}_{tool}")
         recovered.append(
             {
                 "step": name,
