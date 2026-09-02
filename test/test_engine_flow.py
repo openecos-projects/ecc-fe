@@ -1957,7 +1957,8 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     soc_root.mkdir()
 
     (cpu_root / "cpu_top_a.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
-    (soc_root / "cpu_top_b.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    duplicate_cpu_top = soc_root / "cpu_top_b.v"
+    duplicate_cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
     (cpu_root / "filelist.cpu.f").write_text(
         f"cpu_top_a.v\n{soc_root / 'cpu_top_b.v'}\n",
         encoding="utf-8",
@@ -1983,6 +1984,38 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     assert state == StateEnum.Incomplete
     prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
     assert "requires exactly one cpu_top module" in prepare_subflow
+    prepare_report = json.loads(
+        (Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert prepare_report["contracts"][0]["status"] == "failed"
+    qor_summary = json.loads(
+        (
+            Path(ws["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert qor_summary["quality_status"] == "blocked"
+    assert qor_summary["gates"][0]["state"] == "failed"
+    first_fingerprint = qor_summary["context"]["comparison"]["fingerprint"]
+
+    duplicate_cpu_top.write_text(
+        "module cpu_top(input logic changed); endmodule\n",
+        encoding="utf-8",
+    )
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Incomplete
+    rerun_summary = json.loads(
+        (
+            Path(ws["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert rerun_summary["context"]["comparison"]["fingerprint"] != first_fingerprint
 
 
 def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
@@ -2029,6 +2062,25 @@ def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
     subflow = json.loads((Path(workspace["directory"]) / "prepare_fe" / "subflow.json").read_text())
     collect = next(step for step in subflow["steps"] if step["name"] == "collect inputs")
     assert "address: expected output[32], found output[16]" in collect["info"]["error"]
+    prepare_report = json.loads(
+        (
+            Path(workspace["directory"])
+            / "prepare_fe"
+            / "report"
+            / "prepare.rpt"
+        ).read_text(encoding="utf-8")
+    )
+    assert prepare_report["contracts"][0]["status"] == "failed"
+    qor_summary = json.loads(
+        (
+            Path(workspace["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert qor_summary["quality_status"] == "blocked"
+    assert qor_summary["gates"][0]["state"] == "failed"
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):
