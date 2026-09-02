@@ -115,6 +115,10 @@ _workspace_event_sink: ContextVar[WorkspaceEventSink | None] = ContextVar(
     "workspace_event_sink",
     default=None,
 )
+_runtime_operation_marker: ContextVar[dict[str, Any] | None] = ContextVar(
+    "runtime_operation_marker",
+    default=None,
+)
 
 
 @contextmanager
@@ -126,11 +130,25 @@ def workspace_event_sink(sink: WorkspaceEventSink | None) -> Iterator[None]:
         _workspace_event_sink.reset(token)
 
 
+@contextmanager
+def runtime_operation_marker(marker: dict[str, Any] | None) -> Iterator[None]:
+    token = _runtime_operation_marker.set(dict(marker) if marker else None)
+    try:
+        yield
+    finally:
+        _runtime_operation_marker.reset(token)
+
+
 class _FrontendSubflowObserver:
     def __init__(self, *, cmd: str, directory: str, json_output: bool) -> None:
         self.cmd = cmd
         self.directory = directory
         self.json_output = json_output
+
+    @property
+    def runtime_operation(self) -> dict[str, Any] | None:
+        marker = _runtime_operation_marker.get()
+        return dict(marker) if marker else None
 
     def on_subflow_stage(self, workspace_step: Any, subflow_step: dict[str, Any]) -> None:
         name = str(subflow_step.get("name", ""))
@@ -183,11 +201,12 @@ class WorkspaceApplicationService:
         *,
         base_dir: str | Path | None = None,
         event_sink: WorkspaceEventSink | None = None,
+        runtime_operation: dict[str, Any] | None = None,
     ) -> CliResult:
         request = dict(payload or {})
         resolved_base_dir = Path(base_dir or Path.cwd()).expanduser().resolve()
         normalized_command = _normalize_application_command(command)
-        with workspace_event_sink(event_sink):
+        with workspace_event_sink(event_sink), runtime_operation_marker(runtime_operation):
             return self.call(
                 normalized_command,
                 lambda: _dispatch_payload(
@@ -578,7 +597,11 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
 def _load(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="load_workspace")
     repaired = _repair_workspace_sim_defaults(workspace)
-    recovered = engine.clear_stale_ongoing_states()
+    recovered = (
+        engine.clear_stale_ongoing_states()
+        if bool(getattr(args, "recover_stale_ongoing", True))
+        else False
+    )
     return CliResult(
         cmd="load_workspace",
         response="success",
@@ -1890,7 +1913,13 @@ def _build_step_info(
     if info_id in {"analysis", "metrics"}:
         analysis = _step_section(step, "analysis")
         info: dict[str, Any] = {}
-        for key in ("metrics", "statis_csv"):
+        for key in (
+            "metrics",
+            "qor_metrics",
+            "qor_summary",
+            "qor_hotspots",
+            "statis_csv",
+        ):
             path = analysis.get(key, "")
             if path and os.path.exists(path):
                 info[key] = path
@@ -2011,6 +2040,7 @@ def _build_frontend_step_detail(
         "runtime": runtime,
         "peak_memory_mb": peak_memory,
         "summary": _build_frontend_step_summary(step, state, runtime),
+        "qor": _build_frontend_step_qor(step),
         "logs": _build_frontend_step_logs(step_log_path, report_log_path),
         "reports": _build_frontend_step_reports(step),
         "artifacts": _build_frontend_step_artifacts(workspace, step),
@@ -2080,6 +2110,20 @@ def _build_frontend_step_detail(
             })
 
     return detail
+
+
+def _build_frontend_step_qor(step: Any) -> dict[str, Any]:
+    analysis = _step_section(step, "analysis")
+
+    def read_record(key: str) -> dict[str, Any] | None:
+        payload = _json_read(analysis.get(key, ""))
+        return payload if isinstance(payload, dict) else None
+
+    return {
+        "metrics": read_record("qor_metrics"),
+        "summary": read_record("qor_summary"),
+        "hotspots": read_record("qor_hotspots"),
+    }
 
 
 def _write_frontend_step_detail(
@@ -2957,6 +3001,7 @@ def _dispatch_payload(
         "id": "",
         "json": False,
         "rerun": False,
+        "recover_stale_ongoing": True,
         "sim_compile_extra_cflag": [],
         "sim_compile_mabi": "",
         "sim_compile_march": "",

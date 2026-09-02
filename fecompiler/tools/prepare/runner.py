@@ -34,7 +34,7 @@ class PrepareStep(BaseStep):
         self.write_standard_outputs(step)
 
         prepared, source_info = self._collect_inputs(step, workspace)
-        cpu_top_contract = self._validate_frontend_cpu_top(step, workspace, prepared["rtl_files"])
+        cpu_top_contract = self._validate_frontend_cpu_top(step, workspace, prepared)
         self._inject_custom_cpu_top_define(workspace, prepared)
         prepared["cpu_top_contract"] = cpu_top_contract
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
@@ -179,17 +179,19 @@ class PrepareStep(BaseStep):
         self,
         step: WorkspaceStep,
         workspace: dict[str, Any],
-        rtl_files: list[str],
+        prepared: dict[str, Any],
     ) -> dict[str, Any]:
         if not self._requires_frontend_cpu_top(workspace):
             return {"id": "cpu_top", "status": "not_required"}
 
+        rtl_files = prepared["rtl_files"]
         required_top = str(workspace.get("required_cpu_top_module", "")).strip() or ECOS_CPU_TOP
         if not is_simple_sv_identifier(required_top):
             self._fail_cpu_top_contract(
                 step,
                 f"frontend prepare requires a valid SystemVerilog CPU top identifier: {required_top}",
                 {"module": required_top},
+                prepared,
             )
 
         matches = module_definitions(rtl_files, required_top)
@@ -198,6 +200,7 @@ class PrepareStep(BaseStep):
                 step,
                 f"frontend prepare requires exactly one {required_top} module, found {len(matches)}",
                 {"module": required_top, "count": len(matches), "files": [str(path) for path in matches]},
+                prepared,
             )
 
         expected = self._expected_cpu_top_contract(workspace)
@@ -234,6 +237,7 @@ class PrepareStep(BaseStep):
             step,
             f"{required_top} port contract mismatch ({'; '.join(details)})",
             result,
+            prepared,
         )
         return result
 
@@ -284,7 +288,25 @@ class PrepareStep(BaseStep):
         step: WorkspaceStep,
         message: str,
         info: dict[str, Any],
+        prepared: dict[str, Any],
     ) -> None:
+        contract = {
+            **info,
+            "id": "cpu_top",
+            "status": "failed",
+            "detail": message,
+        }
+        report = {
+            "prepare": "fail",
+            "rtl_files": len(prepared.get("rtl_files", [])),
+            "incdirs": len(prepared.get("incdirs", [])),
+            "defines": len(prepared.get("defines", [])),
+            "contracts": [contract],
+            "ownership": prepared.get("ownership", {}),
+            "comparison_inputs": prepared,
+        }
+        json_write(step.output["json"], report)
+        json_write(step.report["step"], report)
         self._update_substep(
             step,
             PrepareSubFlowEnum.collect_inputs.value,

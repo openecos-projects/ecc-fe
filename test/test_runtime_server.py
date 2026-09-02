@@ -12,6 +12,7 @@ from fecompiler.runtime.workspace_api import WorkspaceRuntimeApi
 class FakeApplication:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.runtime_operations: list[dict[str, Any] | None] = []
 
     def execute_payload(
         self,
@@ -20,10 +21,12 @@ class FakeApplication:
         *,
         base_dir: object = None,
         event_sink=None,
+        runtime_operation: dict[str, Any] | None = None,
     ) -> CliResult:
         del base_dir
         data = dict(payload or {})
         self.calls.append((command, data))
+        self.runtime_operations.append(runtime_operation)
         if command == "catalog-list":
             return CliResult(command, "success", {"cores": []}, ["catalog"])
         if command == "validate-config":
@@ -103,6 +106,7 @@ def test_rpc_hello_reports_frontend_capabilities() -> None:
     assert response["result"]["version"] == 1
     assert "frontend.catalog" in response["result"]["capabilities"]
     assert "flow.run_step" in response["result"]["capabilities"]
+    assert "workspace.recover_interrupted" in response["result"]["capabilities"]
 
 
 def test_rpc_hello_rejects_incompatible_version() -> None:
@@ -139,6 +143,129 @@ def test_workspace_session_lifecycle_and_flow_events(tmp_path) -> None:
     assert closed["result"] == {"ok": True}
     missing = _dispatch(server, "workspace.home", {"workspaceId": workspace_id})
     assert missing["error"]["code"] == -32010
+
+
+def test_flow_operation_id_is_forwarded_to_the_application_marker(tmp_path) -> None:
+    application = FakeApplication()
+    server = RuntimeServer(WorkspaceRuntimeApi(application=application))
+    opened = _dispatch(server, "workspace.open", {"directory": str(tmp_path)})
+
+    result = _dispatch(
+        server,
+        "flow.run_step",
+        {
+            "operationId": "operation-frontend",
+            "rerun": True,
+            "step": "sim",
+            "workspaceId": opened["result"]["workspaceId"],
+        },
+    )
+
+    assert result["result"]["state"] == "Success"
+    assert application.runtime_operations[-1] == {
+        "schema": 1,
+        "operation_id": "operation-frontend",
+        "runtime_instance_id": server.api.runtime_instance_id,
+    }
+
+
+def test_recover_interrupted_is_scoped_idempotent_and_legacy_compatible(tmp_path) -> None:
+    directory = tmp_path / "workspace"
+    create_workspace(
+        CreateWorkspaceData(
+            directory=str(directory),
+            parameters={"Design": "demo", "Top module": "chip_top"},
+        ),
+    )
+    server = RuntimeServer()
+    opened = _dispatch(server, "workspace.open", {"directory": str(directory)})
+    workspace_id = opened["result"]["workspaceId"]
+    flow_path = directory / "home" / "flow.json"
+    flow = json.loads(flow_path.read_text(encoding="utf-8"))
+    first, second = flow["steps"][:2]
+    first["state"] = "Ongoing"
+    first.setdefault("info", {})["runtime_operation"] = {
+        "schema": 1,
+        "operation_id": "operation-old",
+        "runtime_instance_id": "runtime-old",
+        "started_at": 1.0,
+    }
+    second["state"] = "Ongoing"
+    second["info"] = None
+    flow_path.write_text(json.dumps(flow), encoding="utf-8")
+    stale_paths = []
+    for step in (first, second):
+        step_root = directory / f"{step['name']}_{step['tool']}"
+        for relative in (
+            "analysis/qor_metrics.json",
+            "analysis/qor_summary.json",
+            "analysis/qor_hotspots.json",
+            "report/frontend_detail.json",
+        ):
+            path = step_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"generation":"stale"}', encoding="utf-8")
+            stale_paths.append(path)
+
+    mismatch = _dispatch(
+        server,
+        "workspace.recover_interrupted",
+        {"operationId": "operation-other", "workspaceId": workspace_id},
+    )
+    assert mismatch["result"] == {"recovered": []}
+
+    server.api.active_operation_ids.add("operation-old")
+    active = _dispatch(
+        server,
+        "workspace.recover_interrupted",
+        {"operationId": "operation-old", "workspaceId": workspace_id},
+    )
+    assert active["result"] == {"recovered": []}
+    server.api.active_operation_ids.remove("operation-old")
+
+    targeted = _dispatch(
+        server,
+        "workspace.recover_interrupted",
+        {"operationId": "operation-old", "workspaceId": workspace_id},
+    )
+    assert targeted["result"]["recovered"] == [
+        {
+            "step": first["name"],
+            "tool": first["tool"],
+            "operationId": "operation-old",
+            "logFile": str(
+                directory
+                / f"{first['name']}_{first['tool']}"
+                / "log"
+                / "log.txt"
+            ),
+        }
+    ]
+
+    previous = _dispatch(
+        server,
+        "workspace.recover_interrupted",
+        {"workspaceId": workspace_id},
+    )
+    assert previous["result"]["recovered"][0] == {
+        "step": second["name"],
+        "tool": second["tool"],
+        "operationId": f"legacy-interrupted-{second['name']}-{second['tool']}",
+        "logFile": str(
+            directory / f"{second['name']}_{second['tool']}" / "log" / "log.txt"
+        ),
+    }
+    assert _dispatch(
+        server,
+        "workspace.recover_interrupted",
+        {"workspaceId": workspace_id},
+    )["result"] == {"recovered": []}
+
+    persisted = json.loads(flow_path.read_text(encoding="utf-8"))
+    assert persisted["steps"][0]["state"] == "Incomplete"
+    assert "runtime_operation" not in persisted["steps"][0]["info"]
+    assert persisted["steps"][1]["state"] == "Incomplete"
+    assert all(not path.exists() for path in stale_paths)
 
 
 def test_real_run_step_emits_each_saved_subflow_stage(tmp_path) -> None:

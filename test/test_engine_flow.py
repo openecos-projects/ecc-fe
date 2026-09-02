@@ -471,6 +471,7 @@ def test_successful_step_records_reproducible_provenance(tmp_path):
     assert len(provenance["config_fingerprint"]) == 64
     assert len(provenance["tool_fingerprint"]) == 64
     assert len(provenance["output_fingerprint"]) == 64
+    assert "fecompiler/analysis/qor.py" in provenance["tools"]["runner_sources"]
     assert provenance["started_at"]
     assert provenance["finished_at"]
     assert engine.get_step("review", "fe")["state"] == StateEnum.Unstart.value
@@ -499,8 +500,18 @@ def test_changed_rtl_marks_step_and_downstream_results_stale(tmp_path):
 def test_rerunning_step_invalidates_only_downstream_steps(tmp_path):
     engine, _ = _build_engine(tmp_path)
     assert engine.run_step(FIRST_STEP) == StateEnum.Success
+    stale_paths: list[Path] = []
     for name, tool in DEFAULT_FLOW_STEPS[1:]:
         engine.set_state(name=name, tool=tool, state=StateEnum.Success)
+        workspace_step = engine.get_workspace_step(name)
+        assert workspace_step is not None
+        for key in ("qor_metrics", "qor_summary", "qor_hotspots"):
+            path = Path(workspace_step.analysis[key])
+            path.write_text('{"generation":"stale"}', encoding="utf-8")
+            stale_paths.append(path)
+        detail = Path(workspace_step.report["dir"]) / "frontend_detail.json"
+        detail.write_text('{"qor":{"generation":"stale"}}', encoding="utf-8")
+        stale_paths.append(detail)
 
     assert engine.run_step(FIRST_STEP, rerun=True) == StateEnum.Success
 
@@ -509,10 +520,38 @@ def test_rerunning_step_invalidates_only_downstream_steps(tmp_path):
         step = engine.get_step(name, tool)
         assert step["state"] == StateEnum.Unstart.value
         assert step["info"]["stale_from"] == FIRST_STEP
+    assert all(not path.exists() for path in stale_paths)
+
+
+def test_clear_states_removes_all_qor_and_frontend_details(tmp_path):
+    engine, _ = _build_engine(tmp_path)
+    stale_paths: list[Path] = []
+    for workspace_step in engine.workspace_steps:
+        for key in ("qor_metrics", "qor_summary", "qor_hotspots"):
+            path = Path(workspace_step.analysis[key])
+            path.write_text('{"generation":"stale"}', encoding="utf-8")
+            stale_paths.append(path)
+        detail = Path(workspace_step.report["dir"]) / "frontend_detail.json"
+        detail.write_text('{"qor":{"generation":"stale"}}', encoding="utf-8")
+        stale_paths.append(detail)
+
+    engine.clear_states()
+
+    assert all(not path.exists() for path in stale_paths)
 
 
 def test_run_step_interruption_clears_ongoing_state(tmp_path, monkeypatch):
     engine, _ = _build_engine(tmp_path)
+    workspace_step = engine.get_workspace_step(FIRST_STEP)
+    assert workspace_step is not None
+    stale_paths = [
+        Path(workspace_step.analysis[key])
+        for key in ("qor_metrics", "qor_summary", "qor_hotspots")
+    ]
+    stale_paths.append(Path(workspace_step.report["dir"]) / "frontend_detail.json")
+    for path in stale_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"generation":"stale"}', encoding="utf-8")
 
     def raise_interrupt(_step):
         raise KeyboardInterrupt()
@@ -525,14 +564,199 @@ def test_run_step_interruption_clears_ongoing_state(tmp_path, monkeypatch):
         pass
 
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+    assert all(not path.exists() for path in stale_paths)
+
+
+def test_run_step_interruption_after_qor_publication_clears_artifacts(
+    tmp_path,
+    monkeypatch,
+):
+    engine, _ = _build_engine(tmp_path)
+    workspace_step = engine.get_workspace_step(FIRST_STEP)
+    assert workspace_step is not None
+    qor_paths = [
+        Path(workspace_step.analysis[key])
+        for key in ("qor_metrics", "qor_summary", "qor_hotspots")
+    ]
+    real_writer = engine._write_step_qor
+
+    monkeypatch.setattr(engine, "_run_single_step", lambda _step: None)
+    monkeypatch.setattr(engine, "_check_step_result", lambda _step: True)
+
+    def publish_then_interrupt(step, success):
+        real_writer(step, success)
+        assert all(path.is_file() for path in qor_paths)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(engine, "_write_step_qor", publish_then_interrupt)
+
+    try:
+        engine.run_step(FIRST_STEP)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("expected QoR publication to be interrupted")
+
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+    assert all(not path.exists() for path in qor_paths)
+
+
+def test_unexpected_failure_does_not_republish_an_unchanged_qor_report(
+    tmp_path,
+    monkeypatch,
+):
+    engine, _ = _build_engine(tmp_path)
+    workspace_step = engine.get_workspace_step("elab")
+    assert workspace_step is not None
+    report_path = Path(workspace_step.report["dir"]) / "elab_summary.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "errors": 1,
+                    "warnings": 0,
+                    "modules": 1,
+                    "unresolved_modules": 0,
+                    "top_found": True,
+                },
+                "diagnostics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_before_report(_step):
+        raise RuntimeError("failed before writing a new report")
+
+    monkeypatch.setattr(engine, "_run_single_step", fail_before_report)
+
+    assert engine.run_step("elab", rerun=True) == StateEnum.Incomplete
+    assert all(
+        not Path(workspace_step.analysis[key]).exists()
+        for key in ("qor_metrics", "qor_summary", "qor_hotspots")
+    )
+
+
+def test_unexpected_failure_publishes_qor_from_a_fresh_report(
+    tmp_path,
+    monkeypatch,
+):
+    engine, _ = _build_engine(tmp_path)
+    workspace_step = engine.get_workspace_step("elab")
+    assert workspace_step is not None
+    report_path = Path(workspace_step.report["dir"]) / "elab_summary.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "errors": 1,
+                    "warnings": 0,
+                    "modules": 1,
+                    "unresolved_modules": 0,
+                    "top_found": True,
+                },
+                "diagnostics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def publish_report_then_fail(_step):
+        report_path.write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "errors": 2,
+                        "warnings": 0,
+                        "modules": 1,
+                        "unresolved_modules": 0,
+                        "top_found": True,
+                    },
+                    "diagnostics": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        raise RuntimeError("failed after writing a new report")
+
+    monkeypatch.setattr(engine, "_run_single_step", publish_report_then_fail)
+
+    assert engine.run_step("elab", rerun=True) == StateEnum.Incomplete
+    metrics = json.loads(
+        Path(workspace_step.analysis["qor_metrics"]).read_text(encoding="utf-8")
+    )
+    summary = json.loads(
+        Path(workspace_step.analysis["qor_summary"]).read_text(encoding="utf-8")
+    )
+    error_metric = next(
+        metric for metric in metrics["metrics"] if metric["id"] == "elaboration_error_count"
+    )
+    assert error_metric["value"] == 2
+    assert summary["quality_status"] == "blocked"
+
+
+def test_qor_publication_failure_cannot_finish_step_successfully(tmp_path, monkeypatch):
+    engine, _ = _build_engine(tmp_path)
+
+    monkeypatch.setattr(engine, "_run_single_step", lambda _step: None)
+    monkeypatch.setattr(engine, "_check_step_result", lambda _step: True)
+
+    def fail_qor(_step, _success):
+        raise OSError("simulated QoR publication failure")
+
+    monkeypatch.setattr(engine, "_write_step_qor", fail_qor)
+
+    assert engine.run_step(FIRST_STEP) == StateEnum.Incomplete
+    assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == StateEnum.Incomplete.value
+
+
+def test_run_step_persists_and_clears_runtime_operation_marker(tmp_path, monkeypatch):
+    engine, ws = _build_engine(tmp_path)
+    observed_marker = None
+
+    def inspect_marker(_step):
+        nonlocal observed_marker
+        persisted = json.loads(Path(ws["flow_path"]).read_text(encoding="utf-8"))
+        observed_marker = persisted["steps"][0]["info"]["runtime_operation"]
+
+    monkeypatch.setattr(engine, "_run_single_step", inspect_marker)
+    observer = SimpleNamespace(
+        runtime_operation={
+            "schema": 1,
+            "operation_id": "operation-frontend",
+            "runtime_instance_id": "runtime-frontend",
+        },
+    )
+
+    engine.run_step(FIRST_STEP, observer=observer)
+
+    assert observed_marker is not None
+    assert observed_marker["schema"] == 1
+    assert observed_marker["operation_id"] == "operation-frontend"
+    assert observed_marker["runtime_instance_id"] == "runtime-frontend"
+    assert isinstance(observed_marker["started_at"], float)
+    assert "runtime_operation" not in engine.get_step(FIRST_STEP, FIRST_TOOL)["info"]
 
 
 def test_clear_stale_ongoing_states_marks_incomplete(tmp_path):
     engine, _ = _build_engine(tmp_path)
+    workspace_step = engine.get_workspace_step(FIRST_STEP)
+    assert workspace_step is not None
+    stale_qor = Path(workspace_step.analysis["qor_summary"])
+    stale_detail = Path(workspace_step.report["dir"]) / "frontend_detail.json"
+    stale_qor.write_text('{"generation":"stale"}', encoding="utf-8")
+    stale_detail.write_text('{"qor":{"generation":"stale"}}', encoding="utf-8")
     engine.set_state(name=FIRST_STEP, tool=FIRST_TOOL, state=StateEnum.Ongoing)
+    engine.get_step(FIRST_STEP, FIRST_TOOL).setdefault("info", {})["runtime_operation"] = {
+        "schema": 1,
+    }
+    engine.save()
 
     assert engine.clear_stale_ongoing_states() is True
     assert engine.get_step(FIRST_STEP, FIRST_TOOL)["state"] == "Incomplete"
+    assert "runtime_operation" not in engine.get_step(FIRST_STEP, FIRST_TOOL)["info"]
+    assert not stale_qor.exists()
+    assert not stale_detail.exists()
     assert engine.clear_stale_ongoing_states() is False
 
 
@@ -1733,7 +1957,8 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     soc_root.mkdir()
 
     (cpu_root / "cpu_top_a.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
-    (soc_root / "cpu_top_b.v").write_text("module cpu_top(); endmodule\n", encoding="utf-8")
+    duplicate_cpu_top = soc_root / "cpu_top_b.v"
+    duplicate_cpu_top.write_text("module cpu_top(); endmodule\n", encoding="utf-8")
     (cpu_root / "filelist.cpu.f").write_text(
         f"cpu_top_a.v\n{soc_root / 'cpu_top_b.v'}\n",
         encoding="utf-8",
@@ -1759,6 +1984,38 @@ def test_prepare_fails_when_frontend_workspace_has_duplicate_cpu_top(tmp_path):
     assert state == StateEnum.Incomplete
     prepare_subflow = (Path(ws["directory"]) / "prepare_fe" / "subflow.json").read_text(encoding="utf-8")
     assert "requires exactly one cpu_top module" in prepare_subflow
+    prepare_report = json.loads(
+        (Path(ws["directory"]) / "prepare_fe" / "report" / "prepare.rpt").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert prepare_report["contracts"][0]["status"] == "failed"
+    qor_summary = json.loads(
+        (
+            Path(ws["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert qor_summary["quality_status"] == "blocked"
+    assert qor_summary["gates"][0]["state"] == "failed"
+    first_fingerprint = qor_summary["context"]["comparison"]["fingerprint"]
+
+    duplicate_cpu_top.write_text(
+        "module cpu_top(input logic changed); endmodule\n",
+        encoding="utf-8",
+    )
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Incomplete
+    rerun_summary = json.loads(
+        (
+            Path(ws["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert rerun_summary["context"]["comparison"]["fingerprint"] != first_fingerprint
 
 
 def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
@@ -1805,6 +2062,25 @@ def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
     subflow = json.loads((Path(workspace["directory"]) / "prepare_fe" / "subflow.json").read_text())
     collect = next(step for step in subflow["steps"] if step["name"] == "collect inputs")
     assert "address: expected output[32], found output[16]" in collect["info"]["error"]
+    prepare_report = json.loads(
+        (
+            Path(workspace["directory"])
+            / "prepare_fe"
+            / "report"
+            / "prepare.rpt"
+        ).read_text(encoding="utf-8")
+    )
+    assert prepare_report["contracts"][0]["status"] == "failed"
+    qor_summary = json.loads(
+        (
+            Path(workspace["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert qor_summary["quality_status"] == "blocked"
+    assert qor_summary["gates"][0]["state"] == "failed"
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):

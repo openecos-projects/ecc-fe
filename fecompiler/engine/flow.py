@@ -11,10 +11,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.analysis import (
+    clear_step_qor,
+    step_qor_source_revision,
+    write_step_qor,
+)
 from fecompiler.data import workspace as workspace_data
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import WorkspaceStep
-from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.engine.provenance import build_step_provenance, output_fingerprint
 from fecompiler.tools.fe import builder
 
@@ -78,6 +83,7 @@ class EngineFlow:
 
     def clear_states(self) -> None:
         for step in self.flow.get("steps", []):
+            self._clear_step_qor(step)
             step["state"] = StateEnum.Unstart.value
             step["runtime"] = ""
             step["peak memory (mb)"] = 0
@@ -136,6 +142,12 @@ class EngineFlow:
             step["state"] = StateEnum.Incomplete.value
             step["runtime"] = step.get("runtime") or ""
             step["peak memory (mb)"] = step.get("peak memory (mb)", 0)
+            info = step.get("info")
+            if isinstance(info, dict):
+                info.pop("runtime_operation", None)
+            clear_step_qor(
+                Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
+            )
             changed = True
         if changed:
             self.save()
@@ -155,6 +167,7 @@ class EngineFlow:
         state: StateEnum,
         runtime: str | None = None,
         peak_memory: float | None = None,
+        clear_runtime_operation: bool = False,
     ) -> bool:
         step = self.get_step(name, tool)
         if step is None:
@@ -164,8 +177,31 @@ class EngineFlow:
             step["runtime"] = runtime
         if peak_memory is not None:
             step["peak memory (mb)"] = peak_memory
+        if clear_runtime_operation:
+            info = step.get("info")
+            if isinstance(info, dict):
+                info.pop("runtime_operation", None)
         self.save()
         return True
+
+    def _start_step(self, step: WorkspaceStep, observer: Any | None, started_at: float) -> None:
+        flow_step = self.get_step(step.name, step.tool)
+        if flow_step is None:
+            raise RuntimeError(f"cannot persist runtime operation marker for {step.name}({step.tool})")
+        marker = getattr(observer, "runtime_operation", None)
+        flow_step["state"] = StateEnum.Ongoing.value
+        info = flow_step.get("info")
+        if not isinstance(info, dict):
+            info = {}
+            flow_step["info"] = info
+        if marker:
+            info["runtime_operation"] = {
+                **marker,
+                "started_at": started_at,
+            }
+        else:
+            info.pop("runtime_operation", None)
+        self.save()
 
     def is_flow_success(self) -> bool:
         return all(x.get("state") == StateEnum.Success.value for x in self.flow.get("steps", []))
@@ -258,7 +294,9 @@ class EngineFlow:
         provenance["started_at"] = _utc_now()
         self._clear_step_stale(flow_step)
         start = time.time()
-        self.set_state(name=ws_step.name, tool=ws_step.tool, state=StateEnum.Ongoing)
+        initial_qor_source_revision = step_qor_source_revision(ws_step)
+        clear_step_qor(ws_step.directory)
+        self._start_step(ws_step, observer, start)
         self._flow_logger.info("[START]   %-20s  tool=%s", step_name, ws_step.tool)
         restore_signal_handlers = _install_interruption_handlers()
         from fecompiler.runtime.subflow_events import subflow_observer
@@ -268,6 +306,7 @@ class EngineFlow:
                 self._run_single_step(ws_step)
             success = self._check_step_result(ws_step)
             runtime = _format_runtime(time.time() - start)
+            self._write_step_qor(ws_step, success)
             if success:
                 provenance["finished_at"] = _utc_now()
                 provenance["output_fingerprint"] = output_fingerprint(_step_result_paths(ws_step))
@@ -283,6 +322,14 @@ class EngineFlow:
         except Exception:
             runtime = _format_runtime(time.time() - start)
             logger.exception("step %r failed unexpectedly", step_name)
+            if step_qor_source_revision(ws_step) == initial_qor_source_revision:
+                clear_step_qor(ws_step.directory)
+            else:
+                try:
+                    self._write_step_qor(ws_step, False)
+                except Exception:
+                    logger.exception("failed to write failure QoR artifacts for step %r", step_name)
+                    clear_step_qor(ws_step.directory)
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
             flow_step.pop("provenance", None)
             self.save()
@@ -290,6 +337,7 @@ class EngineFlow:
             return StateEnum.Incomplete
         except BaseException as exc:
             runtime = _format_runtime(time.time() - start)
+            clear_step_qor(ws_step.directory)
             self._finish_step(ws_step, StateEnum.Incomplete, runtime)
             flow_step.pop("provenance", None)
             self.save()
@@ -308,6 +356,7 @@ class EngineFlow:
             state=state,
             runtime=runtime,
             peak_memory=0.0,
+            clear_runtime_operation=True,
         )
 
     def _run_single_step(self, step: WorkspaceStep) -> None:
@@ -325,6 +374,9 @@ class EngineFlow:
         if handler is None:
             return False
         return handler.check_result(step)
+
+    def _write_step_qor(self, step: WorkspaceStep, success: bool) -> None:
+        write_step_qor(step, self.workspace, success)
 
     def _upstream_provenance(self, step_name: str) -> dict[str, Any] | None:
         upstream: dict[str, Any] | None = None
@@ -349,11 +401,13 @@ class EngineFlow:
         if changed:
             self.save()
 
-    @staticmethod
-    def _mark_step_stale(step: dict[str, Any], reason: str, stale_from: str) -> bool:
+    def _mark_step_stale(
+        self, step: dict[str, Any], reason: str, stale_from: str
+    ) -> bool:
         if step.get("state") == StateEnum.Ongoing.value:
             return False
         info = step.get("info") if isinstance(step.get("info"), dict) else {}
+        self._clear_step_qor(step)
         if (
             step.get("state") == StateEnum.Unstart.value
             and "provenance" not in step
@@ -376,6 +430,11 @@ class EngineFlow:
         step["info"] = info
         step.pop("provenance", None)
         return True
+
+    def _clear_step_qor(self, step: dict[str, Any]) -> None:
+        clear_step_qor(
+            Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
+        )
 
     @staticmethod
     def _clear_step_stale(step: dict[str, Any]) -> None:
@@ -401,6 +460,9 @@ def _step_result_paths(step: WorkspaceStep) -> list[str]:
         step.output.get("json", ""),
         step.report.get("step", ""),
         step.analysis.get("metrics", ""),
+        step.analysis.get("qor_metrics", ""),
+        step.analysis.get("qor_summary", ""),
+        step.analysis.get("qor_hotspots", ""),
         step.subflow.get("path", ""),
     ]
 

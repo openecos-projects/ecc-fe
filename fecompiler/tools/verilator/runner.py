@@ -105,7 +105,7 @@ def _verilator_cmd() -> str:
     return shutil.which("verilator") or "verilator"
 
 
-def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
+def sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
     """Return C++ simulation sources (testbench first, then extras)."""
     seen: set[str] = set()
     ordered: list[str] = []
@@ -121,6 +121,32 @@ def _sim_cpp_sources(workspace: dict[str, Any]) -> list[str]:
             seen.add(s)
             ordered.append(s)
     return _adapt_sim_cpp_sources_for_difftest(workspace, ordered)
+
+
+def effective_sim_cflags(workspace: dict[str, Any]) -> list[str]:
+    """Return the C++ flags passed to Verilator after runtime normalization."""
+    user_flags = [
+        str(flag).strip()
+        for flag in workspace.get("sim_cflags", []) or []
+        if str(flag).strip()
+    ]
+    user_flags = [_normalize_sim_cflag(flag) for flag in user_flags]
+    user_flags = _ensure_soc_include_flag(workspace, user_flags)
+    has_std = any(flag.startswith("-std=") for flag in user_flags)
+    return ([] if has_std else ["-std=c++20"]) + user_flags
+
+
+def effective_sim_ldflags(workspace: dict[str, Any]) -> list[str]:
+    """Return the linker flags passed to Verilator."""
+    return [
+        str(flag).strip()
+        for flag in workspace.get("sim_ldflags", []) or []
+        if str(flag).strip()
+    ]
+
+
+# Kept for callers that imported the former private helper.
+_sim_cpp_sources = sim_cpp_sources
 
 
 def _adapt_sim_cpp_sources_for_difftest(workspace: dict[str, Any], sources: list[str]) -> list[str]:
@@ -142,11 +168,7 @@ def _replace_sim_cpp_source(sources: list[str], old_name: str, new_name: str) ->
 
 
 def _sim_cflags_args(workspace: dict[str, Any]) -> list[str]:
-    user_flags = [str(f).strip() for f in workspace.get("sim_cflags", []) or [] if str(f).strip()]
-    user_flags = [_normalize_sim_cflag(flag) for flag in user_flags]
-    user_flags = _ensure_soc_include_flag(workspace, user_flags)
-    has_std = any(flag.startswith("-std=") for flag in user_flags)
-    flags = ([] if has_std else ["-std=c++20"]) + user_flags
+    flags = effective_sim_cflags(workspace)
     if not flags:
         return []
     return ["-CFLAGS", " ".join(flags)]
@@ -164,7 +186,7 @@ def _ensure_soc_include_flag(workspace: dict[str, Any], flags: list[str]) -> lis
 
 
 def _sim_ldflags_args(workspace: dict[str, Any]) -> list[str]:
-    flags = [str(f).strip() for f in workspace.get("sim_ldflags", []) or [] if str(f).strip()]
+    flags = effective_sim_ldflags(workspace)
     if not flags:
         return []
     return ["-LDFLAGS", " ".join(flags)]
@@ -1695,7 +1717,7 @@ class VerilatorSimStep(BaseStep):
             )
             return True
 
-        cpp_sources = _sim_cpp_sources(workspace)
+        cpp_sources = sim_cpp_sources(workspace)
         if not cpp_sources:
             message = (
                 "simulation testbench is not configured; provide workspace.testbench "

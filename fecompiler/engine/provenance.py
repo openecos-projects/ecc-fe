@@ -52,6 +52,7 @@ _STEP_SOURCE_FILES: dict[str, tuple[str, ...]] = {
     "lint": ("tools/verilator/runner.py",),
     "sim": ("tools/verilator/runner.py",),
 }
+_COMMON_STEP_SOURCE_FILES = ("analysis/qor.py",)
 _STEP_EXECUTABLES: dict[str, tuple[str, ...]] = {
     "review": ("yosys",),
     "elab": ("slang",),
@@ -159,7 +160,13 @@ def _resource_versions(parameters: dict[str, Any]) -> Any:
 
 def _tool_identity(step_name: str, tool: str) -> dict[str, Any]:
     root = frontend_repo_root()
-    source_files = [root / "fecompiler" / relative for relative in _STEP_SOURCE_FILES.get(step_name, ())]
+    source_files = [
+        root / "fecompiler" / relative
+        for relative in (
+            *_STEP_SOURCE_FILES.get(step_name, ()),
+            *_COMMON_STEP_SOURCE_FILES,
+        )
+    ]
     executables = {
         name: _path_identity(shutil.which(name) or name)
         for name in _STEP_EXECUTABLES.get(step_name, ())
