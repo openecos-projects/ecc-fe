@@ -727,12 +727,105 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in issues
     )
+    result.score = _rtl_review_score(summary, structural, precheck, precheck_state)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(precheck.get("top_module") or ""),
         "review_waivers": workspace.get("review_waivers", []),
     }
     return result
+
+
+def _rtl_review_score(
+    summary: dict[str, Any],
+    structural: dict[str, Any],
+    precheck: dict[str, Any],
+    precheck_state: str,
+) -> dict[str, Any] | None:
+    thresholds = _record(precheck.get("risk_thresholds"))
+    structural_fields = ("max_fanout", "max_fanin", "max_comb_depth")
+    if (
+        not _valid_count_fields(
+            summary, ("actionable_errors", "actionable_warnings")
+        )
+        or not _valid_count_fields(structural, structural_fields)
+        or not _valid_count_fields(thresholds, structural_fields)
+        or any(int(thresholds[field]) <= 0 for field in structural_fields)
+    ):
+        return None
+
+    errors = int(summary["actionable_errors"])
+    warnings = int(summary["actionable_warnings"])
+    precheck_earned = 30 if precheck_state == "pass" else 0
+    error_earned = max(0, 30 - errors * 10)
+    warning_earned = max(0, 15 - warnings * 3)
+
+    headroom_parts = (
+        ("max_fanout", 8.3),
+        ("max_fanin", 8.3),
+        ("max_comb_depth", 8.4),
+    )
+    headroom_available = precheck_state == "pass"
+    headroom_earned = (
+        sum(
+            possible
+            * min(
+                1.0,
+                int(thresholds[field]) / max(int(structural[field]), 1),
+            )
+            for field, possible in headroom_parts
+        )
+        if headroom_available
+        else 0
+    )
+    components = [
+        _score_component(
+            "structural_precheck",
+            "Structural precheck",
+            precheck_earned,
+            30,
+            (
+                "Yosys completed the CPU-only structural precheck."
+                if precheck_state == "pass"
+                else f"Yosys precheck state is {precheck_state}."
+            ),
+        ),
+        _score_component(
+            "actionable_errors",
+            "Actionable errors",
+            error_earned,
+            30,
+            f"{errors} actionable RTL error{'s' if errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "warning_hygiene",
+            "Warning hygiene",
+            warning_earned,
+            15,
+            f"{warnings} actionable RTL warning{'s' if warnings != 1 else ''} reported.",
+        ),
+        _score_component(
+            "structural_headroom",
+            "Structural headroom",
+            headroom_earned,
+            25,
+            (
+                f"Fanout {structural['max_fanout']}/{thresholds['max_fanout']}, "
+                f"fanin {structural['max_fanin']}/{thresholds['max_fanin']}, "
+                f"depth {structural['max_comb_depth']}/{thresholds['max_comb_depth']} "
+                "(measured/target)."
+                if headroom_available
+                else "Structural headroom is unavailable because the precheck did not pass."
+            ),
+        ),
+    ]
+    return {
+        "label": "RTL review quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
