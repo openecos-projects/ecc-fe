@@ -39,6 +39,50 @@ def _write(path: str | Path, payload: dict) -> None:
     target.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _prepare_readiness(
+    *,
+    rtl_total: int = 8,
+    rtl_resolved: int = 8,
+    incdir_total: int = 1,
+    incdir_resolved: int = 1,
+    definitions: int = 1,
+    source_in_inputs: bool = True,
+    expected_ports: int = 2,
+    matched_ports: int = 2,
+    extra_ports: int = 0,
+    outputs_persisted: bool = True,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "sources": {
+            "rtl_total": rtl_total,
+            "rtl_resolved": rtl_resolved,
+            "include_dir_total": incdir_total,
+            "include_dir_resolved": incdir_resolved,
+        },
+        "top": {
+            "required": True,
+            "module": "cpu_top",
+            "definitions": definitions,
+            "source_in_inputs": source_in_inputs,
+        },
+        "interface": {
+            "applicable": True,
+            "verified": expected_ports > 0,
+            "expected_ports": expected_ports,
+            "matched_ports": matched_ports,
+            "missing_ports": max(0, expected_ports - matched_ports),
+            "extra_ports": extra_ports,
+            "mismatched_ports": 0,
+        },
+        "reproducibility": {
+            "input_fingerprint": True,
+            "merged_filelist": outputs_persisted,
+            "prepared_manifest": outputs_persisted,
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("name", "tool", "report_name", "payload", "expected_metric", "expected_gate"),
     [
@@ -188,6 +232,99 @@ def test_frontend_detail_embeds_structured_qor_artifacts(tmp_path: Path) -> None
     assert detail["qor"]["summary"]["schema_version"] == 4
     assert detail["qor"]["hotspots"]["schema_version"] == 3
     assert detail["qor"]["summary"]["quality_status"] == "pass"
+
+
+def test_prepare_qor_explains_full_readiness_score(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "prepare", "fe")
+    _write(
+        step.report["step"],
+        {
+            "rtl_files": 8,
+            "incdirs": 1,
+            "defines": 2,
+            "contracts": [{"id": "cpu_top", "status": "pass"}],
+            "readiness": _prepare_readiness(),
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    score = summary["score"]
+    assert score == {
+        "label": "Preparation readiness",
+        "value": 100,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "source_resolution",
+                "label": "Source resolution",
+                "earned": 30,
+                "possible": 30,
+                "summary": "8 of 8 RTL sources and 1 of 1 include directories resolved.",
+            },
+            {
+                "id": "top_resolution",
+                "label": "Top resolution",
+                "earned": 20,
+                "possible": 20,
+                "summary": "1 matching definition found; source is in prepared inputs.",
+            },
+            {
+                "id": "interface_contract",
+                "label": "Interface contract",
+                "earned": 40,
+                "possible": 40,
+                "summary": "2 of 2 required ports matched; 0 unexpected.",
+            },
+            {
+                "id": "reproducibility",
+                "label": "Reproducibility",
+                "earned": 10,
+                "possible": 10,
+                "summary": "Input fingerprint recorded; normalized outputs persisted.",
+            },
+        ],
+    }
+
+
+def test_prepare_qor_keeps_partial_score_blocked_by_failed_contract(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "prepare", "fe")
+    _write(
+        step.report["step"],
+        {
+            "rtl_files": 4,
+            "incdirs": 1,
+            "defines": 0,
+            "contracts": [{"id": "cpu_top", "status": "failed"}],
+            "readiness": _prepare_readiness(
+                rtl_total=4,
+                rtl_resolved=3,
+                incdir_total=1,
+                incdir_resolved=0,
+                expected_ports=4,
+                matched_ports=3,
+                extra_ports=1,
+                outputs_persisted=False,
+            ),
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 66.2
+    assert summary["score"]["components"][2] == {
+        "id": "interface_contract",
+        "label": "Interface contract",
+        "earned": 26.2,
+        "possible": 40,
+        "summary": "3 of 4 required ports matched; 1 unexpected.",
+    }
 
 
 def test_qor_metrics_reference_their_exact_report_fields(tmp_path: Path) -> None:

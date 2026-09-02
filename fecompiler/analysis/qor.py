@@ -114,6 +114,8 @@ def write_step_qor(step: Any, workspace: dict[str, Any], success: bool) -> None:
         "metrics_file": "qor_metrics.json",
         "context": context,
     }
+    if result.score is not None:
+        summary_payload["score"] = result.score
     hotspots_payload = {
         "schema_version": 3,
         "analysis_revision": SCHEMA_REVISION,
@@ -276,6 +278,7 @@ class _QorResult:
         self.details: list[dict[str, Any]] = []
         self.missing_metrics: list[dict[str, Any]] = []
         self.comparison: dict[str, Any] = {}
+        self.score: dict[str, Any] | None = None
 
 
 def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -373,6 +376,7 @@ def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for item in failures
     )
+    result.score = _prepare_readiness_score(report.get("readiness"))
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(
             step,
@@ -385,6 +389,181 @@ def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
+    readiness = _record(value)
+    sources = _record(readiness.get("sources"))
+    top = _record(readiness.get("top"))
+    interface = _record(readiness.get("interface"))
+    reproducibility = _record(readiness.get("reproducibility"))
+    if (
+        readiness.get("schema_version") != 1
+        or not _valid_readiness_counts(
+            sources,
+            ("rtl_total", "rtl_resolved", "include_dir_total", "include_dir_resolved"),
+        )
+        or not _valid_readiness_counts(top, ("definitions",))
+        or not _valid_readiness_counts(
+            interface,
+            (
+                "expected_ports",
+                "matched_ports",
+                "missing_ports",
+                "extra_ports",
+                "mismatched_ports",
+            ),
+        )
+        or not all(
+            isinstance(item, bool)
+            for item in (
+                top.get("required"),
+                top.get("source_in_inputs"),
+                interface.get("applicable"),
+                interface.get("verified"),
+                reproducibility.get("input_fingerprint"),
+                reproducibility.get("merged_filelist"),
+                reproducibility.get("prepared_manifest"),
+            )
+        )
+    ):
+        return None
+
+    rtl_total = int(sources["rtl_total"])
+    rtl_resolved = int(sources["rtl_resolved"])
+    incdir_total = int(sources["include_dir_total"])
+    incdir_resolved = int(sources["include_dir_resolved"])
+    if (
+        rtl_total <= 0
+        or rtl_resolved > rtl_total
+        or incdir_resolved > incdir_total
+    ):
+        return None
+    source_earned = 20 * rtl_resolved / rtl_total
+    source_earned += 10 if incdir_total == 0 else 10 * incdir_resolved / incdir_total
+
+    top_required = bool(top["required"])
+    top_definitions = int(top["definitions"])
+    top_source_in_inputs = bool(top["source_in_inputs"])
+    top_earned = (
+        20
+        if not top_required
+        else (15 if top_definitions == 1 else 0) + (5 if top_source_in_inputs else 0)
+    )
+
+    interface_applicable = bool(interface["applicable"])
+    interface_verified = bool(interface["verified"])
+    expected_ports = int(interface["expected_ports"])
+    matched_ports = int(interface["matched_ports"])
+    missing_ports = int(interface["missing_ports"])
+    extra_ports = int(interface["extra_ports"])
+    mismatched_ports = int(interface["mismatched_ports"])
+    if (
+        matched_ports > expected_ports
+        or (interface_verified and expected_ports == 0)
+        or (
+            interface_verified
+            and matched_ports + missing_ports + mismatched_ports != expected_ports
+        )
+        or (
+            not interface_verified
+            and any((expected_ports, matched_ports, missing_ports, mismatched_ports))
+        )
+    ):
+        return None
+    if not interface_applicable:
+        interface_earned = 40.0
+        interface_summary = "Interface contract is not required for this workspace."
+    elif not interface_verified:
+        interface_earned = 0.0
+        interface_summary = "No expected CPU interface contract was available to verify."
+    else:
+        interface_earned = 35 * matched_ports / expected_ports
+        interface_earned += 5 if extra_ports == 0 else 0
+        interface_summary = (
+            f"{matched_ports} of {expected_ports} required ports matched; "
+            f"{extra_ports} unexpected."
+        )
+
+    fingerprint_recorded = bool(reproducibility["input_fingerprint"])
+    merged_filelist = bool(reproducibility["merged_filelist"])
+    prepared_manifest = bool(reproducibility["prepared_manifest"])
+    reproducibility_earned = (
+        (5 if fingerprint_recorded else 0)
+        + (2.5 if merged_filelist else 0)
+        + (2.5 if prepared_manifest else 0)
+    )
+    components = [
+        _score_component(
+            "source_resolution",
+            "Source resolution",
+            source_earned,
+            30,
+            f"{rtl_resolved} of {rtl_total} RTL sources and "
+            f"{incdir_resolved} of {incdir_total} include directories resolved.",
+        ),
+        _score_component(
+            "top_resolution",
+            "Top resolution",
+            top_earned,
+            20,
+            (
+                "Top-module validation is not required for this workspace."
+                if not top_required
+                else f"{top_definitions} matching definition found; "
+                f"source {'is' if top_source_in_inputs else 'is not'} in prepared inputs."
+            ),
+        ),
+        _score_component(
+            "interface_contract",
+            "Interface contract",
+            interface_earned,
+            40,
+            interface_summary,
+        ),
+        _score_component(
+            "reproducibility",
+            "Reproducibility",
+            reproducibility_earned,
+            10,
+            (
+                f"Input fingerprint {'recorded' if fingerprint_recorded else 'missing'}; "
+                f"normalized outputs {'persisted' if merged_filelist and prepared_manifest else 'incomplete'}."
+            ),
+        ),
+    ]
+    return {
+        "label": "Preparation readiness",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
+
+
+def _valid_readiness_counts(value: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    return bool(value) and all(_is_count(value.get(field)) for field in fields)
+
+
+def _score_component(
+    component_id: str,
+    label: str,
+    earned: float,
+    possible: float,
+    summary: str,
+) -> dict[str, Any]:
+    return {
+        "id": component_id,
+        "label": label,
+        "earned": _round_score(earned),
+        "possible": possible,
+        "summary": summary,
+    }
+
+
+def _round_score(value: float) -> int | float:
+    rounded = round(float(value), 1)
+    return int(rounded) if rounded.is_integer() else rounded
 
 
 def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:

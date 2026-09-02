@@ -2052,6 +2052,28 @@ def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
     manifest = json.loads(Path(workspace["prepared_manifest"]).read_text(encoding="utf-8"))
     assert manifest["cpu_top_contract"]["status"] == "pass"
     assert manifest["cpu_top_contract"]["expected_ports"] == 2
+    prepare_report_path = (
+        Path(workspace["directory"]) / "prepare_fe" / "report" / "prepare.rpt"
+    )
+    prepare_report = json.loads(prepare_report_path.read_text(encoding="utf-8"))
+    assert prepare_report["readiness"]["interface"] == {
+        "applicable": True,
+        "verified": True,
+        "expected_ports": 2,
+        "matched_ports": 2,
+        "missing_ports": 0,
+        "extra_ports": 0,
+        "mismatched_ports": 0,
+    }
+    prepare_qor = json.loads(
+        (
+            Path(workspace["directory"])
+            / "prepare_fe"
+            / "analysis"
+            / "qor_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert prepare_qor["score"]["value"] == 100
 
     cpu_top.write_text(_cpu_top_source([
         contract[0],
@@ -2081,6 +2103,7 @@ def test_prepare_revalidates_persisted_cpu_top_port_contract(tmp_path):
     )
     assert qor_summary["quality_status"] == "blocked"
     assert qor_summary["gates"][0]["state"] == "failed"
+    assert qor_summary["score"]["value"] == 77.5
 
 
 def test_prepare_supports_nested_filelist_and_multi_tokens(tmp_path):
