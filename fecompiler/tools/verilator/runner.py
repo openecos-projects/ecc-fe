@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -465,6 +466,18 @@ def _sim_int_option(args: list[str], option: str) -> int | None:
         return None
 
 
+def _difftest_pass_counts(output: str) -> tuple[int, int] | None:
+    match = _DIFFTEST_PASSED_RE.search(output)
+    if match is None:
+        return None
+    try:
+        commits = int(match.group("commits"))
+        compared = int(match.group("compared"))
+    except ValueError:
+        return None
+    return (commits, compared) if compared > 0 else None
+
+
 def _sim_case_metrics(
     args: list[str],
     returncode: int,
@@ -475,12 +488,12 @@ def _sim_case_metrics(
     bad_trap = _SIM_BAD_TRAP_RE.search(output)
     timed_out = "timeout after" in output
     has_good_trap = "HIT GOOD TRAP" in output
-    difftest_passed = _DIFFTEST_PASSED_RE.search(output)
+    difftest_pass_counts = _difftest_pass_counts(output)
     difftest_enabled = _arg_present(args, "--diff") or "[difftest] enabled" in output.lower()
 
     if mismatch:
         termination = "difftest_mismatch"
-    elif difftest_enabled and not difftest_passed and returncode == 0 and has_good_trap:
+    elif difftest_enabled and not difftest_pass_counts and returncode == 0 and has_good_trap:
         termination = "difftest_incomplete"
     elif bad_trap:
         termination = "bad_trap"
@@ -504,7 +517,7 @@ def _sim_case_metrics(
         difftest_status = "mismatch"
     elif not difftest_enabled:
         difftest_status = "disabled"
-    elif ok and difftest_passed:
+    elif ok and difftest_pass_counts:
         difftest_status = "passed"
     else:
         difftest_status = "incomplete"
@@ -529,8 +542,8 @@ def _sim_case_metrics(
         "difftest": {
             "enabled": difftest_enabled,
             "status": difftest_status,
-            "commits": int(difftest_passed.group("commits")) if difftest_passed else None,
-            "compared": int(difftest_passed.group("compared")) if difftest_passed else None,
+            "commits": difftest_pass_counts[0] if difftest_pass_counts else None,
+            "compared": difftest_pass_counts[1] if difftest_pass_counts else None,
             "last_pc": progress.group("last_pc") if progress else None,
             "last_npc": progress.group("last_npc") if progress else None,
             "first_mismatch": first_mismatch,
@@ -613,6 +626,20 @@ def _case_cycles(case: dict[str, Any]) -> int | None:
     return cycles if isinstance(cycles, int) and not isinstance(cycles, bool) else None
 
 
+def _case_image_sha256(image: str) -> str:
+    path = Path(image)
+    if not image or not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
 def _simulation_regression(
     previous: dict[str, Any],
     current_cases: list[dict[str, Any]],
@@ -662,6 +689,10 @@ def _simulation_regression(
     )
     cycle_changes: list[dict[str, Any]] = []
     for name in sorted(current_by_name.keys() & previous_by_name.keys()):
+        previous_image_sha256 = str(previous_by_name[name].get("image_sha256", ""))
+        current_image_sha256 = str(current_by_name[name].get("image_sha256", ""))
+        if not current_image_sha256 or current_image_sha256 != previous_image_sha256:
+            continue
         previous_cycles = _case_cycles(previous_by_name[name])
         current_cycles = _case_cycles(current_by_name[name])
         if previous_cycles is None or current_cycles is None:
@@ -669,6 +700,7 @@ def _simulation_regression(
         delta = current_cycles - previous_cycles
         cycle_changes.append({
             "name": name,
+            "image_sha256": current_image_sha256,
             "previous": previous_cycles,
             "current": current_cycles,
             "delta": delta,
@@ -1823,7 +1855,10 @@ class VerilatorSimStep(BaseStep):
                 + "simulation binary was not compiled; see compile sub-step\n",
                 encoding="utf-8",
             )
-            json_write(str(cases_json), {"suite": suite, "run_id": "", "cases": []})
+            json_write(
+                str(cases_json),
+                {"schema_version": 1, "suite": suite, "run_id": "", "cases": []},
+            )
             update_substep_ok(
                 step,
                 SimSubFlowEnum.simulate.value,
@@ -1842,7 +1877,10 @@ class VerilatorSimStep(BaseStep):
                 "build test programs failed; see build_programs.log.txt\n",
                 encoding="utf-8",
             )
-            json_write(str(cases_json), {"suite": suite, "run_id": "", "cases": []})
+            json_write(
+                str(cases_json),
+                {"schema_version": 1, "suite": suite, "run_id": "", "cases": []},
+            )
             update_substep_ok(
                 step,
                 SimSubFlowEnum.simulate.value,
@@ -1886,7 +1924,7 @@ class VerilatorSimStep(BaseStep):
             if (
                 case_ok
                 and _arg_present(run_args, "--diff")
-                and _DIFFTEST_PASSED_RE.search(output) is None
+                and _difftest_pass_counts(output) is None
             ):
                 case_ok = False
             metrics = _sim_case_metrics(run_args, rc, output, case_ok)
@@ -1913,6 +1951,7 @@ class VerilatorSimStep(BaseStep):
                 "name": case_name,
                 "suite": suite,
                 "image": image,
+                "image_sha256": _case_image_sha256(image),
                 "program": _sim_case_program(workspace, image),
                 "returncode": rc,
                 "ok": case_ok,
@@ -1946,6 +1985,7 @@ class VerilatorSimStep(BaseStep):
         previous_run = _previous_simulation_run(runs_root, suite)
         regression = _simulation_regression(previous_run, cases_report)
         cases_payload = {
+            "schema_version": 1,
             "suite": suite,
             "run_id": run_id,
             "cases": cases_report,

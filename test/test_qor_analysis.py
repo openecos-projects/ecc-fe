@@ -896,6 +896,327 @@ def test_lint_qor_does_not_reward_unclassified_fatal_exit(tmp_path: Path) -> Non
     )
 
 
+def _scored_sim_report(*, difftest: bool, has_baseline: bool) -> dict:
+    run_id = "run-current"
+    return {
+        "schema_version": 1,
+        "suite": "cpu_tests",
+        "run_id": run_id,
+        "cases": [
+            {
+                "name": "add.soc",
+                "suite": "cpu_tests",
+                "run_id": run_id,
+                "image_sha256": "a" * 64,
+                "returncode": 0,
+                "ok": True,
+                "metrics": {
+                    "cycles": 100,
+                    "max_cycles": 1000,
+                    "termination": "good_trap",
+                    "timeout_accepted": False,
+                    "difftest": {
+                        "enabled": difftest,
+                        "status": "passed" if difftest else "disabled",
+                        "commits": 100 if difftest else None,
+                        "compared": 100 if difftest else None,
+                    },
+                },
+            }
+        ],
+        "regression": {
+            "has_baseline": has_baseline,
+            "baseline_run_id": "run-previous" if has_baseline else "",
+            "new_failures": [],
+            "persistent_failures": [],
+            "fixed": [],
+            "added": [],
+            "removed": [],
+            "cycle_changes": (
+                [
+                    {
+                        "name": "add.soc",
+                        "image_sha256": "a" * 64,
+                        "previous": 100,
+                        "current": 100,
+                        "delta": 0,
+                        "delta_percent": 0.0,
+                    }
+                ]
+                if has_baseline
+                else []
+            ),
+        },
+    }
+
+
+def test_sim_qor_scores_reference_and_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    _write(
+        Path(step.report["dir"]) / "cases.json",
+        _scored_sim_report(difftest=True, has_baseline=True),
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"] == {
+        "label": "Simulation verification",
+        "value": 100,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "required_cases",
+                "label": "Required cases",
+                "earned": 50,
+                "possible": 50,
+                "summary": "1 of 1 required simulation cases passed.",
+            },
+            {
+                "id": "difftest_confidence",
+                "label": "Difftest confidence",
+                "earned": 20,
+                "possible": 20,
+                "summary": "1 of 1 Difftest-enabled cases matched the architectural reference.",
+            },
+            {
+                "id": "cycle_telemetry",
+                "label": "Cycle telemetry",
+                "earned": 15,
+                "possible": 15,
+                "summary": "1 of 1 cases passed and reported a cycle count.",
+            },
+            {
+                "id": "regression_stability",
+                "label": "Regression stability",
+                "earned": 10,
+                "possible": 10,
+                "summary": "0 new failures and 0 removed cases relative to the previous run.",
+            },
+            {
+                "id": "cycle_stability",
+                "label": "Cycle stability",
+                "earned": 5,
+                "possible": 5,
+                "summary": "Largest measured cycle increase versus the previous run: 0.0%.",
+            },
+        ],
+    }
+
+
+def test_sim_qor_marks_weaker_first_run_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    _write(
+        Path(step.report["dir"]) / "cases.json",
+        _scored_sim_report(difftest=False, has_baseline=False),
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"]["value"] == 82.5
+    assert summary["score"]["components"][1]["earned"] == 10
+    assert summary["score"]["components"][3]["earned"] == 5
+    assert summary["score"]["components"][4]["earned"] == 2.5
+
+
+def test_sim_qor_scores_failed_first_run_without_baseline(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=False)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
+def test_sim_qor_rejects_inconsistent_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["regression"]["cycle_changes"][0]["delta"] = 1
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_passed_difftest_without_comparisons(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"][0]["metrics"]["difftest"].update({
+        "commits": 0,
+        "compared": 0,
+    })
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_passed_difftest_on_failed_case(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert "score" not in summary
+
+
+def test_sim_qor_does_not_reward_zero_cycle_baseline_as_comparable(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["cases"][0]["metrics"]["cycles"] = 10
+    report["regression"]["cycle_changes"][0] = {
+        "name": "add.soc",
+        "image_sha256": "a" * 64,
+        "previous": 0,
+        "current": 10,
+        "delta": 10,
+        "delta_percent": None,
+    }
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 0,
+        "possible": 5,
+        "summary": "No comparable cycle measurements were available in the baseline.",
+    }
+
+
+def test_sim_qor_scales_cycle_stability_by_baseline_coverage(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    second_case = json.loads(json.dumps(report["cases"][0]))
+    second_case["name"] = "sub.soc"
+    report["cases"].append(second_case)
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["value"] == 97.5
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 2.5,
+        "possible": 5,
+        "summary": (
+            "Largest measured cycle increase versus the previous run: 0.0%. "
+            "Comparable cycle coverage: 1 of 2 eligible cases."
+        ),
+    }
+
+
+def test_sim_qor_rejects_empty_versioned_report_without_crashing(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"] = []
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_non_numeric_baseline_cycles(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["regression"]["cycle_changes"][0]["previous"] = "unknown"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_non_string_termination(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"][0]["metrics"]["termination"] = {"state": "good_trap"}
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_missing_failure_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=True)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert "score" not in summary
+
+
+def test_sim_qor_excludes_fixed_case_from_cycle_stability(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=True)
+    report["regression"]["fixed"] = ["add.soc"]
+    report["regression"]["cycle_changes"][0] = {
+        "name": "add.soc",
+        "image_sha256": "a" * 64,
+        "previous": 80,
+        "current": 100,
+        "delta": 20,
+        "delta_percent": 25.0,
+    }
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 0,
+        "possible": 5,
+        "summary": "No comparable cycle measurements were available in the baseline.",
+    }
+
+
 def test_blocks_failed_simulation_and_records_hotspot(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "sim", "verilator")
     _write(

@@ -120,12 +120,22 @@ def test_sim_metrics_require_explicit_difftest_completion() -> None:
         "[soc-sim][difftest] passed: commits=138 compared=120\nHIT GOOD TRAP\n",
         True,
     )
+    zero_comparisons = _sim_case_metrics(
+        ["--diff"],
+        0,
+        "[soc-sim][difftest] passed: commits=0 compared=0\nHIT GOOD TRAP\n",
+        False,
+    )
 
     assert incomplete["difftest"]["status"] == "incomplete"
     assert incomplete["termination"] == "difftest_incomplete"
     assert passed["difftest"]["status"] == "passed"
     assert passed["difftest"]["commits"] == 138
     assert passed["difftest"]["compared"] == 120
+    assert zero_comparisons["difftest"]["status"] == "incomplete"
+    assert zero_comparisons["difftest"]["commits"] is None
+    assert zero_comparisons["difftest"]["compared"] is None
+    assert zero_comparisons["termination"] == "difftest_incomplete"
 
 
 def test_frontend_payload_preserves_review_and_sim_business_data(tmp_path):
@@ -2431,11 +2441,14 @@ def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypat
 
     assert engine.run_step("sim", rerun=True) == StateEnum.Success
     first = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
+    assert first["schema_version"] == 1
     assert first["regression"]["has_baseline"] is False
 
+    img.write_bytes(b"\x02")
     assert engine.run_step("sim", rerun=True) == StateEnum.Incomplete
     second = json.loads((report_dir / "cases.json").read_text(encoding="utf-8"))
     assert second["regression"]["new_failures"] == ["single.soc"]
+    assert second["regression"]["cycle_changes"] == []
     assert second["cases"][0]["failure"]["kind"] == "difftest_mismatch"
 
     assert engine.run_step("sim", rerun=True) == StateEnum.Success
@@ -2443,6 +2456,7 @@ def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypat
     assert third["regression"]["fixed"] == ["single.soc"]
     assert third["regression"]["cycle_changes"] == [{
         "name": "single.soc",
+        "image_sha256": third["cases"][0]["image_sha256"],
         "previous": 43,
         "current": 44,
         "delta": 1,

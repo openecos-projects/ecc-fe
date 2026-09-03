@@ -1411,6 +1411,7 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 reason,
             )
         )
+    result.score = _simulation_score(report, cases)
     sim_cflags = effective_sim_cflags(workspace)
     sim_build_directory = Path(step.directory) / "obj_dir"
     sim_dependencies = _simulation_dependency_map(workspace, sim_build_directory)
@@ -1459,6 +1460,173 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         "resource_versions": _record(workspace.get("resource_versions")),
     }
     return result
+
+
+def _simulation_score(
+    report: dict[str, Any], cases: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    suite = report.get("suite")
+    run_id = report.get("run_id")
+    regression = report.get("regression")
+    case_names = [str(item.get("name", "")) for item in cases]
+    if (
+        report.get("schema_version") != 1
+        or not isinstance(suite, str)
+        or not suite.strip()
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+        or not cases
+        or len(set(case_names)) != len(case_names)
+        or not all(_valid_scored_sim_case(item, suite, run_id) for item in cases)
+        or not _valid_sim_regression(regression, cases)
+    ):
+        return None
+
+    total = len(cases)
+    passed = sum(item["ok"] is True for item in cases)
+    pass_rate = passed / total
+    case_earned = 50 * pass_rate
+
+    difftest_cases = [
+        _record(_record(item["metrics"]).get("difftest"))
+        for item in cases
+        if _record(_record(item["metrics"]).get("difftest")).get("enabled") is True
+    ]
+    difftest_passed = sum(
+        str(item.get("status", "")).lower() == "passed" for item in difftest_cases
+    )
+    if difftest_cases:
+        difftest_earned = 20 * difftest_passed / len(difftest_cases)
+        difftest_summary = (
+            f"{difftest_passed} of {len(difftest_cases)} Difftest-enabled cases "
+            "matched the architectural reference."
+        )
+    else:
+        difftest_earned = 10 * pass_rate
+        difftest_summary = (
+            "Difftest was not enabled; half credit reflects self-checking test outcomes only."
+        )
+
+    measured_cases = sum(
+        item["ok"] is True and _is_count(_record(item["metrics"]).get("cycles"))
+        for item in cases
+    )
+    telemetry_earned = 15 * measured_cases / total
+
+    regression_record = _record(regression)
+    has_baseline = regression_record["has_baseline"] is True
+    new_failures = _string_list(regression_record.get("new_failures"))
+    removed_cases = _string_list(regression_record.get("removed"))
+    if has_baseline:
+        regression_earned = 10 if not new_failures and not removed_cases else 0
+        regression_summary = (
+            f"{len(new_failures)} new failures and {len(removed_cases)} removed cases "
+            "relative to the previous run."
+        )
+    else:
+        regression_earned = 5 if passed == total else 0
+        regression_summary = (
+            "This run establishes the first passing baseline; stability is not proven yet."
+            if passed == total
+            else "A passing regression baseline was not established."
+        )
+
+    cycle_changes = _records(regression_record.get("cycle_changes"))
+    incomparable_cases = {
+        *_string_list(regression_record.get("new_failures")),
+        *_string_list(regression_record.get("persistent_failures")),
+        *_string_list(regression_record.get("fixed")),
+    }
+    added_cases = set(_string_list(regression_record.get("added")))
+    comparable_cycle_changes = [
+        item
+        for item in cycle_changes
+        if item.get("name") not in incomparable_cases
+        and item.get("name") not in added_cases
+        and item.get("delta_percent") is not None
+    ]
+    eligible_cycle_cases = {
+        str(item["name"])
+        for item in cases
+        if item["ok"] is True
+        and item["name"] not in incomparable_cases
+        and item["name"] not in added_cases
+    }
+    if has_baseline and comparable_cycle_changes:
+        positive_changes = [
+            float(item["delta_percent"])
+            for item in comparable_cycle_changes
+            if float(item["delta_percent"]) > 0
+        ]
+        largest_increase = max(positive_changes, default=0.0)
+        coverage = min(
+            1.0,
+            len(comparable_cycle_changes) / len(eligible_cycle_cases),
+        )
+        cycle_earned = max(0, 5 - min(largest_increase, 10) * 0.5) * coverage
+        cycle_summary = (
+            f"Largest measured cycle increase versus the previous run: {largest_increase:.1f}%."
+        )
+        if coverage < 1:
+            cycle_summary += (
+                f" Comparable cycle coverage: {len(comparable_cycle_changes)} of "
+                f"{len(eligible_cycle_cases)} eligible cases."
+            )
+    elif has_baseline:
+        cycle_earned = 0
+        cycle_summary = "No comparable cycle measurements were available in the baseline."
+    else:
+        cycle_earned = 2.5 if passed == total and measured_cases == total else 0
+        cycle_summary = (
+            "Cycle stability will be scored after a comparable rerun."
+            if cycle_earned
+            else "A passing run with complete cycle telemetry is required for a baseline."
+        )
+
+    components = [
+        _score_component(
+            "required_cases",
+            "Required cases",
+            case_earned,
+            50,
+            f"{passed} of {total} required simulation cases passed.",
+        ),
+        _score_component(
+            "difftest_confidence",
+            "Difftest confidence",
+            difftest_earned,
+            20,
+            difftest_summary,
+        ),
+        _score_component(
+            "cycle_telemetry",
+            "Cycle telemetry",
+            telemetry_earned,
+            15,
+            f"{measured_cases} of {total} cases passed and reported a cycle count.",
+        ),
+        _score_component(
+            "regression_stability",
+            "Regression stability",
+            regression_earned,
+            10,
+            regression_summary,
+        ),
+        _score_component(
+            "cycle_stability",
+            "Cycle stability",
+            cycle_earned,
+            5,
+            cycle_summary,
+        ),
+    ]
+    return {
+        "label": "Simulation verification",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _metric(
@@ -2710,6 +2878,134 @@ def _valid_sim_case(value: dict[str, Any]) -> bool:
         and _valid_sim_metrics(metrics)
         and (failure is None or isinstance(failure, dict))
     )
+
+
+def _valid_scored_sim_case(value: dict[str, Any], suite: str, run_id: str) -> bool:
+    returncode = value.get("returncode")
+    image_sha256 = value.get("image_sha256")
+    metrics = _record(value.get("metrics"))
+    termination = metrics.get("termination")
+    difftest = _record(metrics.get("difftest"))
+    ok = value.get("ok") is True
+    return (
+        isinstance(returncode, int)
+        and not isinstance(returncode, bool)
+        and isinstance(image_sha256, str)
+        and (not image_sha256 or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is not None)
+        and value.get("suite") == suite
+        and value.get("run_id") == run_id
+        and isinstance(termination, str)
+        and termination
+        in {
+            "bad_trap",
+            "difftest_incomplete",
+            "difftest_mismatch",
+            "good_trap",
+            "process_error",
+            "timeout",
+            "unknown",
+        }
+        and isinstance(metrics.get("timeout_accepted"), bool)
+        and isinstance(difftest.get("enabled"), bool)
+        and isinstance(difftest.get("status"), str)
+        and (not ok or returncode == 0)
+        and (not ok or termination == "good_trap")
+        and (
+            (
+                difftest["enabled"] is False
+                and str(difftest["status"]).lower() == "disabled"
+            )
+            or (
+                difftest["enabled"] is True
+                and ok
+                and str(difftest["status"]).lower() == "passed"
+                and _is_count(difftest.get("compared"))
+                and difftest["compared"] > 0
+            )
+            or (
+                difftest["enabled"] is True
+                and not ok
+                and str(difftest["status"]).lower() in {"incomplete", "mismatch"}
+            )
+        )
+    )
+
+
+def _valid_sim_regression(value: Any, cases: list[dict[str, Any]]) -> bool:
+    if not isinstance(value, dict) or not isinstance(value.get("has_baseline"), bool):
+        return False
+    baseline_run_id = value.get("baseline_run_id")
+    list_fields = ("new_failures", "persistent_failures", "fixed", "added", "removed")
+    if not isinstance(baseline_run_id, str) or any(
+        not isinstance(value.get(field), list)
+        or not all(isinstance(item, str) and bool(item) for item in value[field])
+        or len(set(value[field])) != len(value[field])
+        for field in list_fields
+    ):
+        return False
+
+    by_name = {str(item["name"]): item for item in cases}
+    failed_names = {name for name, item in by_name.items() if item["ok"] is False}
+    passed_names = set(by_name) - failed_names
+    new_failures = set(value["new_failures"])
+    persistent_failures = set(value["persistent_failures"])
+    if (
+        (
+            value["has_baseline"] is True
+            and (
+                new_failures | persistent_failures != failed_names
+                or not new_failures.isdisjoint(persistent_failures)
+            )
+        )
+        or not set(value["fixed"]).issubset(passed_names)
+        or not set(value["added"]).issubset(by_name)
+    ):
+        return False
+
+    raw_changes = value.get("cycle_changes")
+    changes = _records(raw_changes)
+    if not isinstance(raw_changes, list) or len(changes) != len(raw_changes):
+        return False
+    change_names: set[str] = set()
+    for item in changes:
+        name = item.get("name")
+        image_sha256 = item.get("image_sha256")
+        previous = item.get("previous")
+        current = item.get("current")
+        delta = item.get("delta")
+        delta_percent = item.get("delta_percent")
+        if (
+            not isinstance(name, str)
+            or name not in by_name
+            or name in change_names
+            or not isinstance(image_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None
+            or image_sha256 != by_name[name].get("image_sha256")
+            or not _is_count(previous)
+            or not _is_count(current)
+            or not isinstance(delta, int)
+            or isinstance(delta, bool)
+        ):
+            return False
+        expected_percent = (current - previous) / previous * 100 if previous else None
+        if (
+            current != _record(by_name[name].get("metrics")).get("cycles")
+            or delta != current - previous
+            or (expected_percent is None and delta_percent is not None)
+            or (
+                expected_percent is not None
+                and (
+                    not _is_number(delta_percent)
+                    or not math.isclose(float(delta_percent), expected_percent)
+                )
+            )
+        ):
+            return False
+        change_names.add(name)
+
+    if value["has_baseline"] is False:
+        return not baseline_run_id and all(not value[field] for field in list_fields) and not changes
+    return bool(baseline_run_id)
 
 
 def _valid_sim_metrics(value: Any) -> bool:
