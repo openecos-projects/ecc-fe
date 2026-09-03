@@ -1111,6 +1111,7 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in diagnostics
     )
+    result.score = _lint_score(report, summary)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -1121,6 +1122,121 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _lint_score(
+    report: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any] | None:
+    raw_diagnostics = report.get("diagnostics")
+    diagnostics = _records(raw_diagnostics)
+    status = str(report.get("status", "")).strip().lower()
+    returncode = report.get("returncode")
+    if (
+        report.get("schema_version") != 1
+        or report.get("tool") != "verilator"
+        or status not in {"pass", "fail"}
+        or not isinstance(returncode, int)
+        or isinstance(returncode, bool)
+        or not isinstance(raw_diagnostics, list)
+        or len(diagnostics) != len(raw_diagnostics)
+        or not _valid_count_fields(
+            summary,
+            (
+                "errors",
+                "warnings",
+                "diagnostics",
+                "cpu_errors",
+                "cpu_warnings",
+                "actionable_diagnostics",
+            ),
+        )
+        or str(summary.get("status", "")).strip().lower() != status
+    ):
+        return None
+
+    cpu_diagnostics = [
+        item
+        for item in diagnostics
+        if item.get("actionable") is True and item.get("ownership") == "cpu"
+    ]
+    cpu_errors = sum(item.get("severity") == "error" for item in cpu_diagnostics)
+    cpu_warnings = sum(item.get("severity") == "warning" for item in cpu_diagnostics)
+    total_errors = sum(item.get("severity") == "error" for item in diagnostics)
+    total_warnings = sum(item.get("severity") == "warning" for item in diagnostics)
+    if (
+        any(
+            item.get("severity") not in {"error", "warning"}
+            or not isinstance(item.get("code"), str)
+            or not isinstance(item.get("ownership"), str)
+            or not isinstance(item.get("actionable"), bool)
+            for item in diagnostics
+        )
+        or int(summary["diagnostics"]) != len(diagnostics)
+        or int(summary["errors"]) != total_errors
+        or int(summary["warnings"]) != total_warnings
+        or int(summary["cpu_errors"]) != cpu_errors
+        or int(summary["cpu_warnings"]) != cpu_warnings
+        or int(summary["actionable_diagnostics"]) != len(cpu_diagnostics)
+        or (status == "pass") != (returncode == 0 and total_errors == 0)
+    ):
+        return None
+
+    # A non-zero Verilator exit can contain unclassified fatal diagnostics (for
+    # example, a missing top module).  Those records do not prove that the CPU
+    # was fully analyzed, so cleanliness credit is only valid after a clean exit.
+    analysis_completed = returncode == 0
+    cpu_rule_count = len(
+        {
+            str(item["code"]).strip().upper()
+            for item in cpu_diagnostics
+            if str(item["code"]).strip()
+        }
+    )
+    execution_earned = 25 if analysis_completed else 0
+    error_earned = max(0, 40 - cpu_errors * 20) if analysis_completed else 0
+    warning_earned = max(0, 25 - cpu_warnings * 2.5) if analysis_completed else 0
+    rule_earned = max(0, 10 - cpu_rule_count * 2) if analysis_completed else 0
+    components = [
+        _score_component(
+            "analysis_execution",
+            "Analysis execution",
+            execution_earned,
+            25,
+            (
+                "Verilator completed and produced classified lint diagnostics."
+                if analysis_completed
+                else "Verilator analysis did not complete; CPU cleanliness is unproven."
+            ),
+        ),
+        _score_component(
+            "cpu_errors",
+            "CPU errors",
+            error_earned,
+            40,
+            f"{cpu_errors} actionable CPU error{'s' if cpu_errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "cpu_warnings",
+            "CPU warnings",
+            warning_earned,
+            25,
+            f"{cpu_warnings} actionable CPU warning{'s' if cpu_warnings != 1 else ''} reported.",
+        ),
+        _score_component(
+            "cpu_rule_breadth",
+            "CPU rule breadth",
+            rule_earned,
+            10,
+            f"{cpu_rule_count} distinct lint rule{'s' if cpu_rule_count != 1 else ''} affecting CPU-owned RTL.",
+        ),
+    ]
+    return {
+        "label": "CPU lint quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:

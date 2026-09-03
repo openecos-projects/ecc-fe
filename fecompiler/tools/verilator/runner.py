@@ -1437,6 +1437,7 @@ def build_lint_summary(
     cpu_diagnostics = [item for item in diagnostics if item.get("ownership") == "cpu"]
 
     return {
+        "schema_version": 1,
         "path": str(summary_path),
         "tool": "verilator",
         "status": status,

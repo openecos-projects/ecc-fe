@@ -732,6 +732,170 @@ def test_elaboration_qor_does_not_promote_source_scan_on_compiler_failure(
     assert summary["score"]["components"][3]["earned"] == 0
 
 
+def test_lint_qor_scores_only_actionable_cpu_diagnostics(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    cpu_diagnostics = [
+        {
+            "severity": "warning",
+            "code": "UNUSEDSIGNAL",
+            "category": "unused",
+            "ownership": "cpu",
+            "actionable": True,
+        }
+        for _ in range(4)
+    ]
+    soc_diagnostics = [
+        {
+            "severity": "warning",
+            "code": "PINCONNECTEMPTY",
+            "category": "lint",
+            "ownership": "soc",
+            "actionable": False,
+        }
+        for _ in range(20)
+    ]
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "pass",
+            "returncode": 0,
+            "summary": {
+                "status": "pass",
+                "errors": 0,
+                "warnings": 24,
+                "diagnostics": 24,
+                "cpu_errors": 0,
+                "cpu_warnings": 4,
+                "actionable_diagnostics": 4,
+            },
+            "diagnostics": [*cpu_diagnostics, *soc_diagnostics],
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"] == {
+        "label": "CPU lint quality",
+        "value": 88,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "analysis_execution",
+                "label": "Analysis execution",
+                "earned": 25,
+                "possible": 25,
+                "summary": "Verilator completed and produced classified lint diagnostics.",
+            },
+            {
+                "id": "cpu_errors",
+                "label": "CPU errors",
+                "earned": 40,
+                "possible": 40,
+                "summary": "0 actionable CPU errors reported.",
+            },
+            {
+                "id": "cpu_warnings",
+                "label": "CPU warnings",
+                "earned": 15,
+                "possible": 25,
+                "summary": "4 actionable CPU warnings reported.",
+            },
+            {
+                "id": "cpu_rule_breadth",
+                "label": "CPU rule breadth",
+                "earned": 8,
+                "possible": 10,
+                "summary": "1 distinct lint rule affecting CPU-owned RTL.",
+            },
+        ],
+    }
+
+
+def test_lint_qor_does_not_reward_failed_tool_execution(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "fail",
+            "returncode": 127,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "diagnostics": 1,
+                "cpu_errors": 0,
+                "cpu_warnings": 0,
+                "actionable_diagnostics": 0,
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "code": "TOOL",
+                    "category": "tool",
+                    "ownership": "tool",
+                    "actionable": False,
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
+def test_lint_qor_does_not_reward_unclassified_fatal_exit(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "fail",
+            "returncode": 1,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "diagnostics": 1,
+                "cpu_errors": 0,
+                "cpu_warnings": 0,
+                "actionable_diagnostics": 0,
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "code": "ERROR",
+                    "category": "lint",
+                    "ownership": "unknown",
+                    "actionable": False,
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
 def test_blocks_failed_simulation_and_records_hotspot(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "sim", "verilator")
     _write(
