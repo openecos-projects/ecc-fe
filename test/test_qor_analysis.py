@@ -39,6 +39,50 @@ def _write(path: str | Path, payload: dict) -> None:
     target.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _prepare_readiness(
+    *,
+    rtl_total: int = 8,
+    rtl_resolved: int = 8,
+    incdir_total: int = 1,
+    incdir_resolved: int = 1,
+    definitions: int = 1,
+    source_in_inputs: bool = True,
+    expected_ports: int = 2,
+    matched_ports: int = 2,
+    extra_ports: int = 0,
+    outputs_persisted: bool = True,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "sources": {
+            "rtl_total": rtl_total,
+            "rtl_resolved": rtl_resolved,
+            "include_dir_total": incdir_total,
+            "include_dir_resolved": incdir_resolved,
+        },
+        "top": {
+            "required": True,
+            "module": "cpu_top",
+            "definitions": definitions,
+            "source_in_inputs": source_in_inputs,
+        },
+        "interface": {
+            "applicable": True,
+            "verified": expected_ports > 0,
+            "expected_ports": expected_ports,
+            "matched_ports": matched_ports,
+            "missing_ports": max(0, expected_ports - matched_ports),
+            "extra_ports": extra_ports,
+            "mismatched_ports": 0,
+        },
+        "reproducibility": {
+            "input_fingerprint": True,
+            "merged_filelist": outputs_persisted,
+            "prepared_manifest": outputs_persisted,
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("name", "tool", "report_name", "payload", "expected_metric", "expected_gate"),
     [
@@ -63,7 +107,14 @@ def _write(path: str | Path, payload: dict) -> None:
                 "summary": {
                     "actionable_errors": 0,
                     "actionable_warnings": 2,
-                    "yosys_precheck": {"status": "success"},
+                    "yosys_precheck": {
+                        "status": "success",
+                        "risk_thresholds": {
+                            "max_fanout": 64,
+                            "max_fanin": 32,
+                            "max_comb_depth": 16,
+                        },
+                    },
                 },
                 "metrics": {
                     "structural": {
@@ -190,6 +241,257 @@ def test_frontend_detail_embeds_structured_qor_artifacts(tmp_path: Path) -> None
     assert detail["qor"]["summary"]["quality_status"] == "pass"
 
 
+def test_prepare_qor_explains_full_readiness_score(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "prepare", "fe")
+    _write(
+        step.report["step"],
+        {
+            "rtl_files": 8,
+            "incdirs": 1,
+            "defines": 2,
+            "contracts": [{"id": "cpu_top", "status": "pass"}],
+            "readiness": _prepare_readiness(),
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    score = summary["score"]
+    assert score == {
+        "label": "Preparation readiness",
+        "value": 100,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "source_resolution",
+                "label": "Source resolution",
+                "earned": 30,
+                "possible": 30,
+                "summary": "8 of 8 RTL sources and 1 of 1 include directories resolved.",
+            },
+            {
+                "id": "top_resolution",
+                "label": "Top resolution",
+                "earned": 20,
+                "possible": 20,
+                "summary": "1 matching definition found; source is in prepared inputs.",
+            },
+            {
+                "id": "interface_contract",
+                "label": "Interface contract",
+                "earned": 40,
+                "possible": 40,
+                "summary": "2 of 2 required ports matched; 0 unexpected.",
+            },
+            {
+                "id": "reproducibility",
+                "label": "Reproducibility",
+                "earned": 10,
+                "possible": 10,
+                "summary": "Input fingerprint recorded; normalized outputs persisted.",
+            },
+        ],
+    }
+
+
+def test_prepare_qor_keeps_partial_score_blocked_by_failed_contract(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "prepare", "fe")
+    _write(
+        step.report["step"],
+        {
+            "rtl_files": 4,
+            "incdirs": 1,
+            "defines": 0,
+            "contracts": [{"id": "cpu_top", "status": "failed"}],
+            "readiness": _prepare_readiness(
+                rtl_total=4,
+                rtl_resolved=3,
+                incdir_total=1,
+                incdir_resolved=0,
+                expected_ports=4,
+                matched_ports=3,
+                extra_ports=1,
+                outputs_persisted=False,
+            ),
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 66.2
+    assert summary["score"]["components"][2] == {
+        "id": "interface_contract",
+        "label": "Interface contract",
+        "earned": 26.2,
+        "possible": 40,
+        "summary": "3 of 4 required ports matched; 1 unexpected.",
+    }
+
+
+def test_review_qor_explains_structural_quality_score(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "review", "fe")
+    _write(
+        Path(step.report["dir"]) / "rtl_review.json",
+        {
+            "summary": {
+                "actionable_errors": 0,
+                "actionable_warnings": 2,
+            },
+            "metrics": {
+                "structural": {
+                    "max_fanout": 64,
+                    "max_fanin": 64,
+                    "max_comb_depth": 8,
+                }
+            },
+            "yosys_precheck": {
+                "status": "success",
+                "risk_thresholds": {
+                    "max_fanout": 64,
+                    "max_fanin": 32,
+                    "max_comb_depth": 16,
+                },
+            },
+            "issues": [],
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"] == {
+        "label": "RTL review quality",
+        "value": 89.9,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "structural_precheck",
+                "label": "Structural precheck",
+                "earned": 30,
+                "possible": 30,
+                "summary": "Yosys completed the CPU-only structural precheck.",
+            },
+            {
+                "id": "actionable_errors",
+                "label": "Actionable errors",
+                "earned": 30,
+                "possible": 30,
+                "summary": "0 actionable RTL errors reported.",
+            },
+            {
+                "id": "warning_hygiene",
+                "label": "Warning hygiene",
+                "earned": 9,
+                "possible": 15,
+                "summary": "2 actionable RTL warnings reported.",
+            },
+            {
+                "id": "structural_headroom",
+                "label": "Structural headroom",
+                "earned": 20.9,
+                "possible": 25,
+                "summary": "Fanout 64/64, fanin 64/32, depth 8/16 (measured/target).",
+            },
+        ],
+    }
+
+
+def test_review_qor_keeps_partial_score_blocked_by_error(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "review", "fe")
+    _write(
+        Path(step.report["dir"]) / "rtl_review.json",
+        {
+            "summary": {
+                "actionable_errors": 1,
+                "actionable_warnings": 0,
+            },
+            "metrics": {
+                "structural": {
+                    "max_fanout": 16,
+                    "max_fanin": 8,
+                    "max_comb_depth": 4,
+                }
+            },
+            "yosys_precheck": {
+                "status": "success",
+                "risk_thresholds": {
+                    "max_fanout": 64,
+                    "max_fanin": 32,
+                    "max_comb_depth": 16,
+                },
+            },
+            "issues": [],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 90
+    assert summary["score"]["components"][1]["earned"] == 20
+
+
+def test_review_qor_does_not_score_unmeasured_structural_headroom(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "review", "fe")
+    _write(
+        Path(step.report["dir"]) / "rtl_review.json",
+        {
+            "summary": {
+                "actionable_errors": 1,
+                "actionable_warnings": 0,
+            },
+            "metrics": {
+                "structural": {
+                    "max_fanout": 0,
+                    "max_fanin": 0,
+                    "max_comb_depth": 0,
+                }
+            },
+            "yosys_precheck": {
+                "status": "failed",
+                "quality": {"gate": "failed"},
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "category": "syntax",
+                        "message": "unexpected token",
+                    }
+                ],
+                "risk_thresholds": {
+                    "max_fanout": 64,
+                    "max_fanin": 32,
+                    "max_comb_depth": 16,
+                },
+            },
+            "issues": [],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 35
+    assert summary["score"]["components"][3] == {
+        "id": "structural_headroom",
+        "label": "Structural headroom",
+        "earned": 0,
+        "possible": 25,
+        "summary": "Structural headroom is unavailable because the precheck did not pass.",
+    }
+
+
 def test_qor_metrics_reference_their_exact_report_fields(tmp_path: Path) -> None:
     workspace, prepare_step = _step(tmp_path, "prepare", "fe")
     _write(
@@ -221,7 +523,6 @@ def test_qor_metrics_reference_their_exact_report_fields(tmp_path: Path) -> None
             "summary": {
                 "actionable_errors": 0,
                 "actionable_warnings": 0,
-                "yosys_precheck": {"status": "success"},
             },
             "metrics": {
                 "structural": {
@@ -229,6 +530,14 @@ def test_qor_metrics_reference_their_exact_report_fields(tmp_path: Path) -> None
                     "max_fanin": 12,
                     "max_comb_depth": 7,
                 }
+            },
+            "yosys_precheck": {
+                "status": "success",
+                "risk_thresholds": {
+                    "max_fanout": 64,
+                    "max_fanin": 32,
+                    "max_comb_depth": 16,
+                },
             },
             "issues": [],
         },
@@ -298,6 +607,614 @@ def test_qor_hotspots_preserve_diagnostic_severity(tmp_path: Path) -> None:
         "warning",
         "info",
     ]
+
+
+def test_elaboration_qor_explains_authoritative_compiler_score(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "elab", "slang")
+    _write(
+        Path(step.report["dir"]) / "elab_summary.json",
+        {
+            "schema_version": 2,
+            "status": "pass",
+            "returncode": 0,
+            "summary": {
+                "status": "pass",
+                "errors": 0,
+                "warnings": 2,
+                "modules": 116,
+                "unresolved_modules": 0,
+                "top_module": "ecos_sim_top",
+                "top_found": True,
+                "elaboration_mode": "full",
+            },
+            "compiler": {
+                "source": "slang",
+                "authoritative": True,
+                "elaboration_mode": "full",
+                "unresolved_modules": [],
+            },
+            "diagnostics": [],
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"] == {
+        "label": "Elaboration quality",
+        "value": 96,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "compiler_execution",
+                "label": "Compiler execution",
+                "earned": 25,
+                "possible": 25,
+                "summary": "Slang completed an authoritative full elaboration.",
+            },
+            {
+                "id": "diagnostic_errors",
+                "label": "Diagnostic errors",
+                "earned": 30,
+                "possible": 30,
+                "summary": "0 compiler errors reported.",
+            },
+            {
+                "id": "hierarchy_closure",
+                "label": "Hierarchy closure",
+                "earned": 20,
+                "possible": 20,
+                "summary": "0 unresolved modules in the authoritative compiler result.",
+            },
+            {
+                "id": "top_resolution",
+                "label": "Top resolution",
+                "earned": 15,
+                "possible": 15,
+                "summary": "Top module ecos_sim_top resolved by Slang.",
+            },
+            {
+                "id": "warning_hygiene",
+                "label": "Warning hygiene",
+                "earned": 6,
+                "possible": 10,
+                "summary": "2 compiler warnings reported.",
+            },
+        ],
+    }
+
+
+def test_elaboration_qor_does_not_promote_source_scan_on_compiler_failure(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "elab", "slang")
+    _write(
+        Path(step.report["dir"]) / "elab_summary.json",
+        {
+            "schema_version": 2,
+            "status": "fail",
+            "returncode": -9,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "modules": 12,
+                "unresolved_modules": 1,
+                "top_module": "ecos_sim_top",
+                "top_found": True,
+                "elaboration_mode": "full",
+            },
+            "compiler": {
+                "source": "slang",
+                "authoritative": True,
+                "elaboration_mode": "full",
+                "unresolved_modules": ["missing_cpu"],
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "message": "unknown module 'missing_cpu'",
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 30
+    assert summary["score"]["components"][2]["earned"] == 0
+    assert summary["score"]["components"][3]["earned"] == 0
+
+
+def test_lint_qor_scores_only_actionable_cpu_diagnostics(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    cpu_diagnostics = [
+        {
+            "severity": "warning",
+            "code": "UNUSEDSIGNAL",
+            "category": "unused",
+            "ownership": "cpu",
+            "actionable": True,
+        }
+        for _ in range(4)
+    ]
+    soc_diagnostics = [
+        {
+            "severity": "warning",
+            "code": "PINCONNECTEMPTY",
+            "category": "lint",
+            "ownership": "soc",
+            "actionable": False,
+        }
+        for _ in range(20)
+    ]
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "pass",
+            "returncode": 0,
+            "summary": {
+                "status": "pass",
+                "errors": 0,
+                "warnings": 24,
+                "diagnostics": 24,
+                "cpu_errors": 0,
+                "cpu_warnings": 4,
+                "actionable_diagnostics": 4,
+            },
+            "diagnostics": [*cpu_diagnostics, *soc_diagnostics],
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"] == {
+        "label": "CPU lint quality",
+        "value": 88,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "analysis_execution",
+                "label": "Analysis execution",
+                "earned": 25,
+                "possible": 25,
+                "summary": "Verilator completed and produced classified lint diagnostics.",
+            },
+            {
+                "id": "cpu_errors",
+                "label": "CPU errors",
+                "earned": 40,
+                "possible": 40,
+                "summary": "0 actionable CPU errors reported.",
+            },
+            {
+                "id": "cpu_warnings",
+                "label": "CPU warnings",
+                "earned": 15,
+                "possible": 25,
+                "summary": "4 actionable CPU warnings reported.",
+            },
+            {
+                "id": "cpu_rule_breadth",
+                "label": "CPU rule breadth",
+                "earned": 8,
+                "possible": 10,
+                "summary": "1 distinct lint rule affecting CPU-owned RTL.",
+            },
+        ],
+    }
+
+
+def test_lint_qor_does_not_reward_failed_tool_execution(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "fail",
+            "returncode": 127,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "diagnostics": 1,
+                "cpu_errors": 0,
+                "cpu_warnings": 0,
+                "actionable_diagnostics": 0,
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "code": "TOOL",
+                    "category": "tool",
+                    "ownership": "tool",
+                    "actionable": False,
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
+def test_lint_qor_does_not_reward_unclassified_fatal_exit(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "fail",
+            "returncode": 1,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "diagnostics": 1,
+                "cpu_errors": 0,
+                "cpu_warnings": 0,
+                "actionable_diagnostics": 0,
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "code": "ERROR",
+                    "category": "lint",
+                    "ownership": "unknown",
+                    "actionable": False,
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
+def _scored_sim_report(*, difftest: bool, has_baseline: bool) -> dict:
+    run_id = "run-current"
+    return {
+        "schema_version": 1,
+        "suite": "cpu_tests",
+        "run_id": run_id,
+        "cases": [
+            {
+                "name": "add.soc",
+                "suite": "cpu_tests",
+                "run_id": run_id,
+                "image_sha256": "a" * 64,
+                "returncode": 0,
+                "ok": True,
+                "metrics": {
+                    "cycles": 100,
+                    "max_cycles": 1000,
+                    "termination": "good_trap",
+                    "timeout_accepted": False,
+                    "difftest": {
+                        "enabled": difftest,
+                        "status": "passed" if difftest else "disabled",
+                        "commits": 100 if difftest else None,
+                        "compared": 100 if difftest else None,
+                    },
+                },
+            }
+        ],
+        "regression": {
+            "has_baseline": has_baseline,
+            "baseline_run_id": "run-previous" if has_baseline else "",
+            "new_failures": [],
+            "persistent_failures": [],
+            "fixed": [],
+            "added": [],
+            "removed": [],
+            "cycle_changes": (
+                [
+                    {
+                        "name": "add.soc",
+                        "image_sha256": "a" * 64,
+                        "previous": 100,
+                        "current": 100,
+                        "delta": 0,
+                        "delta_percent": 0.0,
+                    }
+                ]
+                if has_baseline
+                else []
+            ),
+        },
+    }
+
+
+def test_sim_qor_scores_reference_and_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    _write(
+        Path(step.report["dir"]) / "cases.json",
+        _scored_sim_report(difftest=True, has_baseline=True),
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"] == {
+        "label": "Simulation verification",
+        "value": 100,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "required_cases",
+                "label": "Required cases",
+                "earned": 50,
+                "possible": 50,
+                "summary": "1 of 1 required simulation cases passed.",
+            },
+            {
+                "id": "difftest_confidence",
+                "label": "Difftest confidence",
+                "earned": 20,
+                "possible": 20,
+                "summary": "1 of 1 Difftest-enabled cases matched the architectural reference.",
+            },
+            {
+                "id": "cycle_telemetry",
+                "label": "Cycle telemetry",
+                "earned": 15,
+                "possible": 15,
+                "summary": "1 of 1 cases passed and reported a cycle count.",
+            },
+            {
+                "id": "regression_stability",
+                "label": "Regression stability",
+                "earned": 10,
+                "possible": 10,
+                "summary": "0 new failures and 0 removed cases relative to the previous run.",
+            },
+            {
+                "id": "cycle_stability",
+                "label": "Cycle stability",
+                "earned": 5,
+                "possible": 5,
+                "summary": "Largest measured cycle increase versus the previous run: 0.0%.",
+            },
+        ],
+    }
+
+
+def test_sim_qor_marks_weaker_first_run_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    _write(
+        Path(step.report["dir"]) / "cases.json",
+        _scored_sim_report(difftest=False, has_baseline=False),
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"]["value"] == 82.5
+    assert summary["score"]["components"][1]["earned"] == 10
+    assert summary["score"]["components"][3]["earned"] == 5
+    assert summary["score"]["components"][4]["earned"] == 2.5
+
+
+def test_sim_qor_scores_failed_first_run_without_baseline(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=False)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 0
+    assert all(
+        component["earned"] == 0 for component in summary["score"]["components"]
+    )
+
+
+def test_sim_qor_rejects_inconsistent_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["regression"]["cycle_changes"][0]["delta"] = 1
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_passed_difftest_without_comparisons(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"][0]["metrics"]["difftest"].update({
+        "commits": 0,
+        "compared": 0,
+    })
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_passed_difftest_on_failed_case(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert "score" not in summary
+
+
+def test_sim_qor_does_not_reward_zero_cycle_baseline_as_comparable(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["cases"][0]["metrics"]["cycles"] = 10
+    report["regression"]["cycle_changes"][0] = {
+        "name": "add.soc",
+        "image_sha256": "a" * 64,
+        "previous": 0,
+        "current": 10,
+        "delta": 10,
+        "delta_percent": None,
+    }
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 0,
+        "possible": 5,
+        "summary": "No comparable cycle measurements were available in the baseline.",
+    }
+
+
+def test_sim_qor_scales_cycle_stability_by_baseline_coverage(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    second_case = json.loads(json.dumps(report["cases"][0]))
+    second_case["name"] = "sub.soc"
+    report["cases"].append(second_case)
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["value"] == 97.5
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 2.5,
+        "possible": 5,
+        "summary": (
+            "Largest measured cycle increase versus the previous run: 0.0%. "
+            "Comparable cycle coverage: 1 of 2 eligible cases."
+        ),
+    }
+
+
+def test_sim_qor_rejects_empty_versioned_report_without_crashing(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"] = []
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "incomplete"
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_non_numeric_baseline_cycles(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=True)
+    report["regression"]["cycle_changes"][0]["previous"] = "unknown"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_non_string_termination(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=True, has_baseline=False)
+    report["cases"][0]["metrics"]["termination"] = {"state": "good_trap"}
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert "score" not in summary
+
+
+def test_sim_qor_rejects_missing_failure_regression_evidence(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=True)
+    case = report["cases"][0]
+    case["ok"] = False
+    case["returncode"] = 1
+    case["metrics"]["termination"] = "process_error"
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert "score" not in summary
+
+
+def test_sim_qor_excludes_fixed_case_from_cycle_stability(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "sim", "verilator")
+    report = _scored_sim_report(difftest=False, has_baseline=True)
+    report["regression"]["fixed"] = ["add.soc"]
+    report["regression"]["cycle_changes"][0] = {
+        "name": "add.soc",
+        "image_sha256": "a" * 64,
+        "previous": 80,
+        "current": 100,
+        "delta": 20,
+        "delta_percent": 25.0,
+    }
+    _write(Path(step.report["dir"]) / "cases.json", report)
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["score"]["components"][4] == {
+        "id": "cycle_stability",
+        "label": "Cycle stability",
+        "earned": 0,
+        "possible": 5,
+        "summary": "No comparable cycle measurements were available in the baseline.",
+    }
 
 
 def test_blocks_failed_simulation_and_records_hotspot(tmp_path: Path) -> None:

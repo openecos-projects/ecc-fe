@@ -60,6 +60,12 @@ class PrepareStep(BaseStep):
             "inputs": source_info,
             "contracts": [cpu_top_contract],
             "ownership": prepared["ownership"],
+            "readiness": self._build_readiness_facts(
+                workspace,
+                prepared,
+                cpu_top_contract,
+                outputs_persisted=True,
+            ),
         }
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
@@ -304,6 +310,13 @@ class PrepareStep(BaseStep):
             "contracts": [contract],
             "ownership": prepared.get("ownership", {}),
             "comparison_inputs": prepared,
+            "readiness": self._build_readiness_facts(
+                {},
+                prepared,
+                contract,
+                outputs_persisted=False,
+                top_required=True,
+            ),
         }
         json_write(step.output["json"], report)
         json_write(step.report["step"], report)
@@ -314,6 +327,83 @@ class PrepareStep(BaseStep):
             info={"error": message, **info},
         )
         raise RuntimeError(f"prepare failed: {message}")
+
+    def _build_readiness_facts(
+        self,
+        workspace: dict[str, Any],
+        prepared: dict[str, Any],
+        contract: dict[str, Any],
+        *,
+        outputs_persisted: bool,
+        top_required: bool | None = None,
+    ) -> dict[str, Any]:
+        rtl_files = [str(path) for path in prepared.get("rtl_files", [])]
+        incdirs = [str(path) for path in prepared.get("incdirs", [])]
+        contract_status = str(contract.get("status", "")).strip().lower()
+        differences = contract.get("differences", {})
+        differences = differences if isinstance(differences, dict) else {}
+        missing = differences.get("missing", [])
+        extra = differences.get("extra", [])
+        mismatches = differences.get("mismatches", [])
+        missing = missing if isinstance(missing, list) else []
+        extra = extra if isinstance(extra, list) else []
+        mismatches = mismatches if isinstance(mismatches, list) else []
+        expected_ports = contract.get("expected_ports", 0)
+        expected_ports = (
+            expected_ports
+            if isinstance(expected_ports, int)
+            and not isinstance(expected_ports, bool)
+            and expected_ports >= 0
+            else 0
+        )
+        matched_ports = max(0, expected_ports - len(missing) - len(mismatches))
+        source = str(contract.get("source", "")).strip()
+        normalized_sources = {
+            str(Path(path).expanduser().resolve(strict=False)) for path in rtl_files
+        }
+        source_in_inputs = bool(source) and str(
+            Path(source).expanduser().resolve(strict=False)
+        ) in normalized_sources
+        required = (
+            self._requires_frontend_cpu_top(workspace)
+            if top_required is None
+            else top_required
+        )
+        definitions = contract.get("count")
+        if not isinstance(definitions, int) or isinstance(definitions, bool):
+            definitions = 1 if source else 0
+
+        return {
+            "schema_version": 1,
+            "sources": {
+                "rtl_total": len(rtl_files),
+                "rtl_resolved": sum(Path(path).is_file() for path in rtl_files),
+                "include_dir_total": len(incdirs),
+                "include_dir_resolved": sum(Path(path).is_dir() for path in incdirs),
+            },
+            "top": {
+                "required": required,
+                "module": str(contract.get("module", "")),
+                "definitions": max(0, definitions),
+                "source_in_inputs": source_in_inputs,
+            },
+            "interface": {
+                "applicable": contract_status != "not_required",
+                "verified": expected_ports > 0,
+                "expected_ports": expected_ports,
+                "matched_ports": matched_ports,
+                "missing_ports": len(missing),
+                "extra_ports": len(extra),
+                "mismatched_ports": len(mismatches),
+            },
+            "reproducibility": {
+                "input_fingerprint": bool(
+                    str(prepared.get("source_fingerprint", "")).strip()
+                ),
+                "merged_filelist": outputs_persisted,
+                "prepared_manifest": outputs_persisted,
+            },
+        }
 
     @staticmethod
     def _requires_frontend_cpu_top(workspace: dict[str, Any]) -> bool:

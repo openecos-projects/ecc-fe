@@ -1650,6 +1650,14 @@ def _first_diagnostic_location(
 
 
 def _write_probe(paths: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
+    payload.setdefault(
+        "risk_thresholds",
+        {
+            "max_fanout": _HIGH_FANOUT_THRESHOLD,
+            "max_fanin": _HIGH_FANIN_THRESHOLD,
+            "max_comb_depth": _DEEP_COMB_DEPTH_THRESHOLD,
+        },
+    )
     report_path = Path(paths["report"])
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

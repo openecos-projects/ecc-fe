@@ -114,6 +114,8 @@ def write_step_qor(step: Any, workspace: dict[str, Any], success: bool) -> None:
         "metrics_file": "qor_metrics.json",
         "context": context,
     }
+    if result.score is not None:
+        summary_payload["score"] = result.score
     hotspots_payload = {
         "schema_version": 3,
         "analysis_revision": SCHEMA_REVISION,
@@ -276,6 +278,7 @@ class _QorResult:
         self.details: list[dict[str, Any]] = []
         self.missing_metrics: list[dict[str, Any]] = []
         self.comparison: dict[str, Any] = {}
+        self.score: dict[str, Any] | None = None
 
 
 def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -373,6 +376,7 @@ def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for item in failures
     )
+    result.score = _prepare_readiness_score(report.get("readiness"))
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(
             step,
@@ -385,6 +389,181 @@ def _prepare_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
+    readiness = _record(value)
+    sources = _record(readiness.get("sources"))
+    top = _record(readiness.get("top"))
+    interface = _record(readiness.get("interface"))
+    reproducibility = _record(readiness.get("reproducibility"))
+    if (
+        readiness.get("schema_version") != 1
+        or not _valid_readiness_counts(
+            sources,
+            ("rtl_total", "rtl_resolved", "include_dir_total", "include_dir_resolved"),
+        )
+        or not _valid_readiness_counts(top, ("definitions",))
+        or not _valid_readiness_counts(
+            interface,
+            (
+                "expected_ports",
+                "matched_ports",
+                "missing_ports",
+                "extra_ports",
+                "mismatched_ports",
+            ),
+        )
+        or not all(
+            isinstance(item, bool)
+            for item in (
+                top.get("required"),
+                top.get("source_in_inputs"),
+                interface.get("applicable"),
+                interface.get("verified"),
+                reproducibility.get("input_fingerprint"),
+                reproducibility.get("merged_filelist"),
+                reproducibility.get("prepared_manifest"),
+            )
+        )
+    ):
+        return None
+
+    rtl_total = int(sources["rtl_total"])
+    rtl_resolved = int(sources["rtl_resolved"])
+    incdir_total = int(sources["include_dir_total"])
+    incdir_resolved = int(sources["include_dir_resolved"])
+    if (
+        rtl_total <= 0
+        or rtl_resolved > rtl_total
+        or incdir_resolved > incdir_total
+    ):
+        return None
+    source_earned = 20 * rtl_resolved / rtl_total
+    source_earned += 10 if incdir_total == 0 else 10 * incdir_resolved / incdir_total
+
+    top_required = bool(top["required"])
+    top_definitions = int(top["definitions"])
+    top_source_in_inputs = bool(top["source_in_inputs"])
+    top_earned = (
+        20
+        if not top_required
+        else (15 if top_definitions == 1 else 0) + (5 if top_source_in_inputs else 0)
+    )
+
+    interface_applicable = bool(interface["applicable"])
+    interface_verified = bool(interface["verified"])
+    expected_ports = int(interface["expected_ports"])
+    matched_ports = int(interface["matched_ports"])
+    missing_ports = int(interface["missing_ports"])
+    extra_ports = int(interface["extra_ports"])
+    mismatched_ports = int(interface["mismatched_ports"])
+    if (
+        matched_ports > expected_ports
+        or (interface_verified and expected_ports == 0)
+        or (
+            interface_verified
+            and matched_ports + missing_ports + mismatched_ports != expected_ports
+        )
+        or (
+            not interface_verified
+            and any((expected_ports, matched_ports, missing_ports, mismatched_ports))
+        )
+    ):
+        return None
+    if not interface_applicable:
+        interface_earned = 40.0
+        interface_summary = "Interface contract is not required for this workspace."
+    elif not interface_verified:
+        interface_earned = 0.0
+        interface_summary = "No expected CPU interface contract was available to verify."
+    else:
+        interface_earned = 35 * matched_ports / expected_ports
+        interface_earned += 5 if extra_ports == 0 else 0
+        interface_summary = (
+            f"{matched_ports} of {expected_ports} required ports matched; "
+            f"{extra_ports} unexpected."
+        )
+
+    fingerprint_recorded = bool(reproducibility["input_fingerprint"])
+    merged_filelist = bool(reproducibility["merged_filelist"])
+    prepared_manifest = bool(reproducibility["prepared_manifest"])
+    reproducibility_earned = (
+        (5 if fingerprint_recorded else 0)
+        + (2.5 if merged_filelist else 0)
+        + (2.5 if prepared_manifest else 0)
+    )
+    components = [
+        _score_component(
+            "source_resolution",
+            "Source resolution",
+            source_earned,
+            30,
+            f"{rtl_resolved} of {rtl_total} RTL sources and "
+            f"{incdir_resolved} of {incdir_total} include directories resolved.",
+        ),
+        _score_component(
+            "top_resolution",
+            "Top resolution",
+            top_earned,
+            20,
+            (
+                "Top-module validation is not required for this workspace."
+                if not top_required
+                else f"{top_definitions} matching definition found; "
+                f"source {'is' if top_source_in_inputs else 'is not'} in prepared inputs."
+            ),
+        ),
+        _score_component(
+            "interface_contract",
+            "Interface contract",
+            interface_earned,
+            40,
+            interface_summary,
+        ),
+        _score_component(
+            "reproducibility",
+            "Reproducibility",
+            reproducibility_earned,
+            10,
+            (
+                f"Input fingerprint {'recorded' if fingerprint_recorded else 'missing'}; "
+                f"normalized outputs {'persisted' if merged_filelist and prepared_manifest else 'incomplete'}."
+            ),
+        ),
+    ]
+    return {
+        "label": "Preparation readiness",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
+
+
+def _valid_readiness_counts(value: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    return bool(value) and all(_is_count(value.get(field)) for field in fields)
+
+
+def _score_component(
+    component_id: str,
+    label: str,
+    earned: float,
+    possible: float,
+    summary: str,
+) -> dict[str, Any]:
+    return {
+        "id": component_id,
+        "label": label,
+        "earned": _round_score(earned),
+        "possible": possible,
+        "summary": summary,
+    }
+
+
+def _round_score(value: float) -> int | float:
+    rounded = round(float(value), 1)
+    return int(rounded) if rounded.is_integer() else rounded
 
 
 def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -548,12 +727,105 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in issues
     )
+    result.score = _rtl_review_score(summary, structural, precheck, precheck_state)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(precheck.get("top_module") or ""),
         "review_waivers": workspace.get("review_waivers", []),
     }
     return result
+
+
+def _rtl_review_score(
+    summary: dict[str, Any],
+    structural: dict[str, Any],
+    precheck: dict[str, Any],
+    precheck_state: str,
+) -> dict[str, Any] | None:
+    thresholds = _record(precheck.get("risk_thresholds"))
+    structural_fields = ("max_fanout", "max_fanin", "max_comb_depth")
+    if (
+        not _valid_count_fields(
+            summary, ("actionable_errors", "actionable_warnings")
+        )
+        or not _valid_count_fields(structural, structural_fields)
+        or not _valid_count_fields(thresholds, structural_fields)
+        or any(int(thresholds[field]) <= 0 for field in structural_fields)
+    ):
+        return None
+
+    errors = int(summary["actionable_errors"])
+    warnings = int(summary["actionable_warnings"])
+    precheck_earned = 30 if precheck_state == "pass" else 0
+    error_earned = max(0, 30 - errors * 10)
+    warning_earned = max(0, 15 - warnings * 3)
+
+    headroom_parts = (
+        ("max_fanout", 8.3),
+        ("max_fanin", 8.3),
+        ("max_comb_depth", 8.4),
+    )
+    headroom_available = precheck_state == "pass"
+    headroom_earned = (
+        sum(
+            possible
+            * min(
+                1.0,
+                int(thresholds[field]) / max(int(structural[field]), 1),
+            )
+            for field, possible in headroom_parts
+        )
+        if headroom_available
+        else 0
+    )
+    components = [
+        _score_component(
+            "structural_precheck",
+            "Structural precheck",
+            precheck_earned,
+            30,
+            (
+                "Yosys completed the CPU-only structural precheck."
+                if precheck_state == "pass"
+                else f"Yosys precheck state is {precheck_state}."
+            ),
+        ),
+        _score_component(
+            "actionable_errors",
+            "Actionable errors",
+            error_earned,
+            30,
+            f"{errors} actionable RTL error{'s' if errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "warning_hygiene",
+            "Warning hygiene",
+            warning_earned,
+            15,
+            f"{warnings} actionable RTL warning{'s' if warnings != 1 else ''} reported.",
+        ),
+        _score_component(
+            "structural_headroom",
+            "Structural headroom",
+            headroom_earned,
+            25,
+            (
+                f"Fanout {structural['max_fanout']}/{thresholds['max_fanout']}, "
+                f"fanin {structural['max_fanin']}/{thresholds['max_fanin']}, "
+                f"depth {structural['max_comb_depth']}/{thresholds['max_comb_depth']} "
+                "(measured/target)."
+                if headroom_available
+                else "Structural headroom is unavailable because the precheck did not pass."
+            ),
+        ),
+    ]
+    return {
+        "label": "RTL review quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -658,6 +930,7 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
             report, "elaboration_diagnostic", "report/elab_summary.json"
         )
     )
+    result.score = _elaboration_score(report, summary)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -665,6 +938,107 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _elaboration_score(
+    report: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any] | None:
+    compiler = _record(report.get("compiler"))
+    status = str(report.get("status", "")).strip().lower()
+    summary_status = str(summary.get("status", "")).strip().lower()
+    unresolved_modules = compiler.get("unresolved_modules")
+    if (
+        report.get("schema_version") != 2
+        or status not in {"pass", "fail"}
+        or summary_status != status
+        or not isinstance(report.get("returncode"), int)
+        or isinstance(report.get("returncode"), bool)
+        or not _valid_count_fields(
+            summary, ("errors", "warnings", "modules", "unresolved_modules")
+        )
+        or not isinstance(summary.get("top_found"), bool)
+        or compiler.get("source") != "slang"
+        or compiler.get("authoritative") is not True
+        or compiler.get("elaboration_mode") != "full"
+        or summary.get("elaboration_mode") != "full"
+        or not isinstance(unresolved_modules, list)
+        or not all(isinstance(item, str) for item in unresolved_modules)
+        or len(unresolved_modules) != int(summary["unresolved_modules"])
+    ):
+        return None
+
+    errors = int(summary["errors"])
+    warnings = int(summary["warnings"])
+    unresolved = int(summary["unresolved_modules"])
+    returncode = int(report["returncode"])
+    compiler_passed = status == "pass" and returncode == 0 and errors == 0
+    if status == "pass" and not compiler_passed:
+        return None
+    if status == "fail" and returncode == 0 and errors == 0:
+        return None
+
+    compiler_earned = 25 if compiler_passed else 0
+    error_earned = max(0, 30 - errors * 10)
+    hierarchy_earned = max(0, 20 - unresolved * 5) if compiler_passed else 0
+    top_earned = 15 if compiler_passed and summary["top_found"] is True else 0
+    warning_earned = max(0, 10 - warnings * 2)
+    components = [
+        _score_component(
+            "compiler_execution",
+            "Compiler execution",
+            compiler_earned,
+            25,
+            (
+                "Slang completed an authoritative full elaboration."
+                if compiler_passed
+                else f"Slang full elaboration failed with return code {returncode}."
+            ),
+        ),
+        _score_component(
+            "diagnostic_errors",
+            "Diagnostic errors",
+            error_earned,
+            30,
+            f"{errors} compiler error{'s' if errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "hierarchy_closure",
+            "Hierarchy closure",
+            hierarchy_earned,
+            20,
+            (
+                f"{unresolved} unresolved module{'s' if unresolved != 1 else ''} "
+                "in the authoritative compiler result."
+                if compiler_passed
+                else "Hierarchy closure is unproven because full elaboration did not pass."
+            ),
+        ),
+        _score_component(
+            "top_resolution",
+            "Top resolution",
+            top_earned,
+            15,
+            (
+                f"Top module {summary.get('top_module') or '<unknown>'} resolved by Slang."
+                if compiler_passed and summary["top_found"] is True
+                else "Top resolution is unproven by a successful full elaboration."
+            ),
+        ),
+        _score_component(
+            "warning_hygiene",
+            "Warning hygiene",
+            warning_earned,
+            10,
+            f"{warnings} compiler warning{'s' if warnings != 1 else ''} reported.",
+        ),
+    ]
+    return {
+        "label": "Elaboration quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -737,6 +1111,7 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in diagnostics
     )
+    result.score = _lint_score(report, summary)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -747,6 +1122,121 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _lint_score(
+    report: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any] | None:
+    raw_diagnostics = report.get("diagnostics")
+    diagnostics = _records(raw_diagnostics)
+    status = str(report.get("status", "")).strip().lower()
+    returncode = report.get("returncode")
+    if (
+        report.get("schema_version") != 1
+        or report.get("tool") != "verilator"
+        or status not in {"pass", "fail"}
+        or not isinstance(returncode, int)
+        or isinstance(returncode, bool)
+        or not isinstance(raw_diagnostics, list)
+        or len(diagnostics) != len(raw_diagnostics)
+        or not _valid_count_fields(
+            summary,
+            (
+                "errors",
+                "warnings",
+                "diagnostics",
+                "cpu_errors",
+                "cpu_warnings",
+                "actionable_diagnostics",
+            ),
+        )
+        or str(summary.get("status", "")).strip().lower() != status
+    ):
+        return None
+
+    cpu_diagnostics = [
+        item
+        for item in diagnostics
+        if item.get("actionable") is True and item.get("ownership") == "cpu"
+    ]
+    cpu_errors = sum(item.get("severity") == "error" for item in cpu_diagnostics)
+    cpu_warnings = sum(item.get("severity") == "warning" for item in cpu_diagnostics)
+    total_errors = sum(item.get("severity") == "error" for item in diagnostics)
+    total_warnings = sum(item.get("severity") == "warning" for item in diagnostics)
+    if (
+        any(
+            item.get("severity") not in {"error", "warning"}
+            or not isinstance(item.get("code"), str)
+            or not isinstance(item.get("ownership"), str)
+            or not isinstance(item.get("actionable"), bool)
+            for item in diagnostics
+        )
+        or int(summary["diagnostics"]) != len(diagnostics)
+        or int(summary["errors"]) != total_errors
+        or int(summary["warnings"]) != total_warnings
+        or int(summary["cpu_errors"]) != cpu_errors
+        or int(summary["cpu_warnings"]) != cpu_warnings
+        or int(summary["actionable_diagnostics"]) != len(cpu_diagnostics)
+        or (status == "pass") != (returncode == 0 and total_errors == 0)
+    ):
+        return None
+
+    # A non-zero Verilator exit can contain unclassified fatal diagnostics (for
+    # example, a missing top module).  Those records do not prove that the CPU
+    # was fully analyzed, so cleanliness credit is only valid after a clean exit.
+    analysis_completed = returncode == 0
+    cpu_rule_count = len(
+        {
+            str(item["code"]).strip().upper()
+            for item in cpu_diagnostics
+            if str(item["code"]).strip()
+        }
+    )
+    execution_earned = 25 if analysis_completed else 0
+    error_earned = max(0, 40 - cpu_errors * 20) if analysis_completed else 0
+    warning_earned = max(0, 25 - cpu_warnings * 2.5) if analysis_completed else 0
+    rule_earned = max(0, 10 - cpu_rule_count * 2) if analysis_completed else 0
+    components = [
+        _score_component(
+            "analysis_execution",
+            "Analysis execution",
+            execution_earned,
+            25,
+            (
+                "Verilator completed and produced classified lint diagnostics."
+                if analysis_completed
+                else "Verilator analysis did not complete; CPU cleanliness is unproven."
+            ),
+        ),
+        _score_component(
+            "cpu_errors",
+            "CPU errors",
+            error_earned,
+            40,
+            f"{cpu_errors} actionable CPU error{'s' if cpu_errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "cpu_warnings",
+            "CPU warnings",
+            warning_earned,
+            25,
+            f"{cpu_warnings} actionable CPU warning{'s' if cpu_warnings != 1 else ''} reported.",
+        ),
+        _score_component(
+            "cpu_rule_breadth",
+            "CPU rule breadth",
+            rule_earned,
+            10,
+            f"{cpu_rule_count} distinct lint rule{'s' if cpu_rule_count != 1 else ''} affecting CPU-owned RTL.",
+        ),
+    ]
+    return {
+        "label": "CPU lint quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -921,6 +1411,7 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 reason,
             )
         )
+    result.score = _simulation_score(report, cases)
     sim_cflags = effective_sim_cflags(workspace)
     sim_build_directory = Path(step.directory) / "obj_dir"
     sim_dependencies = _simulation_dependency_map(workspace, sim_build_directory)
@@ -969,6 +1460,173 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         "resource_versions": _record(workspace.get("resource_versions")),
     }
     return result
+
+
+def _simulation_score(
+    report: dict[str, Any], cases: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    suite = report.get("suite")
+    run_id = report.get("run_id")
+    regression = report.get("regression")
+    case_names = [str(item.get("name", "")) for item in cases]
+    if (
+        report.get("schema_version") != 1
+        or not isinstance(suite, str)
+        or not suite.strip()
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+        or not cases
+        or len(set(case_names)) != len(case_names)
+        or not all(_valid_scored_sim_case(item, suite, run_id) for item in cases)
+        or not _valid_sim_regression(regression, cases)
+    ):
+        return None
+
+    total = len(cases)
+    passed = sum(item["ok"] is True for item in cases)
+    pass_rate = passed / total
+    case_earned = 50 * pass_rate
+
+    difftest_cases = [
+        _record(_record(item["metrics"]).get("difftest"))
+        for item in cases
+        if _record(_record(item["metrics"]).get("difftest")).get("enabled") is True
+    ]
+    difftest_passed = sum(
+        str(item.get("status", "")).lower() == "passed" for item in difftest_cases
+    )
+    if difftest_cases:
+        difftest_earned = 20 * difftest_passed / len(difftest_cases)
+        difftest_summary = (
+            f"{difftest_passed} of {len(difftest_cases)} Difftest-enabled cases "
+            "matched the architectural reference."
+        )
+    else:
+        difftest_earned = 10 * pass_rate
+        difftest_summary = (
+            "Difftest was not enabled; half credit reflects self-checking test outcomes only."
+        )
+
+    measured_cases = sum(
+        item["ok"] is True and _is_count(_record(item["metrics"]).get("cycles"))
+        for item in cases
+    )
+    telemetry_earned = 15 * measured_cases / total
+
+    regression_record = _record(regression)
+    has_baseline = regression_record["has_baseline"] is True
+    new_failures = _string_list(regression_record.get("new_failures"))
+    removed_cases = _string_list(regression_record.get("removed"))
+    if has_baseline:
+        regression_earned = 10 if not new_failures and not removed_cases else 0
+        regression_summary = (
+            f"{len(new_failures)} new failures and {len(removed_cases)} removed cases "
+            "relative to the previous run."
+        )
+    else:
+        regression_earned = 5 if passed == total else 0
+        regression_summary = (
+            "This run establishes the first passing baseline; stability is not proven yet."
+            if passed == total
+            else "A passing regression baseline was not established."
+        )
+
+    cycle_changes = _records(regression_record.get("cycle_changes"))
+    incomparable_cases = {
+        *_string_list(regression_record.get("new_failures")),
+        *_string_list(regression_record.get("persistent_failures")),
+        *_string_list(regression_record.get("fixed")),
+    }
+    added_cases = set(_string_list(regression_record.get("added")))
+    comparable_cycle_changes = [
+        item
+        for item in cycle_changes
+        if item.get("name") not in incomparable_cases
+        and item.get("name") not in added_cases
+        and item.get("delta_percent") is not None
+    ]
+    eligible_cycle_cases = {
+        str(item["name"])
+        for item in cases
+        if item["ok"] is True
+        and item["name"] not in incomparable_cases
+        and item["name"] not in added_cases
+    }
+    if has_baseline and comparable_cycle_changes:
+        positive_changes = [
+            float(item["delta_percent"])
+            for item in comparable_cycle_changes
+            if float(item["delta_percent"]) > 0
+        ]
+        largest_increase = max(positive_changes, default=0.0)
+        coverage = min(
+            1.0,
+            len(comparable_cycle_changes) / len(eligible_cycle_cases),
+        )
+        cycle_earned = max(0, 5 - min(largest_increase, 10) * 0.5) * coverage
+        cycle_summary = (
+            f"Largest measured cycle increase versus the previous run: {largest_increase:.1f}%."
+        )
+        if coverage < 1:
+            cycle_summary += (
+                f" Comparable cycle coverage: {len(comparable_cycle_changes)} of "
+                f"{len(eligible_cycle_cases)} eligible cases."
+            )
+    elif has_baseline:
+        cycle_earned = 0
+        cycle_summary = "No comparable cycle measurements were available in the baseline."
+    else:
+        cycle_earned = 2.5 if passed == total and measured_cases == total else 0
+        cycle_summary = (
+            "Cycle stability will be scored after a comparable rerun."
+            if cycle_earned
+            else "A passing run with complete cycle telemetry is required for a baseline."
+        )
+
+    components = [
+        _score_component(
+            "required_cases",
+            "Required cases",
+            case_earned,
+            50,
+            f"{passed} of {total} required simulation cases passed.",
+        ),
+        _score_component(
+            "difftest_confidence",
+            "Difftest confidence",
+            difftest_earned,
+            20,
+            difftest_summary,
+        ),
+        _score_component(
+            "cycle_telemetry",
+            "Cycle telemetry",
+            telemetry_earned,
+            15,
+            f"{measured_cases} of {total} cases passed and reported a cycle count.",
+        ),
+        _score_component(
+            "regression_stability",
+            "Regression stability",
+            regression_earned,
+            10,
+            regression_summary,
+        ),
+        _score_component(
+            "cycle_stability",
+            "Cycle stability",
+            cycle_earned,
+            5,
+            cycle_summary,
+        ),
+    ]
+    return {
+        "label": "Simulation verification",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _metric(
@@ -2220,6 +2878,134 @@ def _valid_sim_case(value: dict[str, Any]) -> bool:
         and _valid_sim_metrics(metrics)
         and (failure is None or isinstance(failure, dict))
     )
+
+
+def _valid_scored_sim_case(value: dict[str, Any], suite: str, run_id: str) -> bool:
+    returncode = value.get("returncode")
+    image_sha256 = value.get("image_sha256")
+    metrics = _record(value.get("metrics"))
+    termination = metrics.get("termination")
+    difftest = _record(metrics.get("difftest"))
+    ok = value.get("ok") is True
+    return (
+        isinstance(returncode, int)
+        and not isinstance(returncode, bool)
+        and isinstance(image_sha256, str)
+        and (not image_sha256 or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is not None)
+        and value.get("suite") == suite
+        and value.get("run_id") == run_id
+        and isinstance(termination, str)
+        and termination
+        in {
+            "bad_trap",
+            "difftest_incomplete",
+            "difftest_mismatch",
+            "good_trap",
+            "process_error",
+            "timeout",
+            "unknown",
+        }
+        and isinstance(metrics.get("timeout_accepted"), bool)
+        and isinstance(difftest.get("enabled"), bool)
+        and isinstance(difftest.get("status"), str)
+        and (not ok or returncode == 0)
+        and (not ok or termination == "good_trap")
+        and (
+            (
+                difftest["enabled"] is False
+                and str(difftest["status"]).lower() == "disabled"
+            )
+            or (
+                difftest["enabled"] is True
+                and ok
+                and str(difftest["status"]).lower() == "passed"
+                and _is_count(difftest.get("compared"))
+                and difftest["compared"] > 0
+            )
+            or (
+                difftest["enabled"] is True
+                and not ok
+                and str(difftest["status"]).lower() in {"incomplete", "mismatch"}
+            )
+        )
+    )
+
+
+def _valid_sim_regression(value: Any, cases: list[dict[str, Any]]) -> bool:
+    if not isinstance(value, dict) or not isinstance(value.get("has_baseline"), bool):
+        return False
+    baseline_run_id = value.get("baseline_run_id")
+    list_fields = ("new_failures", "persistent_failures", "fixed", "added", "removed")
+    if not isinstance(baseline_run_id, str) or any(
+        not isinstance(value.get(field), list)
+        or not all(isinstance(item, str) and bool(item) for item in value[field])
+        or len(set(value[field])) != len(value[field])
+        for field in list_fields
+    ):
+        return False
+
+    by_name = {str(item["name"]): item for item in cases}
+    failed_names = {name for name, item in by_name.items() if item["ok"] is False}
+    passed_names = set(by_name) - failed_names
+    new_failures = set(value["new_failures"])
+    persistent_failures = set(value["persistent_failures"])
+    if (
+        (
+            value["has_baseline"] is True
+            and (
+                new_failures | persistent_failures != failed_names
+                or not new_failures.isdisjoint(persistent_failures)
+            )
+        )
+        or not set(value["fixed"]).issubset(passed_names)
+        or not set(value["added"]).issubset(by_name)
+    ):
+        return False
+
+    raw_changes = value.get("cycle_changes")
+    changes = _records(raw_changes)
+    if not isinstance(raw_changes, list) or len(changes) != len(raw_changes):
+        return False
+    change_names: set[str] = set()
+    for item in changes:
+        name = item.get("name")
+        image_sha256 = item.get("image_sha256")
+        previous = item.get("previous")
+        current = item.get("current")
+        delta = item.get("delta")
+        delta_percent = item.get("delta_percent")
+        if (
+            not isinstance(name, str)
+            or name not in by_name
+            or name in change_names
+            or not isinstance(image_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None
+            or image_sha256 != by_name[name].get("image_sha256")
+            or not _is_count(previous)
+            or not _is_count(current)
+            or not isinstance(delta, int)
+            or isinstance(delta, bool)
+        ):
+            return False
+        expected_percent = (current - previous) / previous * 100 if previous else None
+        if (
+            current != _record(by_name[name].get("metrics")).get("cycles")
+            or delta != current - previous
+            or (expected_percent is None and delta_percent is not None)
+            or (
+                expected_percent is not None
+                and (
+                    not _is_number(delta_percent)
+                    or not math.isclose(float(delta_percent), expected_percent)
+                )
+            )
+        ):
+            return False
+        change_names.add(name)
+
+    if value["has_baseline"] is False:
+        return not baseline_run_id and all(not value[field] for field in list_fields) and not changes
+    return bool(baseline_run_id)
 
 
 def _valid_sim_metrics(value: Any) -> bool:
