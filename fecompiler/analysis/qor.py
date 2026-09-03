@@ -930,6 +930,7 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
             report, "elaboration_diagnostic", "report/elab_summary.json"
         )
     )
+    result.score = _elaboration_score(report, summary)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -937,6 +938,107 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ),
     }
     return result
+
+
+def _elaboration_score(
+    report: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any] | None:
+    compiler = _record(report.get("compiler"))
+    status = str(report.get("status", "")).strip().lower()
+    summary_status = str(summary.get("status", "")).strip().lower()
+    unresolved_modules = compiler.get("unresolved_modules")
+    if (
+        report.get("schema_version") != 2
+        or status not in {"pass", "fail"}
+        or summary_status != status
+        or not isinstance(report.get("returncode"), int)
+        or isinstance(report.get("returncode"), bool)
+        or not _valid_count_fields(
+            summary, ("errors", "warnings", "modules", "unresolved_modules")
+        )
+        or not isinstance(summary.get("top_found"), bool)
+        or compiler.get("source") != "slang"
+        or compiler.get("authoritative") is not True
+        or compiler.get("elaboration_mode") != "full"
+        or summary.get("elaboration_mode") != "full"
+        or not isinstance(unresolved_modules, list)
+        or not all(isinstance(item, str) for item in unresolved_modules)
+        or len(unresolved_modules) != int(summary["unresolved_modules"])
+    ):
+        return None
+
+    errors = int(summary["errors"])
+    warnings = int(summary["warnings"])
+    unresolved = int(summary["unresolved_modules"])
+    returncode = int(report["returncode"])
+    compiler_passed = status == "pass" and returncode == 0 and errors == 0
+    if status == "pass" and not compiler_passed:
+        return None
+    if status == "fail" and returncode == 0 and errors == 0:
+        return None
+
+    compiler_earned = 25 if compiler_passed else 0
+    error_earned = max(0, 30 - errors * 10)
+    hierarchy_earned = max(0, 20 - unresolved * 5) if compiler_passed else 0
+    top_earned = 15 if compiler_passed and summary["top_found"] is True else 0
+    warning_earned = max(0, 10 - warnings * 2)
+    components = [
+        _score_component(
+            "compiler_execution",
+            "Compiler execution",
+            compiler_earned,
+            25,
+            (
+                "Slang completed an authoritative full elaboration."
+                if compiler_passed
+                else f"Slang full elaboration failed with return code {returncode}."
+            ),
+        ),
+        _score_component(
+            "diagnostic_errors",
+            "Diagnostic errors",
+            error_earned,
+            30,
+            f"{errors} compiler error{'s' if errors != 1 else ''} reported.",
+        ),
+        _score_component(
+            "hierarchy_closure",
+            "Hierarchy closure",
+            hierarchy_earned,
+            20,
+            (
+                f"{unresolved} unresolved module{'s' if unresolved != 1 else ''} "
+                "in the authoritative compiler result."
+                if compiler_passed
+                else "Hierarchy closure is unproven because full elaboration did not pass."
+            ),
+        ),
+        _score_component(
+            "top_resolution",
+            "Top resolution",
+            top_earned,
+            15,
+            (
+                f"Top module {summary.get('top_module') or '<unknown>'} resolved by Slang."
+                if compiler_passed and summary["top_found"] is True
+                else "Top resolution is unproven by a successful full elaboration."
+            ),
+        ),
+        _score_component(
+            "warning_hygiene",
+            "Warning hygiene",
+            warning_earned,
+            10,
+            f"{warnings} compiler warning{'s' if warnings != 1 else ''} reported.",
+        ),
+    ]
+    return {
+        "label": "Elaboration quality",
+        "value": _round_score(sum(component["earned"] for component in components)),
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": components,
+    }
 
 
 def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:

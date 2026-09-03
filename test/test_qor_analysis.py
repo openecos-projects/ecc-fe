@@ -609,6 +609,129 @@ def test_qor_hotspots_preserve_diagnostic_severity(tmp_path: Path) -> None:
     ]
 
 
+def test_elaboration_qor_explains_authoritative_compiler_score(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "elab", "slang")
+    _write(
+        Path(step.report["dir"]) / "elab_summary.json",
+        {
+            "schema_version": 2,
+            "status": "pass",
+            "returncode": 0,
+            "summary": {
+                "status": "pass",
+                "errors": 0,
+                "warnings": 2,
+                "modules": 116,
+                "unresolved_modules": 0,
+                "top_module": "ecos_sim_top",
+                "top_found": True,
+                "elaboration_mode": "full",
+            },
+            "compiler": {
+                "source": "slang",
+                "authoritative": True,
+                "elaboration_mode": "full",
+                "unresolved_modules": [],
+            },
+            "diagnostics": [],
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"] == {
+        "label": "Elaboration quality",
+        "value": 96,
+        "maximum": 100,
+        "scoring_version": 1,
+        "components": [
+            {
+                "id": "compiler_execution",
+                "label": "Compiler execution",
+                "earned": 25,
+                "possible": 25,
+                "summary": "Slang completed an authoritative full elaboration.",
+            },
+            {
+                "id": "diagnostic_errors",
+                "label": "Diagnostic errors",
+                "earned": 30,
+                "possible": 30,
+                "summary": "0 compiler errors reported.",
+            },
+            {
+                "id": "hierarchy_closure",
+                "label": "Hierarchy closure",
+                "earned": 20,
+                "possible": 20,
+                "summary": "0 unresolved modules in the authoritative compiler result.",
+            },
+            {
+                "id": "top_resolution",
+                "label": "Top resolution",
+                "earned": 15,
+                "possible": 15,
+                "summary": "Top module ecos_sim_top resolved by Slang.",
+            },
+            {
+                "id": "warning_hygiene",
+                "label": "Warning hygiene",
+                "earned": 6,
+                "possible": 10,
+                "summary": "2 compiler warnings reported.",
+            },
+        ],
+    }
+
+
+def test_elaboration_qor_does_not_promote_source_scan_on_compiler_failure(
+    tmp_path: Path,
+) -> None:
+    workspace, step = _step(tmp_path, "elab", "slang")
+    _write(
+        Path(step.report["dir"]) / "elab_summary.json",
+        {
+            "schema_version": 2,
+            "status": "fail",
+            "returncode": -9,
+            "summary": {
+                "status": "fail",
+                "errors": 1,
+                "warnings": 0,
+                "modules": 12,
+                "unresolved_modules": 1,
+                "top_module": "ecos_sim_top",
+                "top_found": True,
+                "elaboration_mode": "full",
+            },
+            "compiler": {
+                "source": "slang",
+                "authoritative": True,
+                "elaboration_mode": "full",
+                "unresolved_modules": ["missing_cpu"],
+            },
+            "diagnostics": [
+                {
+                    "severity": "error",
+                    "message": "unknown module 'missing_cpu'",
+                }
+            ],
+        },
+    )
+
+    write_step_qor(step, workspace, False)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "blocked"
+    assert summary["score"]["value"] == 30
+    assert summary["score"]["components"][2]["earned"] == 0
+    assert summary["score"]["components"][3]["earned"] == 0
+
+
 def test_blocks_failed_simulation_and_records_hotspot(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "sim", "verilator")
     _write(
