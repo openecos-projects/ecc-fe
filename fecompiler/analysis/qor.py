@@ -527,8 +527,9 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
             reproducibility_earned,
             10,
             (
-                f"Input fingerprint {'recorded' if fingerprint_recorded else 'missing'}; "
-                f"normalized outputs {'persisted' if merged_filelist and prepared_manifest else 'incomplete'}."
+                f"Input snapshot {'tracked' if fingerprint_recorded else 'not tracked'}; "
+                f"normalized input manifest and file list "
+                f"{'persisted' if merged_filelist and prepared_manifest else 'incomplete'}."
             ),
         ),
     ]
