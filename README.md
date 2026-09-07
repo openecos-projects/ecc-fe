@@ -14,6 +14,42 @@ The default flow is:
 prepare -> review -> elab -> lint -> sim
 ```
 
+## Command Line
+
+Install the published CLI and required frontend resources on Linux:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/openecos-projects/ecc-fe/main/docs/ecc-fe-cli-setup.sh \
+  -o /tmp/ecc-fe-cli-setup.sh
+sh /tmp/ecc-fe-cli-setup.sh
+```
+
+The project-oriented CLI can create and run a frontend workspace without the
+desktop application:
+
+```bash
+ecc-fe init --workspace ./frontend-demo
+ecc-fe doctor --workspace ./frontend-demo
+ecc-fe param list --workspace ./frontend-demo
+ecc-fe run --workspace ./frontend-demo
+ecc-fe status --workspace ./frontend-demo
+ecc-fe report qor --workspace ./frontend-demo
+```
+
+Install published runtime dependencies with
+`ecc-fe resource install --required`. The CLI and Electron share the same XDG
+resource manifest and managed tool directories. See
+[`docs/ecc-fe-cli.cn.md`](docs/ecc-fe-cli.cn.md) for the user guide and
+[`docs/specification/cli-design.md`](docs/specification/cli-design.md) for the
+command and output contract.
+
+Each new workspace includes `ecc-fe.toml`. Its `[params]` table is the CLI
+override layer; `ecc-fe param set/unset` updates it, synchronizes the existing
+workspace parameter file, and invalidates stale flow results. Existing desktop
+workspaces without this file remain readable and gain it only on the first
+parameter mutation.
+
 ## Architecture Overview
 
 ![ECC-FE system architecture](docs/architecture/system-overview.svg)

@@ -113,7 +113,7 @@ prepare_runtime() {
   fi
 
   mkdir -p "${root}"
-  cp -a fecompiler README.md LICENSE pyproject.toml BUILD.bazel MODULE.bazel MODULE.bazel.lock "${root}/"
+  cp -a fecompiler README.md LICENSE pyproject.toml requirements-bazel.lock BUILD.bazel MODULE.bazel MODULE.bazel.lock "${root}/"
   mkdir -p "${root}/bin"
   install -m 0755 dist/ecc-fe "${root}/bin/ecc-fe"
   rm -rf "${root}/fecompiler/thirdparty"

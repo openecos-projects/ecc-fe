@@ -16,6 +16,7 @@ from fecompiler.data.workspace import (
     load_workspace,
 )
 from fecompiler.engine.flow import EngineFlow
+from fecompiler.resources import activate_managed_resources
 from fecompiler.utility.json import json_read, json_write
 
 
@@ -269,19 +270,9 @@ def _run_full_flow(engine: EngineFlow, rerun: bool) -> int:
     return 0
 
 
-def run(argv: Sequence[str] | None = None) -> int:
-    raw_argv = list(argv) if argv is not None else sys.argv[1:]
-    if raw_argv[:1] == ["rpc"]:
-        from fecompiler.cli.rpc import run as run_rpc
-
-        return run_rpc(raw_argv[1:])
-    if raw_argv[:1] == ["workspace"]:
-        from fecompiler.cli.workspace import run as run_workspace
-
-        return run_workspace(raw_argv[1:])
-
+def _run_legacy(raw_argv: Sequence[str]) -> int:
     parser = build_parser()
-    args = parser.parse_args(raw_argv)
+    args = parser.parse_args(list(raw_argv))
     sim_images = _resolve_sim_images(args)
     if args.sim_all_tests and not sim_images and not args.sim_build_all_programs:
         return _print_error(f"no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}")
@@ -313,6 +304,65 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.sim_only:
         return _run_sim_only(engine)
     return _run_full_flow(engine, rerun=args.rerun)
+
+
+def _run_root_cli(raw_argv: Sequence[str]) -> int:
+    import typer
+
+    from fecompiler.cli.app import app
+
+    command = typer.main.get_command(app)
+    try:
+        result = command.main(
+            args=list(raw_argv),
+            prog_name="ecc-fe",
+            standalone_mode=False,
+        )
+    except typer.Exit as error:
+        return int(error.exit_code or 0)
+    except typer.Abort:
+        typer.echo("Aborted!", err=True)
+        return 130
+    except Exception as error:
+        show = getattr(error, "show", None)
+        exit_code = getattr(error, "exit_code", None)
+        if callable(show) and isinstance(exit_code, int):
+            show()
+            return exit_code
+        raise
+    return int(result or 0)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    activate_managed_resources()
+    if raw_argv[:1] == ["rpc"]:
+        from fecompiler.cli.rpc import run as run_rpc
+
+        return run_rpc(raw_argv[1:])
+    if raw_argv[:1] == ["workspace"]:
+        from fecompiler.cli.workspace import run as run_workspace
+
+        return run_workspace(raw_argv[1:])
+    root_commands = {
+        "version",
+        "init",
+        "run",
+        "doctor",
+        "status",
+        "log",
+        "config",
+        "resource",
+        "param",
+        "catalog",
+        "report",
+    }
+    if raw_argv[:1] and raw_argv[0] not in root_commands and any(
+        argument == "--design" or argument.startswith("--design=")
+        for argument in raw_argv
+    ):
+        return _run_legacy(raw_argv)
+    return _run_root_cli(raw_argv)
 
 
 def main() -> None:
