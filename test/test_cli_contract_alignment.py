@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click import unstyle
 
 from fecompiler.application import workspace_service
 from fecompiler.application.workspace_service import workspace_application
@@ -436,7 +437,7 @@ def test_check_alias_and_shared_command_contract(monkeypatch, tmp_path, capsys) 
     )
 
     assert cli_main.run(["run", "--help"]) == 0
-    help_text = capsys.readouterr().out
+    help_text = unstyle(capsys.readouterr().out)
     for option in (
         "--project",
         "--run-id",
