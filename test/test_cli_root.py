@@ -29,18 +29,16 @@ def _custom_cpu_source(module_name: str = "top") -> str:
     return f"module {module_name}(\n" + ",\n".join(ports) + "\n);\nendmodule\n"
 
 
-def test_root_version_json_is_one_records_envelope(
-    monkeypatch, tmp_path, capsys
-) -> None:
+def test_root_version_json_matches_ecc_schema(monkeypatch, tmp_path, capsys) -> None:
     _isolate_xdg(monkeypatch, tmp_path)
 
     exit_code = cli_main.run(["version", "--json"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert list(payload) == ["records"]
-    assert payload["records"][0]["kind"] == "version"
-    assert payload["records"][0]["schema_version"] == 1
+    assert payload["schema_version"] == 1
+    assert payload["runtime"] == "ECC-FE CLI"
+    assert "ecc_fe" in payload
 
 
 def test_init_defaults_to_runnable_catalog_core(monkeypatch, tmp_path, capsys) -> None:

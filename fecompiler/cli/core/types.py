@@ -15,6 +15,12 @@ class OutputMode(str, Enum):
 class CommandContext:
     workspace_dir: str
     output_mode: OutputMode
+    project_dir: str
+    config_dir: str
+    project: str | None = None
+    run_id: str | None = None
+    workspace_mode: bool = True
+    template_dir: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

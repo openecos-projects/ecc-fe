@@ -348,6 +348,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         "version",
         "init",
         "run",
+        "check",
         "doctor",
         "status",
         "log",

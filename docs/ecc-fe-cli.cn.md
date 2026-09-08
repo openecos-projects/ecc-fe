@@ -51,38 +51,55 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 最短工作流
 
-创建一个使用内置 PicoRV32 的工作区：
+创建一个使用内置 PicoRV32 的工程：
 
 ```bash
-mkdir frontend-demo
+ecc-fe init frontend-demo
 cd frontend-demo
-ecc-fe init
-ecc-fe doctor
+ecc-fe check
 ecc-fe param list
 ecc-fe run
 ecc-fe status
 ecc-fe report qor
 ```
 
-运行单个步骤并查看日志：
+每次工程运行都位于独立的 `runs/<run-id>` 目录。创建另一个实验运行：
 
 ```bash
-ecc-fe run --step lint --rerun
-ecc-fe log --step lint
+ecc-fe run --run-id faster-sim --set sim.compile_preset=speed
+ecc-fe status --run-id faster-sim
+ecc-fe log sim --run-id faster-sim
+ecc-fe config sim --resolved --run-id faster-sim
 ```
+
+已存在的 run 默认不会被覆盖；确认替换时显式使用 `--overwrite`。覆盖前 CLI 会
+验证目标确实是 ECC-FE run，并拒绝项目根目录、`runs/` 容器、内部模板及符号链接
+重定向的路径。
+
+ECOS Studio 创建的旧工作区和 M3 工作区仍可直接使用。恢复、从指定步骤重跑、
+只运行一个步骤并查看日志：
+
+```bash
+ecc-fe run --workspace ./legacy-workspace --resume
+ecc-fe run --workspace ./legacy-workspace --from review
+ecc-fe run --workspace ./legacy-workspace --only lint --force
+ecc-fe log lint --workspace ./legacy-workspace
+```
+
+原有 `--step lint --rerun` 和 `log --step lint` 写法继续兼容。
 
 自定义 CPU 使用 filelist：
 
 ```bash
-ecc-fe init \
-  --workspace ./my-cpu \
+ecc-fe init ./my-cpu \
   --design my-cpu \
   --cpu-filelist ./rtl/filelist.cpu.f
 ```
 
 ## 环境诊断
 
-完整诊断：
+`check` 是与 ECC 一致的工程检查入口；`doctor` 保留为环境诊断兼容名称，两者执行
+相同检查。完整诊断：
 
 ```bash
 ecc-fe doctor
@@ -134,10 +151,11 @@ eval "$(ecc-fe resource env --shell zsh)"
 
 ## 工程配置和参数
 
-`ecc-fe init` 会在工作区根目录生成 `ecc-fe.toml`。其中 `[design]`、
-`[frontend]` 和 `[defaults]` 是创建工作区时的快照；`[params]` 是 CLI
-实际应用的参数覆盖层。原有 `home/parameters.json` 仍是流程引擎和桌面端读取的
-运行时文件，因此不会破坏已有 workspace/RPC 协议。
+`ecc-fe init <工程目录>` 会生成工程级 `ecc-fe.toml`、`runs/` 和内部的未执行
+工作区模板。其中 `[design]`、`[frontend]` 和 `[defaults]` 是创建工程时的快照，
+`[flow].run` 是未指定 `--run-id` 时使用的 run，`[params]` 是后续 run 的持久参数
+覆盖层。每个 run 中的 `home/parameters.json` 仍是流程引擎和桌面端读取的运行时
+文件，因此不会破坏已有 workspace/RPC 协议。
 
 查看常用参数或按步骤筛选：
 
@@ -160,9 +178,13 @@ ecc-fe param unset design.frequency_mhz
 
 参数是强类型的：布尔值接受 `true/false`，整数和浮点数会检查范围，列表使用
 JSON 字符串数组。以 `-` 开头的值使用 `--value=<值>`，避免被命令行解析器当作
-选项。每次有效变更都会同步到 `home/parameters.json` 并重置旧流程状态，防止复用
-过期结果。也可以直接编辑 `[params]`；下一次 `ecc-fe run` 会先校验、同步并重置
-受影响的流程。
+选项。在工程模式中，每次有效变更只更新工程配置，供后续新 run 使用；已存在的
+run 保持可复现。单次实验使用可重复的 `ecc-fe run --set key=value`，覆盖会写入
+该 run 的 `home/cli-param-overrides.json`，不会写回工程配置。
+
+在直接工作区模式中，每次有效变更仍会同步到 `home/parameters.json` 并重置旧
+流程状态，防止复用过期结果。也可以直接编辑 `[params]`；下一次
+`ecc-fe run --workspace ...` 会先校验、同步并重置受影响的流程。
 
 旧版桌面工作区没有 `ecc-fe.toml` 时仍可直接查询。第一次执行 `param set` 时，
 CLI 会根据现有 workspace 生成配置文件；只读命令不会修改旧工作区。
@@ -214,6 +236,9 @@ ecc-fe report qor --json
 - `--plain`：每行一个稳定的 `key=value` 记录，适合 shell。
 - `--json`：单个 `{"records": [...]}` 对象。
 - `--jsonl`：每行一个 JSON 对象，适合流式处理。
+
+与 ECC 一致，`ecc-fe version --json` 是例外：它直接输出 schema 对象，不包裹
+`records`。
 
 退出码为 `0` 表示成功，`1` 表示业务或工具失败，`2` 表示参数错误，`130`
 表示用户取消。

@@ -287,6 +287,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(run_flow)
     run_flow.add_argument("--directory", required=True)
     run_flow.add_argument("--rerun", action="store_true")
+    run_flow.add_argument(
+        "--from",
+        dest="from_step",
+        default="",
+        help="Re-execute a step and its suffix",
+    )
 
     run_step = subparsers.add_parser("run-step", help="Run one frontend flow step")
     _add_json_flag(run_step)
@@ -630,6 +636,19 @@ def _load(args: argparse.Namespace) -> CliResult:
 def _run_flow(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="rtl2gds")
     _repair_workspace_sim_defaults(workspace)
+    from_step = str(getattr(args, "from_step", "")).strip()
+    step_names = [str(step.name) for step in engine.workspace_steps]
+    if from_step and from_step not in step_names:
+        raise WorkspaceCliError(
+            "rtl2gds",
+            "failed",
+            f"unknown frontend flow step: {from_step}",
+            data={
+                "directory": workspace["directory"],
+                "step": from_step,
+                "valid_steps": step_names,
+            },
+        )
     if args.rerun:
         engine.clear_states()
         _clear_frontend_step_details(engine)
@@ -644,7 +663,12 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
     failed_step = ""
     failed_state = StateEnum.Incomplete
     prepare_refreshed = False
-    for workspace_step in engine.workspace_steps:
+    start_index = step_names.index(from_step) if from_step else 0
+    selected_steps = engine.workspace_steps[start_index:]
+    if from_step:
+        for workspace_step in selected_steps:
+            _remove_frontend_step_detail(workspace_step)
+    for workspace_step in selected_steps:
         if not prepare_refreshed and workspace_step.name != "prepare":
             prepare_refreshed = _refresh_prepare_if_stale(
                 workspace,
@@ -665,7 +689,10 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         )
         state = engine.run_step(
             workspace_step.name,
-            rerun=bool(args.rerun),
+            rerun=bool(
+                args.rerun
+                or (from_step and workspace_step.name == from_step)
+            ),
             observer=observer,
         )
         report = _step_report_payload(workspace, workspace_step, state)
@@ -688,7 +715,11 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
             failed_state = state
             break
 
-    data: dict[str, Any] = {"rerun": bool(args.rerun), "reports": reports}
+    data: dict[str, Any] = {
+        "rerun": bool(args.rerun),
+        "from_step": from_step or None,
+        "reports": reports,
+    }
     if failed_step:
         data["failed_step"] = failed_step
         failed_workspace_step = engine.get_workspace_step(failed_step)
@@ -3001,6 +3032,7 @@ def _dispatch_payload(
         "id": "",
         "json": False,
         "rerun": False,
+        "from_step": "",
         "recover_stale_ongoing": True,
         "sim_compile_extra_cflag": [],
         "sim_compile_mabi": "",

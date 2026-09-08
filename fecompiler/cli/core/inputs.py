@@ -9,6 +9,13 @@ from fecompiler.cli.core.types import OutputMode
 class CommandInput:
     workspace: str | None
     output_mode: OutputMode
+    project: str | None = None
+    run_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CheckInput(CommandInput):
+    step: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +25,7 @@ class DoctorInput(CommandInput):
 
 @dataclass(frozen=True, slots=True)
 class InitInput(CommandInput):
+    name: str | None = None
     design: str = ""
     top: str = "top"
     rtl: str | None = None
@@ -31,6 +39,12 @@ class InitInput(CommandInput):
 class RunInput(CommandInput):
     step: str | None = None
     rerun: bool = False
+    overwrite: bool = False
+    resume: bool = False
+    from_step: str | None = None
+    only: str | None = None
+    force: bool = False
+    param_set: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

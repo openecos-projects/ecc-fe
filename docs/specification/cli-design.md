@@ -18,6 +18,7 @@ resource operations.
 ecc-fe --version
 ecc-fe version
 ecc-fe init
+ecc-fe check
 ecc-fe doctor
 ecc-fe run
 ecc-fe status
@@ -33,6 +34,10 @@ ecc-fe rpc ...
 
 `workspace` and `rpc` remain compatibility surfaces for ECOS Studio. New
 project-oriented commands call the same workspace application service.
+
+`ecc-fe check` is the canonical project validation command shared with ECC.
+`ecc-fe doctor` retains the same checks and is the compatibility name for
+environment-focused diagnostics.
 
 The legacy direct form remains supported:
 
@@ -56,6 +61,8 @@ default text. Text and structured modes describe the same records.
 
 Summary records expose follow-up commands through fields ending in `_cmd`.
 Examples include `status_cmd`, `log_cmd`, `next_cmd`, and `remediation_cmd`.
+`ecc-fe version --json` follows ECC's version exception and emits the schema
+object directly; its `--jsonl` and `--plain` forms remain record-oriented.
 
 ## Exit Codes
 
@@ -101,10 +108,15 @@ managed resources take precedence over tools found later on `PATH`.
 
 ## Project Config Contract
 
-`ecc-fe init` creates `ecc-fe.toml` at the workspace root with schema version
-1. Existing workspaces without the file continue to work. Read-only commands do
-not migrate them; the first successful `param set` creates the file from the
-current workspace state.
+`ecc-fe init <name>` creates a project-level `ecc-fe.toml`, a `runs/` container,
+and an unexecuted `.ecc-fe/template` workspace with schema version 1. A project
+run is cloned from that template and stores all mutable state under
+`runs/<run-id>`. Bare commands use the current directory as the project.
+
+`ecc-fe init --workspace <path>` retains the M3 direct-workspace layout and
+places `ecc-fe.toml` beside `home/`. Existing workspaces without the file
+continue to work. Read-only commands do not migrate them; the first successful
+direct-workspace `param set` creates the file from current workspace state.
 
 The tables have distinct ownership:
 
@@ -112,6 +124,7 @@ The tables have distinct ownership:
 | --- | --- |
 | `[design]` | Creation-time project identity snapshot. |
 | `[frontend]` | Creation-time catalog selection snapshot. |
+| `[flow].run` | Default run id when `--run-id` is omitted. |
 | `[defaults]` | Typed baseline captured from `home/parameters.json`. |
 | `[params]` | Explicit CLI overrides applied before a flow run. |
 
@@ -148,6 +161,39 @@ and CoreMark settings. `param show` exposes the type, bounds, choices, baseline,
 effective value, source, and runtime mapping. `param diff` reports explicit
 non-default overrides.
 
+In project mode, `param set/unset` changes defaults for future runs without
+mutating completed runs. Repeated `ecc-fe run --set key=value` options take
+precedence for one run and are recorded in
+`home/cli-param-overrides.json`. Direct-workspace parameter mutations preserve
+the M3 behavior: update `home/parameters.json` and reset stale flow state.
+
+## Project And Run Selection
+
+Project and inspection commands accept `--project`; omission means the current
+directory. `--run-id` wins over `[flow].run`, which falls back to `default`.
+A bare run id resolves below `runs/`; project-relative and absolute paths use
+the same resolution rules as ECC.
+
+Project mode creates a fresh run and refuses an existing target unless
+`--overwrite` is explicit. Replacement is allowed only for an empty directory
+or a real ECC-FE workspace. Project roots, the `runs/` container, the internal
+template, symlink targets, and redirected paths are never replacement targets.
+
+Existing workspaces use `--workspace` and support the ECC selectors:
+
+```bash
+ecc-fe run --workspace path --resume
+ecc-fe run --workspace path --from review
+ecc-fe run --workspace path --only lint
+ecc-fe run --workspace path --only lint --force
+```
+
+`--resume`, `--from`, and `--only` are mutually exclusive. `--force` requires
+`--only`. The M3 `--step/--rerun` spelling remains an alias for
+`--only/--force`; full-flow `--rerun` remains supported for direct workspaces.
+Project creation controls (`--run-id`, `--overwrite`, and `--set`) cannot be
+combined with `--workspace`.
+
 ## Catalog Contract
 
 `catalog list`, `show`, `check`, and `validate` are read-only adapters over the
@@ -180,3 +226,4 @@ inspection command.
 - `ecc-fe.toml` is additive and optional for legacy workspaces.
 - Existing `--design/--top` invocations continue through the argparse runner.
 - New commands are adapters over existing Python application and flow APIs.
+- M3 `--workspace`, `--step`, and `--rerun` invocations remain valid.

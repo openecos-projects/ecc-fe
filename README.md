@@ -25,17 +25,23 @@ curl -fsSL \
 sh /tmp/ecc-fe-cli-setup.sh
 ```
 
-The project-oriented CLI can create and run a frontend workspace without the
-desktop application:
+The project-oriented CLI can create and run an isolated frontend run without
+the desktop application:
 
 ```bash
-ecc-fe init --workspace ./frontend-demo
-ecc-fe doctor --workspace ./frontend-demo
-ecc-fe param list --workspace ./frontend-demo
-ecc-fe run --workspace ./frontend-demo
-ecc-fe status --workspace ./frontend-demo
-ecc-fe report qor --workspace ./frontend-demo
+ecc-fe init frontend-demo
+cd frontend-demo
+ecc-fe check
+ecc-fe param list
+ecc-fe run
+ecc-fe status
+ecc-fe report qor
 ```
+
+Project runs are stored under `runs/<run-id>`. Use `--run-id`, `--overwrite`,
+and repeated `run --set key=value` options for isolated experiments. Existing
+ECOS Studio workspaces remain directly usable through `--workspace`; they also
+support `--resume`, `--from`, `--only`, and `--force` for iterative execution.
 
 Install published runtime dependencies with
 `ecc-fe resource install --required`. The CLI and Electron share the same XDG
@@ -44,9 +50,11 @@ resource manifest and managed tool directories. See
 [`docs/specification/cli-design.md`](docs/specification/cli-design.md) for the
 command and output contract.
 
-Each new workspace includes `ecc-fe.toml`. Its `[params]` table is the CLI
-override layer; `ecc-fe param set/unset` updates it, synchronizes the existing
-workspace parameter file, and invalidates stale flow results. Existing desktop
+Each new project includes `ecc-fe.toml`; project mode uses its `[flow].run` to
+select `runs/default` or another run. Its `[params]` table supplies persistent
+defaults, while `ecc-fe run --set` records run-local overrides. In direct
+workspace mode, `param set/unset` continues to synchronize
+`home/parameters.json` and invalidate stale results. Existing desktop
 workspaces without this file remain readable and gain it only on the first
 parameter mutation.
 

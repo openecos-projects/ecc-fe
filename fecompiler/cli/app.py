@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 import typer
@@ -9,6 +10,7 @@ from fecompiler.cli.core.inputs import (
     CatalogListInput,
     CatalogShowInput,
     CatalogValidateInput,
+    CheckInput,
     CommandInput,
     ConfigInput,
     DoctorInput,
@@ -33,6 +35,8 @@ from fecompiler.cli.core.options import (
     JsonlOption,
     JsonOption,
     PlainOption,
+    ProjectOption,
+    RunIdOption,
     WorkspaceOption,
 )
 from fecompiler.cli.core.version_info import (
@@ -109,6 +113,9 @@ def build_app() -> typer.Typer:
         if mode.value == "text":
             typer.echo(version_text(payload))
             return
+        if mode.value == "json":
+            typer.echo(json.dumps(payload, ensure_ascii=False))
+            return
         from fecompiler.cli.core.types import CommandResult
         from fecompiler.cli.rendering.render import render_result
 
@@ -118,6 +125,9 @@ def build_app() -> typer.Typer:
 
     @app.command("init")
     def init_command(
+        name: Annotated[
+            str | None, typer.Argument(help="Project directory to create")
+        ] = None,
         workspace: WorkspaceOption = None,
         design: Annotated[str, typer.Option("--design", help="Design name")] = "",
         top: Annotated[str, typer.Option("--top", help="Top module name")] = "top",
@@ -142,6 +152,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                name=name,
                 design=design,
                 top=top,
                 rtl=rtl,
@@ -156,12 +167,39 @@ def build_app() -> typer.Typer:
     @app.command("run")
     def run_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
         step: Annotated[
             str | None, typer.Option("--step", help="Run one frontend step")
         ] = None,
         rerun: Annotated[
             bool, typer.Option("--rerun", help="Run completed work again")
         ] = False,
+        overwrite: Annotated[
+            bool, typer.Option("--overwrite", help="Replace an existing project run")
+        ] = False,
+        resume: Annotated[
+            bool,
+            typer.Option("--resume", help="Continue at the first unfinished step"),
+        ] = False,
+        from_step: Annotated[
+            str | None,
+            typer.Option("--from", help="Re-execute a step and its suffix"),
+        ] = None,
+        only: Annotated[
+            str | None, typer.Option("--only", help="Run exactly one step")
+        ] = None,
+        force: Annotated[
+            bool,
+            typer.Option("--force", help="Re-execute a successful --only step"),
+        ] = False,
+        param_set: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--set",
+                help="Set a run-local parameter (repeatable: --set key=value)",
+            ),
+        ] = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -173,15 +211,51 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 step=step,
                 rerun=rerun,
+                overwrite=overwrite,
+                resume=resume,
+                from_step=from_step,
+                only=only,
+                force=force,
+                param_set=tuple(param_set or ()),
             ),
             commands.run_flow,
+        )
+
+    @app.command("check")
+    def check_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        step: Annotated[
+            str | None, typer.Option("--step", help="Check one flow step")
+        ] = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "check",
+            CheckInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                step=step,
+            ),
+            commands.check,
         )
 
     @app.command("doctor")
     def doctor_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
         step: Annotated[
             str | None, typer.Option("--step", help="Check one flow step")
         ] = None,
@@ -196,6 +270,8 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 step=step,
             ),
             commands.doctor,
@@ -204,6 +280,8 @@ def build_app() -> typer.Typer:
     @app.command("status")
     def status_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -215,14 +293,21 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
             ),
             commands.status,
         )
 
     @app.command("log")
     def log_command(
+        step_argument: Annotated[
+            str | None, typer.Argument(help="Frontend step log")
+        ] = None,
         workspace: WorkspaceOption = None,
-        step: Annotated[
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        step_option: Annotated[
             str | None, typer.Option("--step", help="Frontend step log")
         ] = None,
         lines: Annotated[int, typer.Option("--lines", min=1, max=10000)] = 80,
@@ -230,6 +315,9 @@ def build_app() -> typer.Typer:
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
     ) -> None:
+        if step_argument is not None and step_option is not None:
+            raise typer.BadParameter("pass the step once, positionally or with --step")
+        step = step_argument if step_argument is not None else step_option
         execute_command(
             "log",
             LogInput(
@@ -237,6 +325,8 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 step=step,
                 lines=lines,
             ),
@@ -245,8 +335,13 @@ def build_app() -> typer.Typer:
 
     @app.command("config")
     def config_command(
+        step_argument: Annotated[
+            str | None, typer.Argument(help="Frontend step config")
+        ] = None,
         workspace: WorkspaceOption = None,
-        step: Annotated[
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        step_option: Annotated[
             str | None, typer.Option("--step", help="Frontend step config")
         ] = None,
         resolved: Annotated[
@@ -256,6 +351,9 @@ def build_app() -> typer.Typer:
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
     ) -> None:
+        if step_argument is not None and step_option is not None:
+            raise typer.BadParameter("pass the step once, positionally or with --step")
+        step = step_argument if step_argument is not None else step_option
         execute_command(
             "config",
             ConfigInput(
@@ -263,6 +361,8 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 step=step,
                 resolved=resolved,
             ),
@@ -395,6 +495,7 @@ def build_app() -> typer.Typer:
     @param_app.command("list")
     def param_list_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
         step: Annotated[str | None, typer.Option("--step")] = None,
         all_parameters: Annotated[
             bool, typer.Option("--all", help="Include parameters at default values")
@@ -410,6 +511,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
                 step=step,
                 all_parameters=all_parameters,
             ),
@@ -420,6 +522,7 @@ def build_app() -> typer.Typer:
     def param_show_command(
         key: Annotated[str, typer.Argument(help="Parameter name")],
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -431,6 +534,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
                 key=key,
             ),
             param_handlers.show_parameter,
@@ -451,6 +555,7 @@ def build_app() -> typer.Typer:
             ),
         ] = None,
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -469,6 +574,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
                 key=key,
                 value=selected_value,
             ),
@@ -479,6 +585,7 @@ def build_app() -> typer.Typer:
     def param_unset_command(
         key: Annotated[str, typer.Argument(help="Parameter name")],
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -490,6 +597,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
                 key=key,
             ),
             param_handlers.unset_parameter,
@@ -498,6 +606,7 @@ def build_app() -> typer.Typer:
     @param_app.command("diff")
     def param_diff_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -509,6 +618,7 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
             ),
             param_handlers.diff_parameters,
         )
@@ -605,6 +715,8 @@ def build_app() -> typer.Typer:
     @report_app.command("qor")
     def report_qor_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
         output_path: Annotated[
             str | None, typer.Option("--output", "-o", help="Write the JSON report")
         ] = None,
@@ -619,6 +731,8 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 output_path=output_path,
             ),
             report_handlers.qor,
@@ -627,6 +741,8 @@ def build_app() -> typer.Typer:
     @report_app.command("files")
     def report_files_command(
         workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
         step: Annotated[str | None, typer.Option("--step")] = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
@@ -639,6 +755,8 @@ def build_app() -> typer.Typer:
                 output_mode=output_mode(
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
+                project=project,
+                run_id=run_id,
                 step=step,
             ),
             report_handlers.files,
