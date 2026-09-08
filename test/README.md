@@ -33,6 +33,10 @@ python3 -m pytest test/test_engine_flow.py::test_sim_runs_multiple_images_with_s
 
 `test_examples.py` 是轻量 example collateral 检查，当前不在 `//:all_tests` 里，需通过 `pytest` 运行。
 
+`test_cli_contract_alignment.py` 验证与 ECC 共享的项目/run 模型、`check`
+入口、运行选择器、run 级参数覆盖、覆盖安全检查和帮助文本契约。发布工作流会显式
+运行该文件，防止后续命令扩展破坏 ECC/ECC-FE 的公共用法。
+
 CPU+SoC 全流程回归推荐用 Bazel（避免遗漏依赖）：
 
 ```bash

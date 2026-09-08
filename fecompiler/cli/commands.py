@@ -11,6 +11,7 @@ from pathlib import Path
 from fecompiler.application.workspace_service import workspace_application
 from fecompiler.catalog import check_catalog_contracts
 from fecompiler.cli.core.inputs import (
+    CheckInput,
     CommandInput,
     ConfigInput,
     DoctorInput,
@@ -32,7 +33,19 @@ from fecompiler.cli.project.config import (
     pending_project_overrides,
     project_config_path,
 )
-from fecompiler.cli.project.params import parameter_records
+from fecompiler.cli.project.layout import (
+    clone_workspace_template,
+    is_protected_run_target,
+    is_safe_run_directory,
+    resolves_as_spelled,
+    template_dir,
+)
+from fecompiler.cli.project.params import (
+    lookup_parameter,
+    normalize_stored_value,
+    parameter_records,
+    parse_cli_overrides,
+)
 from fecompiler.cli.resource_manager import ResourceManager, ResourceManagerError
 from fecompiler.cli.workspace_access import (
     load_existing_workspace,
@@ -69,6 +82,14 @@ _RESOURCE_ENV_KEYS = (
 
 def init(command_input: CommandInput, context: CommandContext) -> CommandResult:
     assert isinstance(command_input, InitInput)
+    if command_input.name is not None:
+        return _init_project(command_input)
+    return _init_workspace(command_input, context)
+
+
+def _init_workspace(
+    command_input: InitInput, context: CommandContext
+) -> CommandResult:
     if project_config_path(context.workspace_dir).exists() or any(
         path.exists() for path in workspace_markers(context.workspace_dir)
     ):
@@ -81,28 +102,11 @@ def init(command_input: CommandInput, context: CommandContext) -> CommandResult:
                 )
             ]
         )
-    custom_cpu_input = command_input.cpu_filelist or command_input.rtl
-    core_id = command_input.core_id or (
-        "custom-filelist" if custom_cpu_input else "picorv32"
+    request = _init_request(
+        command_input,
+        context.workspace_dir,
+        default_design=Path(context.workspace_dir).name,
     )
-    request: dict[str, object] = {
-        "directory": context.workspace_dir,
-        "core_id": core_id,
-        "parameters": {
-            "Design": command_input.design or Path(context.workspace_dir).name,
-            "Top module": command_input.top,
-        },
-    }
-    if command_input.rtl:
-        request["cpu_rtl_files"] = [command_input.rtl]
-        request["cpu_top_module"] = command_input.top
-    for key, value in (
-        ("cpu_filelist", command_input.cpu_filelist),
-        ("soc_filelist", command_input.soc_filelist),
-        ("soc_harness_id", command_input.soc_harness_id),
-    ):
-        if value:
-            request[key] = value
     result = workspace_application.execute_payload(
         "create", request, base_dir=Path.cwd()
     )
@@ -142,12 +146,170 @@ def init(command_input: CommandInput, context: CommandContext) -> CommandResult:
     )
 
 
+def _init_project(command_input: InitInput) -> CommandResult:
+    if command_input.workspace is not None:
+        return CommandResult.err(
+            [error_record("project_workspace_conflict")], exit_code=2
+        )
+    name = command_input.name or ""
+    if not name.strip():
+        return CommandResult.err(
+            [error_record("project_name_required")], exit_code=2
+        )
+    project_dir = Path(name).expanduser().resolve()
+    if project_dir.is_file():
+        return CommandResult.err(
+            [error_record("path_is_file", path=str(project_dir))]
+        )
+    config_path = project_config_path(str(project_dir))
+    seed_dir = Path(template_dir(str(project_dir)))
+    if config_path.exists() or any(
+        path.exists() for path in workspace_markers(str(seed_dir))
+    ):
+        return CommandResult.err(
+            [error_record("project_already_exists", project=str(project_dir))]
+        )
+    (project_dir / "runs").mkdir(parents=True, exist_ok=True)
+    request = _init_request(
+        command_input,
+        str(seed_dir),
+        default_design=project_dir.name,
+    )
+    result = workspace_application.execute_payload(
+        "create", request, base_dir=Path.cwd()
+    )
+    if result.response != "success":
+        return CommandResult.err(
+            [
+                {
+                    "kind": "project_init",
+                    "status": result.response,
+                    "project": str(project_dir),
+                    "messages": result.message,
+                }
+            ]
+        )
+    try:
+        workspace = load_existing_workspace(str(seed_dir))
+        if workspace is None:
+            raise ProjectConfigError("Created project template cannot be loaded")
+        parameters = read_json_object(Path(workspace["parameters_path"]))
+        config = create_project_config(
+            str(project_dir), parameters, project_layout=True
+        )
+    except (OSError, TypeError, ValueError, ProjectConfigError) as error:
+        return CommandResult.err(
+            [
+                error_record(
+                    "project_config_failed",
+                    project=str(project_dir),
+                    reason=str(error),
+                )
+            ]
+        )
+    project_arg = name
+    return CommandResult.ok(
+        [
+            {
+                "kind": "project_init",
+                "status": "created",
+                "project": str(project_dir),
+                "config": str(config.path),
+                "run_dir": "runs/default",
+                "check_cmd": disclosure_cmd("ecc-fe check", project=project_arg),
+                "run_cmd": disclosure_cmd("ecc-fe run", project=project_arg),
+            }
+        ]
+    )
+
+
+def _init_request(
+    command_input: InitInput, destination: str, *, default_design: str
+) -> dict[str, object]:
+    custom_cpu_input = command_input.cpu_filelist or command_input.rtl
+    core_id = command_input.core_id or (
+        "custom-filelist" if custom_cpu_input else "picorv32"
+    )
+    request: dict[str, object] = {
+        "directory": destination,
+        "core_id": core_id,
+        "parameters": {
+            "Design": command_input.design or default_design,
+            "Top module": command_input.top,
+        },
+    }
+    if command_input.rtl:
+        request["cpu_rtl_files"] = [command_input.rtl]
+        request["cpu_top_module"] = command_input.top
+    for key, value in (
+        ("cpu_filelist", command_input.cpu_filelist),
+        ("soc_filelist", command_input.soc_filelist),
+        ("soc_harness_id", command_input.soc_harness_id),
+    ):
+        if value:
+            request[key] = value
+    return request
+
+
 def run_flow(command_input: CommandInput, context: CommandContext) -> CommandResult:
     assert isinstance(command_input, RunInput)
-    if command_input.step and command_input.step not in _FLOW_STEPS:
+    if context.workspace_mode:
+        return _run_workspace(command_input, context)
+    return _run_project(command_input, context)
+
+
+def _run_workspace(
+    command_input: RunInput, context: CommandContext
+) -> CommandResult:
+    if command_input.run_id is not None:
         return CommandResult.err(
-            [error_record(f"Unknown flow step: {command_input.step}")]
+            [error_record("project_workspace_conflict")], exit_code=2
         )
+    if command_input.overwrite:
+        return CommandResult.err(
+            [error_record("overwrite_requires_project")], exit_code=2
+        )
+    if command_input.param_set:
+        return CommandResult.err(
+            [error_record("set_requires_project")], exit_code=2
+        )
+    if command_input.step and command_input.only:
+        return CommandResult.err(
+            [error_record("selector_conflict", selectors=["--step", "--only"])],
+            exit_code=2,
+        )
+    only = command_input.only or command_input.step
+    selectors = sum(
+        (
+            command_input.resume,
+            command_input.from_step is not None,
+            only is not None,
+        )
+    )
+    if selectors > 1:
+        return CommandResult.err(
+            [error_record("selector_conflict")], exit_code=2
+        )
+    if command_input.force and only is None:
+        return CommandResult.err(
+            [error_record("force_requires_only")], exit_code=2
+        )
+    if command_input.rerun and (
+        command_input.resume or command_input.from_step is not None
+    ):
+        return CommandResult.err(
+            [error_record("rerun_selector_conflict")], exit_code=2
+        )
+    for step in (only, command_input.from_step):
+        if step and step not in _FLOW_STEPS:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "unknown_step", step=step, expected=list(_FLOW_STEPS)
+                    )
+                ],
+                exit_code=2,
+            )
     try:
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
@@ -155,9 +317,11 @@ def run_flow(command_input: CommandInput, context: CommandContext) -> CommandRes
             [error_record(str(error), workspace=context.workspace_dir)]
         )
     if workspace is None:
-        return _workspace_not_found(context.workspace_dir)
+        return _workspace_not_found(context)
     try:
-        project_config, pending = pending_project_overrides(context.workspace_dir)
+        project_config, pending = pending_project_overrides(
+            context.workspace_dir, config_directory=context.config_dir
+        )
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
             [
@@ -186,7 +350,9 @@ def run_flow(command_input: CommandInput, context: CommandContext) -> CommandRes
                 ]
             )
     try:
-        project_config, changed = apply_project_overrides(context.workspace_dir)
+        project_config, changed = apply_project_overrides(
+            context.workspace_dir, config_directory=context.config_dir
+        )
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
             [
@@ -197,13 +363,20 @@ def run_flow(command_input: CommandInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
-    command = "run-step" if command_input.step else "run-flow"
+    command = "run-step" if only else "run-flow"
+    rerun = (
+        command_input.rerun
+        if only is None
+        else command_input.force or command_input.rerun
+    )
     payload: dict[str, object] = {
         "directory": context.workspace_dir,
-        "rerun": command_input.rerun,
+        "rerun": rerun,
     }
-    if command_input.step:
-        payload["step"] = command_input.step
+    if only:
+        payload["step"] = only
+    elif command_input.from_step:
+        payload["from_step"] = command_input.from_step
     result = workspace_application.execute_payload(
         command, payload, base_dir=Path.cwd()
     )
@@ -211,17 +384,20 @@ def run_flow(command_input: CommandInput, context: CommandContext) -> CommandRes
         "kind": "run",
         "status": result.response,
         "workspace": context.workspace_dir,
-        "step": command_input.step,
+        "step": only,
+        "from_step": command_input.from_step,
         "data": result.data,
         "messages": result.message,
         "config": str(project_config.path) if project_config else None,
         "config_changes": changed,
-        "status_cmd": disclosure_cmd("ecc-fe status", context.workspace_dir),
+        "status_cmd": _target_cmd("ecc-fe status", context),
         "log_cmd": disclosure_cmd(
-            f"ecc-fe log --step {command_input.step}"
-            if command_input.step
+            f"ecc-fe log {only}"
+            if only
             else "ecc-fe log",
-            context.workspace_dir,
+            context.workspace_dir if context.workspace_mode else None,
+            project=context.project,
+            run_id=context.run_id,
         ),
     }
     return (
@@ -229,6 +405,226 @@ def run_flow(command_input: CommandInput, context: CommandContext) -> CommandRes
         if result.response == "success"
         else CommandResult.err([record])
     )
+
+
+def _run_project(command_input: RunInput, context: CommandContext) -> CommandResult:
+    if any(
+        (
+            command_input.step,
+            command_input.rerun,
+            command_input.resume,
+            command_input.from_step,
+            command_input.only,
+            command_input.force,
+        )
+    ):
+        return CommandResult.err(
+            [error_record("selector_requires_workspace")], exit_code=2
+        )
+    try:
+        config = load_project_config(context.config_dir)
+    except (OSError, TypeError, ValueError) as error:
+        return CommandResult.err(
+            [error_record("invalid_project_config", reason=str(error))]
+        )
+    if config is None or not config.uses_project_layout:
+        return CommandResult.err(
+            [
+                error_record(
+                    "missing_config",
+                    path=str(project_config_path(context.config_dir)),
+                )
+            ]
+        )
+    overrides, override_errors = parse_cli_overrides(command_input.param_set)
+    if override_errors:
+        return CommandResult.err(
+            [
+                error_record("invalid_parameter", reason=error)
+                for error in override_errors
+            ],
+            exit_code=2,
+        )
+    run_dir = context.workspace_dir
+    run_name = context.run_id or "default"
+    if is_protected_run_target(run_dir, context.project_dir):
+        return CommandResult.err(
+            [
+                error_record(
+                    "invalid_run_id",
+                    run=run_name,
+                    workspace=run_dir,
+                    reason=(
+                        "run id must not resolve to the project, runs container, "
+                        "or template"
+                    ),
+                )
+            ]
+        )
+    if os.path.lexists(run_dir):
+        if not command_input.overwrite:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "run_exists",
+                        run=run_name,
+                        workspace=run_dir,
+                        overwrite=_target_cmd("ecc-fe run --overwrite", context),
+                    )
+                ]
+            )
+        if not resolves_as_spelled(
+            run_dir, context.project_dir
+        ) or not is_safe_run_directory(run_dir):
+            return CommandResult.err(
+                [
+                    error_record(
+                        "overwrite_refused",
+                        run=run_name,
+                        workspace=run_dir,
+                        reason="target is not an ECC-FE run directory",
+                    )
+                ]
+            )
+        shutil.rmtree(run_dir)
+    elif not resolves_as_spelled(run_dir, context.project_dir):
+        return CommandResult.err(
+            [
+                error_record(
+                    "run_path_refused",
+                    run=run_name,
+                    workspace=run_dir,
+                    reason="run path is redirected by a symlink",
+                )
+            ]
+        )
+    owns_run = False
+    try:
+        clone_workspace_template(str(context.template_dir), run_dir)
+        owns_run = True
+        _, changed = apply_project_overrides(
+            run_dir,
+            config_directory=context.config_dir,
+            extra_overrides=overrides,
+        )
+        if overrides:
+            provenance = Path(run_dir) / "home" / "cli-param-overrides.json"
+            provenance.write_text(
+                json.dumps(overrides, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+    except FileExistsError as error:
+        if owns_run:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            return CommandResult.err(
+                [
+                    error_record(
+                        "workspace_failed",
+                        run=run_name,
+                        workspace=run_dir,
+                        reason=str(error),
+                    )
+                ]
+            )
+        return CommandResult.err(
+            [
+                error_record(
+                    "run_exists",
+                    run=run_name,
+                    workspace=run_dir,
+                    overwrite=_target_cmd("ecc-fe run --overwrite", context),
+                )
+            ]
+        )
+    except (OSError, TypeError, ValueError) as error:
+        if owns_run:
+            shutil.rmtree(run_dir, ignore_errors=True)
+        return CommandResult.err(
+            [
+                error_record(
+                    "workspace_failed",
+                    run=run_name,
+                    workspace=run_dir,
+                    reason=str(error),
+                )
+            ]
+        )
+    result = workspace_application.execute_payload(
+        "run-flow",
+        {"directory": run_dir, "rerun": False},
+        base_dir=Path.cwd(),
+    )
+    record = {
+        "kind": "run",
+        "run": run_name,
+        "status": result.response,
+        "workspace": run_dir,
+        "data": result.data,
+        "messages": result.message,
+        "config": str(config.path),
+        "config_changes": changed,
+        "parameter_overrides": overrides,
+        "status_cmd": _target_cmd("ecc-fe status", context),
+        "log_cmd": _target_cmd("ecc-fe log", context),
+    }
+    return (
+        CommandResult.ok([record])
+        if result.response == "success"
+        else CommandResult.err([record])
+    )
+
+
+def check(command_input: CommandInput, context: CommandContext) -> CommandResult:
+    assert isinstance(command_input, CheckInput)
+    result = doctor(
+        DoctorInput(
+            workspace=command_input.workspace,
+            output_mode=command_input.output_mode,
+            project=command_input.project,
+            run_id=command_input.run_id,
+            step=command_input.step,
+        ),
+        context,
+    )
+    if any(record.get("kind") == "error" for record in result.records):
+        return result
+    records: list[dict[str, object]] = []
+    for record in result.records:
+        if record.get("kind") == "doctor_summary":
+            continue
+        mapped = dict(record)
+        if mapped.get("kind") == "doctor_check":
+            mapped["kind"] = "check"
+        records.append(mapped)
+    if not any(record.get("check") == "workspace" for record in records):
+        records.append(
+            {
+                "kind": "check",
+                "check": "project",
+                "label": "ECC-FE project or workspace",
+                "status": "fail",
+                "required": True,
+                "path": context.project_dir,
+                "error": "project_not_found",
+                "remediation_cmd": "ecc-fe init <name>",
+            }
+        )
+    failed = any(
+        record.get("status") == "fail" and record.get("required")
+        for record in records
+    )
+    records.append(
+        {
+            "kind": "check_summary",
+            "status": "failed" if failed else "ready",
+            "passed": sum(record.get("status") == "pass" for record in records),
+            "failed": sum(record.get("status") == "fail" for record in records),
+            "attention": sum(
+                record.get("status") == "attention" for record in records
+            ),
+        }
+    )
+    return CommandResult.err(records) if failed else CommandResult.ok(records)
 
 
 def doctor(command_input: CommandInput, context: CommandContext) -> CommandResult:
@@ -240,7 +636,8 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
                     f"Unknown flow step: {command_input.step}",
                     expected=list(_FLOW_STEPS),
                 )
-            ]
+            ],
+            exit_code=2,
         )
 
     records: list[dict[str, object]] = []
@@ -305,15 +702,22 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
         }
     )
 
-    workspace_expected = command_input.workspace is not None
+    diagnostic_workspace = context.workspace_dir
+    if not context.workspace_mode and not all(
+        path.is_file() for path in workspace_markers(diagnostic_workspace)
+    ):
+        diagnostic_workspace = str(context.template_dir)
+    workspace_expected = (
+        command_input.workspace is not None or not context.workspace_mode
+    )
     workspace_error: str | None = None
     try:
-        workspace = load_existing_workspace(context.workspace_dir)
+        workspace = load_existing_workspace(diagnostic_workspace)
     except (OSError, TypeError, ValueError) as error:
         workspace = None
         workspace_error = str(error)
     if workspace_expected or any(
-        path.exists() for path in workspace_markers(context.workspace_dir)
+        path.exists() for path in workspace_markers(diagnostic_workspace)
     ):
         records.append(
             {
@@ -322,18 +726,18 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
                 "label": "Frontend workspace",
                 "status": "pass" if workspace else "fail",
                 "required": workspace_expected,
-                "path": context.workspace_dir,
+                "path": diagnostic_workspace,
                 "error": workspace_error,
                 "remediation_cmd": None
                 if workspace
-                else disclosure_cmd("ecc-fe init", context.workspace_dir),
+                else _init_target_cmd(context),
             }
         )
         config_status = "missing"
         config_error: str | None = None
         try:
             config_status = (
-                "pass" if load_project_config(context.workspace_dir) else "missing"
+                "pass" if load_project_config(context.config_dir) else "missing"
             )
         except (OSError, ValueError) as error:
             config_status = "invalid"
@@ -351,11 +755,11 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
                     else "attention"
                 ),
                 "required": config_status == "invalid",
-                "path": str(project_config_path(context.workspace_dir)),
+                "path": str(project_config_path(context.config_dir)),
                 "error": config_error,
                 "remediation_cmd": None
                 if config_status == "pass"
-                else disclosure_cmd("ecc-fe param list --all", context.workspace_dir),
+                else _target_cmd("ecc-fe param list --all", context),
             }
         )
 
@@ -386,7 +790,7 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
             [error_record(str(error), workspace=context.workspace_dir)]
         )
     if workspace is None:
-        return _workspace_not_found(context.workspace_dir)
+        return _workspace_not_found(context)
     try:
         flow = read_json_object(Path(workspace["flow_path"]))
     except (OSError, TypeError, ValueError) as error:
@@ -396,6 +800,8 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
     records: list[dict[str, object]] = [
         {
             "kind": "workspace",
+            "project": context.project_dir if not context.workspace_mode else None,
+            "run": None if context.workspace_mode else (context.run_id or "default"),
             "workspace": context.workspace_dir,
             "design": workspace.get("design", ""),
             "top_module": workspace.get("top_module", ""),
@@ -429,7 +835,7 @@ def log(command_input: CommandInput, context: CommandContext) -> CommandResult:
             [error_record(str(error), workspace=context.workspace_dir)]
         )
     if workspace is None:
-        return _workspace_not_found(context.workspace_dir)
+        return _workspace_not_found(context)
     if command_input.step and command_input.step not in _FLOW_STEPS:
         return CommandResult.err(
             [error_record(f"Unknown flow step: {command_input.step}")]
@@ -488,7 +894,7 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
             [error_record(str(error), workspace=context.workspace_dir)]
         )
     if workspace is None:
-        return _workspace_not_found(context.workspace_dir)
+        return _workspace_not_found(context)
     if command_input.step and command_input.step not in _FLOW_STEPS:
         return CommandResult.err(
             [error_record(f"Unknown flow step: {command_input.step}")]
@@ -518,7 +924,7 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
         }
     ]
     try:
-        project_config = load_project_config(context.workspace_dir)
+        project_config = load_project_config(context.config_dir)
     except (OSError, ValueError) as error:
         return CommandResult.err(
             [
@@ -529,21 +935,41 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
                 )
             ]
         )
+    try:
+        run_overrides = _load_run_parameter_overrides(context)
+    except (OSError, TypeError, ValueError) as error:
+        return CommandResult.err(
+            [
+                error_record(
+                    "invalid_cli_parameter_provenance",
+                    workspace=context.workspace_dir,
+                    reason=str(error),
+                )
+            ]
+        )
+    effective_overrides = {
+        **(project_config.overrides if project_config else {}),
+        **run_overrides,
+    }
     records[0]["source"] = (
         str(project_config.path)
         if project_config
         else str(workspace["parameters_path"])
     )
-    records[0]["overrides"] = project_config.overrides if project_config else {}
+    records[0]["overrides"] = effective_overrides
+    if run_overrides:
+        records[0]["run_overrides"] = run_overrides
     if command_input.resolved:
-        records.extend(
-            parameter_records(
-                parameters,
-                defaults=project_config.defaults if project_config else None,
-                overrides=project_config.overrides if project_config else None,
-                step=command_input.step,
-            )
+        parameter_items = parameter_records(
+            parameters,
+            defaults=project_config.defaults if project_config else None,
+            overrides=effective_overrides,
+            step=command_input.step,
         )
+        for item in parameter_items:
+            if item["param"] in run_overrides:
+                item["source"] = "cli"
+        records.extend(parameter_items)
     if command_input.step:
         records.append(
             {
@@ -555,6 +981,29 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
             }
         )
     return CommandResult.ok(records)
+
+
+def _load_run_parameter_overrides(context: CommandContext) -> dict[str, object]:
+    if context.workspace_mode:
+        return {}
+    path = Path(context.workspace_dir) / "home" / "cli-param-overrides.json"
+    if not path.is_file():
+        return {}
+    raw = read_json_object(path)
+    overrides: dict[str, object] = {}
+    for key, value in raw.items():
+        schema = lookup_parameter(key)
+        if schema is None:
+            raise ProjectConfigError(
+                f"Invalid CLI parameter provenance: unknown parameter {key}"
+            )
+        try:
+            overrides[schema.param] = normalize_stored_value(value, schema)
+        except (TypeError, ValueError) as error:
+            raise ProjectConfigError(
+                f"Invalid CLI parameter provenance for {schema.param}: {error}"
+            ) from error
+    return overrides
 
 
 def resource_list(
@@ -707,13 +1156,38 @@ def resource_env(command_input: CommandInput, context: CommandContext) -> Comman
     )
 
 
-def _workspace_not_found(directory: str) -> CommandResult:
+def _target_cmd(command: str, context: CommandContext) -> str:
+    return disclosure_cmd(
+        command,
+        context.workspace_dir if context.workspace_mode else None,
+        project=context.project,
+        run_id=context.run_id,
+    )
+
+
+def _init_target_cmd(context: CommandContext) -> str:
+    if context.workspace_mode:
+        return disclosure_cmd("ecc-fe init", context.workspace_dir)
+    target = context.project or context.project_dir
+    return f"ecc-fe init {shlex.quote(target)}"
+
+
+def _workspace_not_found(context: CommandContext) -> CommandResult:
+    directory = context.workspace_dir
     return CommandResult.err(
         [
             error_record(
                 "Frontend workspace was not found",
                 workspace=directory,
-                remediation_cmd=disclosure_cmd("ecc-fe init", directory),
+                project=context.project_dir if not context.workspace_mode else None,
+                run=None
+                if context.workspace_mode
+                else (context.run_id or "default"),
+                remediation_cmd=(
+                    _target_cmd("ecc-fe run", context)
+                    if not context.workspace_mode
+                    else disclosure_cmd("ecc-fe init", directory)
+                ),
             )
         ]
     )

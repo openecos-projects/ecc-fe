@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 from fecompiler.application.workspace_service import workspace_application
@@ -85,11 +86,11 @@ def show_parameter(
     selected = next(item for item in record if item["param"] == schema.param)
     selected.update(
         {
-            "inspect_cmd": disclosure_cmd(
-                f"ecc-fe param show {schema.param}", context.workspace_dir
+            "inspect_cmd": _target_cmd(
+                f"ecc-fe param show {schema.param}", context
             ),
-            "set_cmd": disclosure_cmd(
-                f"ecc-fe param set {schema.param} <value>", context.workspace_dir
+            "set_cmd": _target_cmd(
+                f"ecc-fe param set {schema.param} <value>", context
             ),
         }
     )
@@ -121,15 +122,22 @@ def set_parameter(
         normalized_current = normalize_stored_value(current, schema)
     except (TypeError, ValueError):
         normalized_current = current
-    reset = bool(normalized_current != value or previous != value)
+    reset = context.workspace_mode and bool(
+        normalized_current != value or previous != value
+    )
     if reset:
         failure = _reset_flow(context.workspace_dir)
         if failure is not None:
             return failure
     try:
-        config = config or ensure_project_config(context.workspace_dir, parameters)
+        config = config or ensure_project_config(context.config_dir, parameters)
         config = write_parameter_override(config, schema.param, value)
-        _, changed = apply_project_overrides(context.workspace_dir)
+        if context.workspace_mode:
+            _, changed = apply_project_overrides(
+                context.workspace_dir, config_directory=context.config_dir
+            )
+        else:
+            changed = []
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
             [error_record(str(error), workspace=context.workspace_dir)]
@@ -181,13 +189,19 @@ def unset_parameter(
         normalized_current = normalize_stored_value(current, schema)
     except (TypeError, ValueError):
         normalized_current = current
-    reset = bool(previous != default or normalized_current != default)
+    reset = context.workspace_mode and bool(
+        previous != default or normalized_current != default
+    )
     if reset:
         failure = _reset_flow(context.workspace_dir)
         if failure is not None:
             return failure
     try:
-        changed = restore_parameter_default(context.workspace_dir, config, schema.param)
+        changed = (
+            restore_parameter_default(context.workspace_dir, config, schema.param)
+            if context.workspace_mode
+            else False
+        )
         updated = write_parameter_override(config, schema.param, None, unset=True)
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
@@ -245,21 +259,24 @@ def _load(
     context: CommandContext,
 ) -> tuple[dict[str, object], dict[str, object], ProjectConfig | None] | CommandResult:
     try:
-        workspace = load_existing_workspace(context.workspace_dir)
+        workspace_dir = (
+            context.workspace_dir
+            if context.workspace_mode
+            else str(context.template_dir)
+        )
+        workspace = load_existing_workspace(workspace_dir)
         if workspace is None:
             return CommandResult.err(
                 [
                     error_record(
                         "Frontend workspace was not found",
-                        workspace=context.workspace_dir,
-                        remediation_cmd=disclosure_cmd(
-                            "ecc-fe init", context.workspace_dir
-                        ),
+                        workspace=workspace_dir,
+                        remediation_cmd=_init_target_cmd(context),
                     )
                 ]
             )
         parameters = read_json_object(Path(workspace["parameters_path"]))
-        config = load_project_config(context.workspace_dir)
+        config = load_project_config(context.config_dir)
         return workspace, parameters, config
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         return CommandResult.err(
@@ -282,3 +299,18 @@ def _reset_flow(directory: str) -> CommandResult | None:
             )
         ]
     )
+
+
+def _target_cmd(command: str, context: CommandContext) -> str:
+    return disclosure_cmd(
+        command,
+        context.workspace_dir if context.workspace_mode else None,
+        project=context.project,
+    )
+
+
+def _init_target_cmd(context: CommandContext) -> str:
+    if context.workspace_mode:
+        return disclosure_cmd("ecc-fe init", context.workspace_dir)
+    target = context.project or context.project_dir
+    return f"ecc-fe init {shlex.quote(target)}"

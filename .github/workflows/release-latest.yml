@@ -70,6 +70,7 @@ jobs:
             test/test_allflow_builder.py \
             test/test_catalog_compatibility.py \
             test/test_catalog_contract.py \
+            test/test_cli_contract_alignment.py \
             test/test_cli_extended.py \
             test/test_cli_root.py \
             test/test_cli_main.py \

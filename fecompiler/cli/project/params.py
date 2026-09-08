@@ -177,6 +177,28 @@ def parse_cli_value(raw: str, schema: ParameterSchema) -> object:
     return value
 
 
+def parse_cli_overrides(
+    values: tuple[str, ...],
+) -> tuple[dict[str, object], list[str]]:
+    overrides: dict[str, object] = {}
+    errors: list[str] = []
+    for assignment in values:
+        key, separator, raw = assignment.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            errors.append(f"expected key=value: {assignment}")
+            continue
+        schema = lookup_parameter(key)
+        if schema is None:
+            errors.append(f"unknown parameter: {key}")
+            continue
+        try:
+            overrides[schema.param] = parse_cli_value(raw, schema)
+        except ValueError as error:
+            errors.append(f"invalid {schema.param}: {error}")
+    return overrides, errors
+
+
 def validate_value(value: object, schema: ParameterSchema) -> None:
     if schema.value_type == "string":
         valid_type = isinstance(value, str) and bool(value.strip())

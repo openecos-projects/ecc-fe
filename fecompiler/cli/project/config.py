@@ -20,7 +20,14 @@ from fecompiler.cli.workspace_access import read_json_object
 
 CONFIG_FILENAME = "ecc-fe.toml"
 CONFIG_SCHEMA_VERSION = 1
-_CONFIG_KEYS = {"schema_version", "design", "frontend", "defaults", "params"}
+_CONFIG_KEYS = {
+    "schema_version",
+    "design",
+    "frontend",
+    "flow",
+    "defaults",
+    "params",
+}
 
 
 class ProjectConfigError(ValueError):
@@ -32,8 +39,22 @@ class ProjectConfig:
     path: Path
     design: dict[str, object]
     frontend: dict[str, object]
+    flow: dict[str, object]
     defaults: dict[str, object]
     overrides: dict[str, object]
+
+    @property
+    def run_id(self) -> str:
+        value = self.flow.get("run", "default")
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ProjectConfigError(f"Unsupported flow.run: {value}")
+        if "\x00" in value:
+            raise ProjectConfigError("Unsupported flow.run: contains a null byte")
+        return value
+
+    @property
+    def uses_project_layout(self) -> bool:
+        return bool(self.flow)
 
 
 def project_config_path(directory: str) -> Path:
@@ -60,9 +81,13 @@ def load_project_config(directory: str) -> ProjectConfig | None:
         )
     design = _table(raw, "design", path)
     frontend = _table(raw, "frontend", path)
+    flow = _table(raw, "flow", path)
     defaults = _validated_parameter_table(raw, "defaults", path)
     overrides = _validated_parameter_table(raw, "params", path)
-    return ProjectConfig(path, design, frontend, defaults, overrides)
+    config = ProjectConfig(path, design, frontend, flow, defaults, overrides)
+    if flow:
+        config.run_id
+    return config
 
 
 def _validated_parameter_table(
@@ -86,6 +111,7 @@ def create_project_config(
     parameters: dict[str, Any],
     *,
     overwrite: bool = False,
+    project_layout: bool = False,
 ) -> ProjectConfig:
     path = project_config_path(directory)
     if path.exists() and not overwrite:
@@ -114,7 +140,8 @@ def create_project_config(
         and parameters[key] != ""
         and parameters[key] != []
     }
-    text = _render_config(design, frontend, defaults, {})
+    flow = {"run": "default"} if project_layout else {}
+    text = _render_config(design, frontend, flow, defaults, {})
     _atomic_write_text(path, text)
     loaded = load_project_config(directory)
     if loaded is None:
@@ -144,8 +171,17 @@ def write_parameter_override(
     return loaded
 
 
-def apply_project_overrides(directory: str) -> tuple[ProjectConfig | None, list[str]]:
-    config, parameters, changed = _project_override_state(directory)
+def apply_project_overrides(
+    directory: str,
+    *,
+    config_directory: str | None = None,
+    extra_overrides: dict[str, object] | None = None,
+) -> tuple[ProjectConfig | None, list[str]]:
+    config, parameters, changed = _project_override_state(
+        directory,
+        config_directory=config_directory,
+        extra_overrides=extra_overrides,
+    )
     if config is None or not changed:
         return config, changed
     parameters_path = (
@@ -154,22 +190,36 @@ def apply_project_overrides(directory: str) -> tuple[ProjectConfig | None, list[
     for key in changed:
         schema = lookup_parameter(key)
         assert schema is not None
-        parameters[schema.parameter_key] = config.overrides.get(
-            key, config.defaults.get(key, schema.default)
+        overrides = extra_overrides or {}
+        parameters[schema.parameter_key] = overrides.get(
+            key,
+            config.overrides.get(key, config.defaults.get(key, schema.default)),
         )
     _atomic_write_json(parameters_path, parameters)
     return config, changed
 
 
-def pending_project_overrides(directory: str) -> tuple[ProjectConfig | None, list[str]]:
-    config, _, changed = _project_override_state(directory)
+def pending_project_overrides(
+    directory: str,
+    *,
+    config_directory: str | None = None,
+    extra_overrides: dict[str, object] | None = None,
+) -> tuple[ProjectConfig | None, list[str]]:
+    config, _, changed = _project_override_state(
+        directory,
+        config_directory=config_directory,
+        extra_overrides=extra_overrides,
+    )
     return config, changed
 
 
 def _project_override_state(
     directory: str,
+    *,
+    config_directory: str | None = None,
+    extra_overrides: dict[str, object] | None = None,
 ) -> tuple[ProjectConfig | None, dict[str, Any], list[str]]:
-    config = load_project_config(directory)
+    config = load_project_config(config_directory or directory)
     parameters_path = (
         Path(directory).expanduser().resolve() / "home" / "parameters.json"
     )
@@ -179,9 +229,16 @@ def _project_override_state(
     changed: list[str] = []
     for schema in PARAMETERS:
         key = schema.param
-        if key not in config.overrides and schema.parameter_key not in parameters:
+        runtime_overrides = extra_overrides or {}
+        if (
+            key not in runtime_overrides
+            and key not in config.overrides
+            and schema.parameter_key not in parameters
+        ):
             continue
-        value = config.overrides.get(key, config.defaults.get(key, schema.default))
+        value = runtime_overrides.get(
+            key, config.overrides.get(key, config.defaults.get(key, schema.default))
+        )
         current = parameters.get(schema.parameter_key)
         try:
             normalized_current = normalize_stored_value(current, schema)
@@ -232,12 +289,15 @@ def _parameter_table(raw: dict[str, Any], key: str, path: Path) -> dict[str, obj
 def _render_config(
     design: dict[str, object],
     frontend: dict[str, object],
+    flow: dict[str, object],
     defaults: dict[str, object],
     overrides: dict[str, object],
 ) -> str:
     lines = [f"schema_version = {CONFIG_SCHEMA_VERSION}", ""]
     lines.extend(_render_table("design", design))
     lines.extend(_render_table("frontend", frontend))
+    if flow:
+        lines.extend(_render_table("flow", flow))
     lines.extend(_render_table("defaults", defaults, quote_keys=True))
     lines.extend(_render_table("params", overrides, quote_keys=True))
     return "\n".join(lines).rstrip() + "\n"
