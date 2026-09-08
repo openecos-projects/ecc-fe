@@ -274,6 +274,17 @@ def test_experimental_open_cpu_combination_only_supports_cpu_smoke_tests():
     assert item["status"] == "experimental"
     assert item["supported_test_suites"] == ["smoke", "cpu-tests", "coremark"]
 
+    result = validate_frontend_config({
+        "core_id": "picorv32",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "smoke",
+    })
+    assert result.ok is True
+    assert result.summary == (
+        "PicoRV32 can run Smoke Tests on YSYX AM SoC Harness with experimental support."
+    )
+
 
 def test_builtin_catalog_cpu_rejects_user_filelist_override(tmp_path):
     user_filelist = tmp_path / "filelist.cpu.f"

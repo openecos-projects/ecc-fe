@@ -70,17 +70,22 @@ jobs:
             test/test_allflow_builder.py \
             test/test_catalog_compatibility.py \
             test/test_catalog_contract.py \
+            test/test_cli_extended.py \
+            test/test_cli_root.py \
             test/test_cli_main.py \
             test/test_data_step.py \
             test/test_data_workspace.py \
             test/test_examples.py \
             test/test_frontend_detail_snapshot.py \
             test/test_qor_analysis.py \
+            test/test_resource_manager.py \
+            test/test_resources.py \
             test/test_rtl_review.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \
             test/test_runtime_transport.py \
             test/test_sv_module.py \
+            test/test_setup_script.py \
             test/test_utility.py \
             test/test_workspace_application.py
 
@@ -112,6 +117,39 @@ jobs:
           runtime_root="${RUNNER_TEMP}/ecc-fe-runtime-smoke/ecc-fe-latest"
           mkdir -p "$(dirname "${runtime_root}")"
           tar -xzf dist/ecc-fe-latest.tar.gz -C "$(dirname "${runtime_root}")"
+
+          "${runtime_root}/bin/ecc-fe" --version | grep -E '^ecc-fe [^ ]+$'
+          cli_state="${RUNNER_TEMP}/ecc-fe-runtime-cli-state"
+          XDG_DATA_HOME="${cli_state}/data" \
+            XDG_STATE_HOME="${cli_state}/state" \
+            XDG_CACHE_HOME="${cli_state}/cache" \
+            "${runtime_root}/bin/ecc-fe" resource status --json \
+            | grep -F '"status": "empty"'
+
+          root_cli_workspace="${RUNNER_TEMP}/ecc-fe-root-cli-workspace"
+          root_cli_bin="${RUNNER_TEMP}/ecc-fe-root-cli-bin/ecc-fe"
+          mkdir -p "$(dirname "${root_cli_bin}")"
+          ln -s "${runtime_root}/bin/ecc-fe" "${root_cli_bin}"
+          run_root_cli() {
+            env -i \
+              HOME="${HOME}" \
+              TMPDIR="${RUNNER_TEMP}" \
+              PATH=/nonexistent \
+              XDG_DATA_HOME="${cli_state}/data" \
+              XDG_STATE_HOME="${cli_state}/state" \
+              XDG_CACHE_HOME="${cli_state}/cache" \
+              "${root_cli_bin}" "$@"
+          }
+          run_root_cli init --workspace "${root_cli_workspace}" --design runtime-smoke --json \
+            | grep -F '"kind": "workspace_init"'
+          run_root_cli param set design.frequency_mhz 125 --workspace "${root_cli_workspace}" --json \
+            | grep -F '"status": "set"'
+          run_root_cli param show design.frequency_mhz --workspace "${root_cli_workspace}" --json \
+            | grep -F '"value": 125.0'
+          run_root_cli catalog list --kind core --status stable --json \
+            | grep -F '"kind": "catalog_entry"'
+          run_root_cli report qor --workspace "${root_cli_workspace}" --json \
+            | grep -F '"kind": "frontend_qor"'
 
           response="${RUNNER_TEMP}/ecc-fe-runtime-response.txt"
           workspace="${RUNNER_TEMP}/ecc-fe-runtime-workspace"

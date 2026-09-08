@@ -99,6 +99,7 @@ check_runtime() {
   require_entry "${archive}" "ecc-fe-latest/bin/ecc-fe"
   require_elf_entry "${archive}" "ecc-fe-latest/bin/ecc-fe"
   require_entry "${archive}" "ecc-fe-latest/fecompiler/resources.py"
+  require_entry "${archive}" "ecc-fe-latest/requirements-bazel.lock"
   forbid_entry_prefix "${archive}" "ecc-fe-latest/fecompiler/thirdparty/"
 }
 

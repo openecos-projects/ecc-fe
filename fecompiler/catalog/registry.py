@@ -9,15 +9,22 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from fecompiler.catalog.compatibility import compatibility_for_pair, compatibility_matrix
+from fecompiler.catalog.compatibility import (
+    compatibility_for_pair,
+    compatibility_matrix,
+)
 from fecompiler.catalog.schema import CatalogEntry, ValidationIssue, ValidationResult
-from fecompiler.resources import catalog_manifest_roots, frontend_repo_root, resolve_thirdparty_path
+from fecompiler.resources import (
+    catalog_manifest_roots,
+    frontend_repo_root,
+    resolve_thirdparty_path,
+)
+from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 from fecompiler.tools.common.sv_module import (
     is_simple_sv_identifier,
     module_definitions,
     module_port_contract_from_files,
 )
-from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 
 CATALOG_VERSION = 1
 DEFAULT_CORE_ID = "custom-filelist"
@@ -323,7 +330,7 @@ def _load_builtin(filename: str) -> list[dict[str, Any]]:
     with resources.files(package).joinpath(filename).open(encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
-        raise ValueError(f"catalog file must contain a list: {filename}")
+        raise TypeError(f"catalog file must contain a list: {filename}")
     return [dict(item) for item in data if isinstance(item, dict)]
 
 
@@ -609,7 +616,7 @@ def _parse_user_cpu_filelist(
             if token in {"-f", "-F"} and index + 1 < len(tokens):
                 nested = tokens[index + 1]
                 index += 2
-            elif (token.startswith("-f") or token.startswith("-F")) and len(token) > 2:
+            elif token.startswith(("-f", "-F")) and len(token) > 2:
                 nested = token[2:]
                 index += 1
             else:
@@ -661,7 +668,7 @@ def cpu_filelist_supports_difftest(filelist_path: str | Path) -> bool:
 
 def _filelist_tokens(raw_line: str) -> list[str]:
     line = raw_line.strip()
-    if not line or line.startswith("#") or line.startswith("//") or line.startswith("`"):
+    if not line or line.startswith(("#", "//", "`")):
         return []
     try:
         return shlex.split(line, comments=True, posix=True)
@@ -803,7 +810,7 @@ def _summary_for(
     if support_level == "supported":
         return f"{core.name} can run {test_suite.name} on {soc.name}." if core and soc and test_suite else "Configuration is supported."
     if support_level == "experimental":
-        return "Configuration is usable for catalog exploration, but one or more adapters are not implemented yet."
+        return f"{core.name} can run {test_suite.name} on {soc.name} with experimental support." if core and soc and test_suite else "Configuration is usable with experimental support."
     if core is not None and core.filelist_ready and not core.sim_ready:
         return f"{core.name} RTL filelist is ready, but simulation workspace creation still needs a SoC adapter."
     return "Configuration is not ready to create a frontend workspace."
