@@ -11,7 +11,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.allflow.profile import flow_steps_for
 from fecompiler.analysis import (
     clear_step_qor,
     step_qor_source_revision,
@@ -36,7 +36,7 @@ class EngineFlow:
         return len(self.flow.get("steps", [])) > 0
 
     def _sync_flow_steps(self) -> None:
-        """Make existing flow.json compatible with current DEFAULT_FLOW_STEPS.
+        """Make flow.json compatible with the workspace's frontend profile.
 
         Preserves state/runtime/info for matched steps and appends any newly added
         default steps with Unstart state.
@@ -49,7 +49,8 @@ class EngineFlow:
         synced: list[dict[str, Any]] = []
         changed = False
 
-        for name, tool in DEFAULT_FLOW_STEPS:
+        expected_steps = flow_steps_for(self.workspace.get("frontend_design_kind"))
+        for name, tool in expected_steps:
             matched = index.pop((name, tool), None)
             if matched is None:
                 changed = True
@@ -57,7 +58,7 @@ class EngineFlow:
                 continue
             synced.append(matched)
 
-        # Drop non-default steps to keep the flow strictly aligned with DEFAULT_FLOW_STEPS.
+        # Drop steps outside the selected profile.
         if index:
             changed = True
 
@@ -71,7 +72,10 @@ class EngineFlow:
             self.save()
 
     def init_default_steps(self) -> None:
-        self.flow["steps"] = [_new_flow_step(name, tool) for name, tool in DEFAULT_FLOW_STEPS]
+        self.flow["steps"] = [
+            _new_flow_step(name, tool)
+            for name, tool in flow_steps_for(self.workspace.get("frontend_design_kind"))
+        ]
         self.save()
 
     def load(self) -> None:

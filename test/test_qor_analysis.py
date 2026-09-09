@@ -819,6 +819,50 @@ def test_lint_qor_scores_only_actionable_cpu_diagnostics(tmp_path: Path) -> None
     }
 
 
+def test_lint_qor_scores_generic_design_diagnostics(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "lint", "verilator")
+    workspace["frontend_design_kind"] = "generic_rtl"
+    diagnostics = [{
+        "severity": "warning",
+        "code": "UNUSEDSIGNAL",
+        "category": "unused",
+        "ownership": "design",
+        "actionable": True,
+    }]
+    _write(
+        Path(step.report["dir"]) / "lint_summary.json",
+        {
+            "schema_version": 1,
+            "tool": "verilator",
+            "status": "pass",
+            "returncode": 0,
+            "summary": {
+                "status": "pass",
+                "errors": 0,
+                "warnings": 1,
+                "diagnostics": 1,
+                "design_errors": 0,
+                "design_warnings": 1,
+                "actionable_diagnostics": 1,
+            },
+            "diagnostics": diagnostics,
+        },
+    )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    assert summary["quality_status"] == "pass"
+    assert summary["score"]["label"] == "Design lint quality"
+    assert [component["id"] for component in summary["score"]["components"]] == [
+        "analysis_execution",
+        "design_errors",
+        "design_warnings",
+        "design_rule_breadth",
+    ]
+    assert summary["gates"][0]["id"] == "no_design_lint_errors"
+
+
 def test_lint_qor_does_not_reward_failed_tool_execution(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "lint", "verilator")
     _write(

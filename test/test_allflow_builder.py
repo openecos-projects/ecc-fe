@@ -8,6 +8,7 @@ from fecompiler.allflow.builder import (
     build_allflow,
     sanitize_step_token,
 )
+from fecompiler.allflow.profile import CPU_CORE, GENERIC_RTL, flow_steps_for
 
 
 # ── DEFAULT_FLOW_STEPS ────────────────────────────────────────────────────────
@@ -97,3 +98,22 @@ def test_build_allflow_names_match_default_steps():
     for (exp_name, exp_tool), (got_name, got_tool, _) in zip(DEFAULT_FLOW_STEPS, flow):
         assert got_name == exp_name
         assert got_tool == exp_tool
+
+
+def test_generic_rtl_profile_omits_simulation():
+    assert flow_steps_for(GENERIC_RTL) == [
+        ("prepare", "fe"),
+        ("review", "fe"),
+        ("elab", "slang"),
+        ("lint", "verilator"),
+    ]
+    assert [name for name, _, _ in build_allflow(GENERIC_RTL)] == [
+        "prepare",
+        "review",
+        "elab",
+        "lint",
+    ]
+
+
+def test_missing_design_kind_retains_legacy_cpu_flow():
+    assert flow_steps_for("") == flow_steps_for(CPU_CORE) == DEFAULT_FLOW_STEPS

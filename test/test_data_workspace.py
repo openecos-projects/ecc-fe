@@ -16,6 +16,7 @@ from fecompiler.data.workspace import (
     save_flow,
 )
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.allflow.profile import CPU_CORE, GENERIC_RTL
 
 
 def _make_spec(tmp_path: Path, **kwargs) -> CreateWorkspaceData:
@@ -44,6 +45,34 @@ def test_create_workspace_flow_has_all_steps(tmp_path):
     create_workspace(_make_spec(tmp_path))
     flow = json.loads((tmp_path / "ws" / "home" / "flow.json").read_text())
     assert [s["name"] for s in flow["steps"]] == [n for n, _ in DEFAULT_FLOW_STEPS]
+
+
+def test_create_workspace_data_preserves_parameters_as_second_positional_argument(tmp_path):
+    parameters = {"Design": "legacy", "Top module": "legacy_top"}
+
+    spec = CreateWorkspaceData(str(tmp_path / "legacy"), parameters)
+
+    assert spec.parameters == parameters
+    assert spec.frontend_design_kind == CPU_CORE
+
+
+def test_create_generic_rtl_workspace_uses_profile_steps(tmp_path):
+    create_workspace(_make_spec(tmp_path, frontend_design_kind=GENERIC_RTL))
+
+    flow = json.loads((tmp_path / "ws" / "home" / "flow.json").read_text())
+    parameters = json.loads(
+        (tmp_path / "ws" / "home" / "parameters.json").read_text()
+    )
+    workspace = load_workspace(str(tmp_path / "ws"))
+
+    assert [step["name"] for step in flow["steps"]] == [
+        "prepare",
+        "review",
+        "elab",
+        "lint",
+    ]
+    assert parameters["frontend_design_kind"] == GENERIC_RTL
+    assert workspace["frontend_design_kind"] == GENERIC_RTL
 
 
 def test_create_workspace_writes_parameters(tmp_path):

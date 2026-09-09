@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
+from fecompiler.tools.common.rtl_ownership import (
+    is_actionable_rtl_ownership,
+    rtl_ownership_map,
+    rtl_source_ownership,
+    user_rtl_ownership,
+)
 
 _SOURCE_EXTENSIONS = {".v", ".sv", ".vh", ".svh"}
 _KEYWORDS = {
@@ -62,7 +67,7 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 2,
         "title": "RTL Review Center",
-        "scope": "cpu",
+        "scope": user_rtl_ownership(workspace),
         "summary": summary,
         "metrics": metrics,
         "issues": issues,
@@ -175,7 +180,8 @@ def finalize_review_report(
     actionable = [
         issue
         for issue in current_issues
-        if not issue.get("waived") and issue.get("ownership") == "cpu"
+        if not issue.get("waived")
+        and is_actionable_rtl_ownership(workspace, issue.get("ownership"))
     ]
     actionable_counts = Counter(str(issue.get("severity", "info")) for issue in actionable)
     summary = dict(report.get("summary", {}))
@@ -613,7 +619,8 @@ def _decorate_issue(
     decorated = dict(issue)
     decorated.setdefault("origin", "source_heuristic")
     decorated.setdefault("confidence", "low" if decorated.get("severity") == "info" else "medium")
-    decorated.setdefault("ownership", "cpu")
+    if decorated.get("ownership") in {None, "", "cpu"}:
+        decorated["ownership"] = user_rtl_ownership(workspace)
     if decorated.get("source") and decorated.get("ownership") != "tool":
         decorated["ownership"] = rtl_source_ownership(
             workspace,
@@ -702,6 +709,8 @@ def _float_or_zero(value: Any) -> float:
 
 
 def _source_label(path: Path, workspace: dict[str, Any]) -> str:
+    if user_rtl_ownership(workspace) == "design":
+        return f"Design RTL · {path.name}"
     root = str(workspace.get("cpu_filelist", "")).strip()
     if root:
         try:

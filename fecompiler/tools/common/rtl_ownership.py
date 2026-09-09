@@ -6,11 +6,33 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
 from fecompiler.resources import frontend_repo_root
 from fecompiler.utility.json import json_read
 
 
-RTL_OWNERSHIPS = ("cpu", "adapter", "soc", "generated", "third_party", "tool", "unknown")
+RTL_OWNERSHIPS = (
+    "cpu",
+    "design",
+    "adapter",
+    "soc",
+    "generated",
+    "third_party",
+    "tool",
+    "unknown",
+)
+
+
+def user_rtl_ownership(workspace: dict[str, Any]) -> str:
+    return (
+        "design"
+        if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) == GENERIC_RTL
+        else "cpu"
+    )
+
+
+def is_actionable_rtl_ownership(workspace: dict[str, Any], ownership: object) -> bool:
+    return str(ownership) == user_rtl_ownership(workspace)
 
 
 def classify_rtl_source(
@@ -23,6 +45,9 @@ def classify_rtl_source(
         return "unknown"
     path = Path(path_text).expanduser().resolve()
     group = str(source_group).strip().lower()
+    design_kind = normalize_frontend_design_kind(
+        workspace.get("frontend_design_kind") if workspace else ""
+    )
 
     if group == "soc_filelist":
         return "soc"
@@ -34,6 +59,8 @@ def classify_rtl_source(
         return "adapter"
     if "thirdparty" in {part.lower() for part in path.parts}:
         return "third_party"
+    if group in {"input_filelist", "origin_verilog"} and design_kind == GENERIC_RTL:
+        return "design"
     if group in {"cpu_filelist", "input_filelist", "origin_verilog", "cpu"}:
         return "cpu"
     if _under_workspace_root(path, workspace, "soc_filelist"):
@@ -43,7 +70,7 @@ def classify_rtl_source(
     if _under_workspace_root(path, workspace, "cpu_filelist"):
         return "cpu"
     if _is_workspace_file(path, workspace, "origin_verilog"):
-        return "cpu"
+        return "design" if design_kind == GENERIC_RTL else "cpu"
     return "unknown"
 
 
