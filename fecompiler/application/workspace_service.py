@@ -28,6 +28,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from fecompiler.catalog import catalog_payload, check_catalog_contracts, validate_frontend_config
+from fecompiler.allflow.profile import CPU_CORE, GENERIC_RTL, normalize_frontend_design_kind
 from fecompiler.cli.workspace_typer import WorkspaceTyperHandlers
 from fecompiler.cli.workspace_typer import build_typer_app as build_workspace_typer_app
 from fecompiler.data.step import StateEnum
@@ -36,6 +37,7 @@ from fecompiler.engine.flow import EngineFlow
 from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.soc import soc_runtime_options
 from fecompiler.tools.common.rtl_inputs import prepared_inputs_current, write_generated_rtl_filelist
+from fecompiler.tools.common.sv_module import is_simple_sv_identifier
 from fecompiler.utility.json import json_read, json_write
 
 try:
@@ -94,6 +96,7 @@ _PATH_LIST_FIELDS = {
     "sim_program_sources",
 }
 _CPU_RTL_SUFFIXES = {".v", ".sv", ".vh", ".svh"}
+_RTL_COMPILATION_UNIT_SUFFIXES = {".v", ".sv"}
 
 
 @dataclass(slots=True)
@@ -238,6 +241,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--origin-def", default="")
     create.add_argument("--origin-verilog", default="")
     create.add_argument("--filelist", default="")
+    create.add_argument(
+        "--design-kind",
+        default="",
+        choices=(CPU_CORE, GENERIC_RTL),
+        help="Frontend design kind",
+    )
     create.add_argument("--cpu-filelist", default="")
     create.add_argument("--cpu-rtl", action="append", default=[], help="CPU RTL source path; repeatable")
     create.add_argument("--cpu-top-module", default="", help="User CPU top module name")
@@ -485,6 +494,28 @@ def _create(args: argparse.Namespace) -> CliResult:
 
 def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     normalized = _normalize_create_request(request, base_dir)
+    try:
+        design_kind = normalize_frontend_design_kind(
+            normalized.get("frontend_design_kind")
+            or (
+                normalized.get("parameters", {}).get("frontend_design_kind")
+                if isinstance(normalized.get("parameters"), dict)
+                else ""
+            )
+        )
+    except ValueError as exc:
+        raise WorkspaceCliError("create_workspace", "failed", str(exc)) from exc
+    normalized["frontend_design_kind"] = design_kind
+
+    if design_kind == GENERIC_RTL:
+        _validate_generic_create_request(normalized)
+        return _create_normalized_workspace(
+            normalized,
+            design_kind=design_kind,
+            catalog_config={},
+            cpu_rtl_files=[],
+        )
+
     with _materialized_cpu_filelist(
         normalized,
         "create_workspace",
@@ -503,48 +534,69 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     if cpu_rtl_files:
         normalized.pop("cpu_filelist", None)
     _apply_default_soc_runtime_options(normalized)
+    return _create_normalized_workspace(
+        normalized,
+        design_kind=design_kind,
+        catalog_config=validation.normalized,
+        cpu_rtl_files=cpu_rtl_files,
+    )
+
+
+def _create_normalized_workspace(
+    normalized: dict[str, Any],
+    *,
+    design_kind: str,
+    catalog_config: dict[str, Any],
+    cpu_rtl_files: list[str],
+) -> CliResult:
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
         raise WorkspaceCliError("create_workspace", "failed", "missing required field: directory")
     _validate_create_request_paths(normalized)
 
-    parameters = _normalize_parameters(normalized.get("parameters", {}))
+    parameters = _normalize_parameters(
+        normalized.get("parameters", {}),
+        default_clock="" if design_kind == GENERIC_RTL else "clk",
+    )
     if normalized.get("top_module"):
         parameters["Top module"] = normalized["top_module"]
     parameters.setdefault("Design Tool", "frontend")
-    parameters["frontend_core_id"] = validation.normalized["core_id"]
-    parameters["cpu_wrapper_id"] = validation.normalized["core_id"]
-    parameters["cpu_wrapper_contract"] = validation.normalized.get("cpu_wrapper_contract", "")
-    parameters["cpu_socket_contract"] = validation.normalized.get("cpu_socket_contract", "")
-    parameters["cpu_wrapper_top"] = validation.normalized.get("cpu_wrapper_top", "")
-    parameters["required_cpu_top_module"] = validation.normalized.get("required_cpu_top_module", "")
-    parameters["required_cpu_top_ports"] = validation.normalized.get("required_cpu_top_ports", [])
-    parameters["required_cpu_top_port_contract"] = validation.normalized.get(
-        "required_cpu_top_port_contract",
-        [],
-    )
-    parameters["cpu_reset_vector"] = validation.normalized.get("required_cpu_reset_vector", "")
-    parameters["cpu_supports_difftest"] = bool(validation.normalized.get("cpu_supports_difftest", True))
-    parameters["core_supported_test_suites"] = validation.normalized.get("core_supported_test_suites", [])
-    if validation.normalized.get("core_sim_program_link_base"):
-        parameters["sim_program_link_base"] = validation.normalized["core_sim_program_link_base"]
-    _apply_core_sim_defaults_to(parameters, validation.normalized)
-    parameters["soc_harness_id"] = validation.normalized["soc_harness_id"]
-    parameters["soc_wrapper_id"] = validation.normalized["soc_harness_id"]
-    parameters["soc_wrapper_contract"] = validation.normalized.get("soc_wrapper_contract", "")
-    parameters["soc_wrapper_top"] = validation.normalized.get("soc_wrapper_top", "")
-    parameters["soc_cpu_reset_vector"] = validation.normalized.get("soc_cpu_reset_vector", "")
-    parameters["soc_default_program_link_base"] = validation.normalized.get("soc_default_program_link_base", "")
-    parameters["soc_bootloader_payload_link_base"] = validation.normalized.get("soc_bootloader_payload_link_base", "")
-    parameters["soc_supports_difftest"] = bool(validation.normalized.get("soc_supports_difftest", True))
-    parameters["soc_supported_test_suites"] = validation.normalized.get("soc_supported_test_suites", [])
-    parameters["toolchain_id"] = validation.normalized["toolchain_id"]
-    parameters["test_suite_id"] = validation.normalized["test_suite_id"]
-    if normalized.get("soc_variant"):
-        parameters["soc_variant"] = normalized["soc_variant"]
+    parameters["frontend_design_kind"] = design_kind
+    if design_kind == CPU_CORE:
+        parameters["frontend_core_id"] = catalog_config["core_id"]
+        parameters["cpu_wrapper_id"] = catalog_config["core_id"]
+        parameters["cpu_wrapper_contract"] = catalog_config.get("cpu_wrapper_contract", "")
+        parameters["cpu_socket_contract"] = catalog_config.get("cpu_socket_contract", "")
+        parameters["cpu_wrapper_top"] = catalog_config.get("cpu_wrapper_top", "")
+        parameters["required_cpu_top_module"] = catalog_config.get("required_cpu_top_module", "")
+        parameters["required_cpu_top_ports"] = catalog_config.get("required_cpu_top_ports", [])
+        parameters["required_cpu_top_port_contract"] = catalog_config.get(
+            "required_cpu_top_port_contract",
+            [],
+        )
+        parameters["cpu_reset_vector"] = catalog_config.get("required_cpu_reset_vector", "")
+        parameters["cpu_supports_difftest"] = bool(catalog_config.get("cpu_supports_difftest", True))
+        parameters["core_supported_test_suites"] = catalog_config.get("core_supported_test_suites", [])
+        if catalog_config.get("core_sim_program_link_base"):
+            parameters["sim_program_link_base"] = catalog_config["core_sim_program_link_base"]
+        _apply_core_sim_defaults_to(parameters, catalog_config)
+        parameters["soc_harness_id"] = catalog_config["soc_harness_id"]
+        parameters["soc_wrapper_id"] = catalog_config["soc_harness_id"]
+        parameters["soc_wrapper_contract"] = catalog_config.get("soc_wrapper_contract", "")
+        parameters["soc_wrapper_top"] = catalog_config.get("soc_wrapper_top", "")
+        parameters["soc_cpu_reset_vector"] = catalog_config.get("soc_cpu_reset_vector", "")
+        parameters["soc_default_program_link_base"] = catalog_config.get("soc_default_program_link_base", "")
+        parameters["soc_bootloader_payload_link_base"] = catalog_config.get("soc_bootloader_payload_link_base", "")
+        parameters["soc_supports_difftest"] = bool(catalog_config.get("soc_supports_difftest", True))
+        parameters["soc_supported_test_suites"] = catalog_config.get("soc_supported_test_suites", [])
+        parameters["toolchain_id"] = catalog_config["toolchain_id"]
+        parameters["test_suite_id"] = catalog_config["test_suite_id"]
+        if normalized.get("soc_variant"):
+            parameters["soc_variant"] = normalized["soc_variant"]
 
     spec = CreateWorkspaceData(
         directory=directory,
+        frontend_design_kind=design_kind,
         parameters=parameters,
         origin_def=str(normalized.get("origin_def", "")),
         origin_verilog=str(normalized.get("origin_verilog", "")),
@@ -561,8 +613,16 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
         sim_all_tests=_normalize_bool(normalized.get("sim_all_tests", False)),
         sim_tests_dir=str(normalized.get("sim_tests_dir", "")),
         sim_build_all_programs=_normalize_bool(normalized.get("sim_build_all_programs", False)),
-        cpu_supports_difftest=_normalize_bool(normalized.get("cpu_supports_difftest", True)),
-        soc_supports_difftest=_normalize_bool(normalized.get("soc_supports_difftest", True)),
+        cpu_supports_difftest=(
+            _normalize_bool(normalized.get("cpu_supports_difftest", True))
+            if design_kind == CPU_CORE
+            else False
+        ),
+        soc_supports_difftest=(
+            _normalize_bool(normalized.get("soc_supports_difftest", True))
+            if design_kind == CPU_CORE
+            else False
+        ),
         core_supported_test_suites=_normalize_str_list(normalized.get("core_supported_test_suites", [])),
         soc_supported_test_suites=_normalize_str_list(normalized.get("soc_supported_test_suites", [])),
         sim_program_names=_normalize_str_list(normalized.get("sim_program_names", [])),
@@ -587,8 +647,9 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     workspace = create_workspace(spec)
     if workspace is None:
         raise WorkspaceCliError("create_workspace", "failed", f"create frontend workspace failed: {directory}")
-    _repair_workspace_sim_defaults(workspace)
-    _apply_workspace_create_test_suite_defaults(workspace, validation.normalized["test_suite_id"])
+    if design_kind == CPU_CORE:
+        _repair_workspace_sim_defaults(workspace)
+        _apply_workspace_create_test_suite_defaults(workspace, catalog_config["test_suite_id"])
 
     engine = _build_engine(workspace)
     engine.create_step_workspaces()
@@ -602,7 +663,11 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
 
 def _load(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="load_workspace")
-    repaired = _repair_workspace_sim_defaults(workspace)
+    repaired = (
+        _repair_workspace_sim_defaults(workspace)
+        if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) == CPU_CORE
+        else False
+    )
     recovered = (
         engine.clear_stale_ongoing_states()
         if bool(getattr(args, "recover_stale_ongoing", True))
@@ -635,7 +700,8 @@ def _load(args: argparse.Namespace) -> CliResult:
 
 def _run_flow(args: argparse.Namespace) -> CliResult:
     workspace, engine = _load_runtime(args.directory, cmd="rtl2gds")
-    _repair_workspace_sim_defaults(workspace)
+    if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) == CPU_CORE:
+        _repair_workspace_sim_defaults(workspace)
     from_step = str(getattr(args, "from_step", "")).strip()
     step_names = [str(step.name) for step in engine.workspace_steps]
     if from_step and from_step not in step_names:
@@ -940,6 +1006,7 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
     direct: dict[str, Any] = {}
     for arg_name, field in (
         ("directory", "directory"),
+        ("design_kind", "frontend_design_kind"),
         ("origin_def", "origin_def"),
         ("origin_verilog", "origin_verilog"),
         ("filelist", "filelist"),
@@ -1224,7 +1291,7 @@ def _apply_core_sim_defaults_to(target: dict[str, Any], normalized: dict[str, An
             target[field] = _normalize_bool(value)
 
 
-def _normalize_parameters(raw: Any) -> dict[str, Any]:
+def _normalize_parameters(raw: Any, *, default_clock: str = "clk") -> dict[str, Any]:
     parameters = dict(raw) if isinstance(raw, dict) else {}
     aliases = {
         "design": "Design",
@@ -1237,9 +1304,158 @@ def _normalize_parameters(raw: Any) -> dict[str, Any]:
             parameters[target] = parameters[source]
     parameters.setdefault("Design", "New_Chip_Design")
     parameters.setdefault("Top module", "top")
-    parameters.setdefault("Clock", "clk")
+    parameters.setdefault("Clock", default_clock)
     parameters.setdefault("Frequency max [MHz]", 100)
     return parameters
+
+
+def _validate_generic_create_request(normalized: dict[str, Any]) -> None:
+    parameters = normalized.get("parameters", {})
+    params = parameters if isinstance(parameters, dict) else {}
+    top_module = _first_text(
+        normalized.get("top_module"),
+        params.get("Top module"),
+        params.get("top_module"),
+    )
+    if not top_module:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "generic RTL workspace requires a top_module",
+        )
+    if not is_simple_sv_identifier(top_module):
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            f"invalid SystemVerilog top module identifier: {top_module}",
+        )
+    normalized["top_module"] = top_module
+
+    source_fields = [
+        field
+        for field in ("filelist", "origin_verilog", "rtl_list")
+        if normalized.get(field)
+    ]
+    if not source_fields:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "generic RTL workspace requires filelist, origin_verilog, or rtl_list",
+        )
+    if len(source_fields) > 1:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "choose exactly one generic RTL input: filelist, origin_verilog, or rtl_list",
+        )
+
+    rtl_files = _normalize_str_list(normalized.get("rtl_list", []))
+    if normalized.get("origin_verilog"):
+        rtl_files.append(str(normalized["origin_verilog"]))
+    if normalized.get("filelist"):
+        from fecompiler.tools.prepare.runner import PrepareStep
+
+        try:
+            parsed = PrepareStep._parse_sv_filelist(str(normalized["filelist"]))
+        except (OSError, ValueError) as exc:
+            raise WorkspaceCliError(
+                "create_workspace",
+                "failed",
+                f"invalid generic RTL filelist: {exc}",
+            ) from exc
+        rtl_files.extend(str(path) for path in parsed["rtl_files"])
+    invalid = [
+        path
+        for path in rtl_files
+        if Path(path).suffix.lower() not in _CPU_RTL_SUFFIXES
+    ]
+    if invalid:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "generic RTL selection contains unsupported files: " + "; ".join(invalid[:8]),
+            data={"invalid_rtl_files": invalid},
+        )
+    if not any(
+        Path(path).suffix.lower() in _RTL_COMPILATION_UNIT_SUFFIXES
+        for path in rtl_files
+    ):
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "generic RTL selection requires at least one .v or .sv source file",
+            data={"invalid_rtl_files": rtl_files},
+        )
+
+    cpu_only_fields = (
+        "core_id",
+        "frontend_core_id",
+        "cpu_filelist",
+        "cpu_rtl_files",
+        "cpu_top_module",
+        "cpu_wrapper_id",
+        "cpu_wrapper_contract",
+        "cpu_socket_contract",
+        "cpu_wrapper_top",
+        "cpu_reset_vector",
+        "cpu_supports_difftest",
+        "required_cpu_top_module",
+        "required_cpu_top_ports",
+        "required_cpu_top_port_contract",
+        "soc_filelist",
+        "soc_harness_id",
+        "soc_variant",
+        "soc_wrapper_id",
+        "soc_wrapper_contract",
+        "soc_wrapper_top",
+        "soc_cpu_reset_vector",
+        "soc_default_program_link_base",
+        "soc_bootloader_payload_link_base",
+        "soc_supports_difftest",
+        "core_supported_test_suites",
+        "soc_supported_test_suites",
+        "test_suite_id",
+        "toolchain_id",
+        "testbench",
+        "sim_cpp_sources",
+        "sim_cflags",
+        "sim_ldflags",
+        "sim_run_args",
+        "sim_images",
+        "sim_all_tests",
+        "sim_build_all_programs",
+        "sim_program_names",
+        "sim_program_sources",
+        "sim_tests_dir",
+        "sim_tests_out_dir",
+        "sim_programs_dir",
+        "sim_soc_root",
+        "sim_build_test_script",
+        "sim_program_link_base",
+        "sim_compile_preset",
+        "sim_compile_opt_level",
+        "sim_compile_march",
+        "sim_compile_mabi",
+        "sim_compile_extra_cflags",
+        "sim_coremark_iterations",
+        "sim_coremark_total_data_size",
+        "sim_coremark_max_cycles",
+        "sim_coremark_has_float",
+        "sim_coremark_use_difftest",
+    )
+    unexpected = [
+        field
+        for field in cpu_only_fields
+        if normalized.get(field) or params.get(field)
+    ]
+    if unexpected:
+        raise WorkspaceCliError(
+            "create_workspace",
+            "failed",
+            "generic RTL workspace does not accept CPU or simulation fields: "
+            + ", ".join(unexpected),
+            data={"unsupported_fields": unexpected},
+        )
 
 
 def _validate_create_request_paths(normalized: dict[str, Any]) -> None:
@@ -1334,6 +1550,8 @@ def _apply_default_soc_runtime_options(data: dict[str, Any]) -> bool:
 
 
 def _repair_workspace_sim_defaults(workspace: dict[str, Any]) -> bool:
+    if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) != CPU_CORE:
+        return False
     defaults = _default_soc_runtime_options(workspace)
     if not defaults:
         return False
@@ -2470,7 +2688,11 @@ def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dic
     rtl_files = _normalize_str_list(manifest.get("rtl_files", []))
     incdirs = _normalize_str_list(manifest.get("incdirs", []))
     defines = _normalize_str_list(manifest.get("defines", []))
-    cpu_sources = _build_prepare_cpu_source_artifacts(workspace)
+    is_generic = (
+        normalize_frontend_design_kind(workspace.get("frontend_design_kind"))
+        == GENERIC_RTL
+    )
+    cpu_sources = [] if is_generic else _build_prepare_cpu_source_artifacts(workspace)
 
     contracts = _build_prepare_contracts(workspace, report)
     failed_contracts = [
@@ -2489,12 +2711,76 @@ def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dic
         readiness_message = "Prepare completed with degraded or optional runtime capabilities."
     elif rtl_files:
         readiness_status = "Ready"
-        readiness_message = "Inputs are normalized and ready for ELAB, Lint, Review, and Sim."
+        readiness_message = (
+            "Inputs are normalized and ready for RTL Review, Elaboration, and Lint."
+            if is_generic
+            else "Inputs are normalized and ready for ELAB, Lint, Review, and Sim."
+        )
     else:
         readiness_status = "Pending"
         readiness_message = "Run Prepare to collect and normalize RTL inputs."
 
-    return {
+    configuration = (
+        [
+            {"label": "Design", "value": _display_workspace_value(workspace, "design")},
+            {"label": "Top Module", "value": _display_workspace_value(workspace, "top_module")},
+            {"label": "Clock", "value": _display_workspace_value(workspace, "clock")},
+            {
+                "label": "Target Frequency",
+                "value": _display_workspace_value(workspace, "frequency_max"),
+            },
+        ]
+        if is_generic
+        else [
+            {
+                "label": "CPU",
+                "value": _display_workspace_value(
+                    workspace, "frontend_core_id", "cpu_wrapper_id", "core_id"
+                ),
+            },
+            {
+                "label": "SoC Harness",
+                "value": _display_workspace_value(
+                    workspace, "soc_harness_id", "soc_wrapper_id", "soc_variant"
+                ),
+            },
+            {"label": "Toolchain", "value": _display_workspace_value(workspace, "toolchain_id")},
+            {"label": "Test Suite", "value": _display_workspace_value(workspace, "test_suite_id")},
+            {"label": "Top Module", "value": _display_workspace_value(workspace, "top_module")},
+            {"label": "Reset/Link Base", "value": _prepare_reset_link_base(workspace)},
+        ]
+    )
+    runtime = (
+        [
+            {
+                "label": "Workdir",
+                "value": str(workspace.get("directory", "")),
+                "mono": True,
+            },
+            {"label": "Top Module", "value": str(workspace.get("top_module", ""))},
+            {"label": "Step Logs", "value": "*/report/log.txt", "mono": True},
+        ]
+        if is_generic
+        else [
+            {
+                "label": "Workdir",
+                "value": str(workspace.get("directory", "")),
+                "mono": True,
+            },
+            {
+                "label": "Sim Top",
+                "value": str(workspace.get("top_module", "") or "ecos_sim_top"),
+            },
+            {"label": "CPU Tests", "value": _prepare_cpu_tests_label(workspace)},
+            {
+                "label": "Wave Output",
+                "value": "sim_verilator/report/cases/*.vcd",
+                "mono": True,
+            },
+            {"label": "Step Logs", "value": "*/report/log.txt", "mono": True},
+        ]
+    )
+    payload = {
         "readiness": {
             "status": readiness_status,
             "message": readiness_message,
@@ -2502,16 +2788,13 @@ def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dic
             "incdirs": len(incdirs),
             "defines": len(defines),
         },
-        "configuration": [
-            {"label": "CPU", "value": _display_workspace_value(workspace, "frontend_core_id", "cpu_wrapper_id", "core_id")},
-            {"label": "SoC Harness", "value": _display_workspace_value(workspace, "soc_harness_id", "soc_wrapper_id", "soc_variant")},
-            {"label": "Toolchain", "value": _display_workspace_value(workspace, "toolchain_id")},
-            {"label": "Test Suite", "value": _display_workspace_value(workspace, "test_suite_id")},
-            {"label": "Top Module", "value": _display_workspace_value(workspace, "top_module")},
-            {"label": "Reset/Link Base", "value": _prepare_reset_link_base(workspace)},
-        ],
+        "configuration": configuration,
         "inputs": {
-            "cpu_rtl_files": len(cpu_sources),
+            **(
+                {"design_rtl_files": len(rtl_files)}
+                if is_generic
+                else {"cpu_rtl_files": len(cpu_sources)}
+            ),
             "total_rtl_files": len(rtl_files),
             "incdirs": len(incdirs),
             "defines": len(defines),
@@ -2521,20 +2804,16 @@ def _build_frontend_prepare_payload(workspace: dict[str, Any], step: Any) -> dic
             "rtl_sources": manifest.get("rtl_sources", []),
         },
         "ownership": manifest.get("ownership", report.get("ownership", {})),
-        "cpu_top_contract": manifest.get("cpu_top_contract", {}),
         "contracts": contracts,
-        "runtime": [
-            {"label": "Workdir", "value": str(workspace.get("directory", "")), "mono": True},
-            {"label": "Sim Top", "value": str(workspace.get("top_module", "") or "ecos_sim_top")},
-            {"label": "CPU Tests", "value": _prepare_cpu_tests_label(workspace)},
-            {"label": "Wave Output", "value": "sim_verilator/report/cases/*.vcd", "mono": True},
-            {"label": "Step Logs", "value": "*/report/log.txt", "mono": True},
-        ],
+        "runtime": runtime,
         "reports": {
             "path": str(_step_section(step, "report").get("step", "")),
             "manifest": str(workspace.get("prepared_manifest", "")),
         },
     }
+    contract_key = "design_top_contract" if is_generic else "cpu_top_contract"
+    payload[contract_key] = manifest.get(contract_key, {})
+    return payload
 
 
 def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) -> list[dict[str, str]]:
@@ -2569,6 +2848,9 @@ def _build_prepare_contracts(workspace: dict[str, Any], report: dict[str, Any]) 
                 "detail": _prepare_contract_detail(soc_input, workspace.get("soc_filelist", "")),
             },
         ])
+
+    if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) == GENERIC_RTL:
+        return contracts
 
     contracts.extend([
         {

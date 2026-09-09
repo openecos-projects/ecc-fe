@@ -6,6 +6,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
@@ -34,9 +35,12 @@ class PrepareStep(BaseStep):
         self.write_standard_outputs(step)
 
         prepared, source_info = self._collect_inputs(step, workspace)
-        cpu_top_contract = self._validate_frontend_cpu_top(step, workspace, prepared)
-        self._inject_custom_cpu_top_define(workspace, prepared)
-        prepared["cpu_top_contract"] = cpu_top_contract
+        top_contract = self._validate_frontend_top(step, workspace, prepared)
+        if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) != GENERIC_RTL:
+            self._inject_custom_cpu_top_define(workspace, prepared)
+            prepared["cpu_top_contract"] = top_contract
+        else:
+            prepared["design_top_contract"] = top_contract
         merged_path = self._write_merged_filelist(step, prepared["rtl_files"])
         manifest_path = self._write_prepared_manifest(step, prepared)
         self._persist_workspace_input_filelist(workspace, merged_path, manifest_path)
@@ -58,12 +62,12 @@ class PrepareStep(BaseStep):
             "incdirs": len(prepared["incdirs"]),
             "defines": len(prepared["defines"]),
             "inputs": source_info,
-            "contracts": [cpu_top_contract],
+            "contracts": [top_contract],
             "ownership": prepared["ownership"],
             "readiness": self._build_readiness_facts(
                 workspace,
                 prepared,
-                cpu_top_contract,
+                top_contract,
                 outputs_persisted=True,
             ),
         }
@@ -180,6 +184,95 @@ class PrepareStep(BaseStep):
             "source_fingerprint": workspace_input_fingerprint(workspace),
         }
         return prepared, inputs
+
+    def _validate_frontend_top(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> dict[str, Any]:
+        if normalize_frontend_design_kind(workspace.get("frontend_design_kind")) == GENERIC_RTL:
+            return self._validate_generic_design_top(step, workspace, prepared)
+        return self._validate_frontend_cpu_top(step, workspace, prepared)
+
+    def _validate_generic_design_top(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> dict[str, Any]:
+        top_module = str(workspace.get("top_module", "")).strip()
+        if not is_simple_sv_identifier(top_module):
+            self._fail_generic_top_contract(
+                step,
+                workspace,
+                f"frontend prepare requires a valid SystemVerilog top identifier: {top_module}",
+                {"module": top_module},
+                prepared,
+            )
+
+        matches = module_definitions(prepared["rtl_files"], top_module)
+        if len(matches) != 1:
+            self._fail_generic_top_contract(
+                step,
+                workspace,
+                f"frontend prepare requires exactly one {top_module} module, found {len(matches)}",
+                {
+                    "module": top_module,
+                    "count": len(matches),
+                    "files": [str(path) for path in matches],
+                },
+                prepared,
+            )
+        return {
+            "id": "design_top",
+            "status": "module_only",
+            "module": top_module,
+            "source": str(matches[0]),
+            "count": 1,
+            "interface_applicable": False,
+        }
+
+    def _fail_generic_top_contract(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        message: str,
+        info: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> None:
+        contract = {
+            **info,
+            "id": "design_top",
+            "status": "failed",
+            "detail": message,
+            "interface_applicable": False,
+        }
+        report = {
+            "prepare": "fail",
+            "rtl_files": len(prepared.get("rtl_files", [])),
+            "incdirs": len(prepared.get("incdirs", [])),
+            "defines": len(prepared.get("defines", [])),
+            "contracts": [contract],
+            "ownership": prepared.get("ownership", {}),
+            "comparison_inputs": prepared,
+            "readiness": self._build_readiness_facts(
+                workspace,
+                prepared,
+                contract,
+                outputs_persisted=False,
+                top_required=True,
+            ),
+        }
+        json_write(step.output["json"], report)
+        json_write(step.report["step"], report)
+        self._update_substep(
+            step,
+            PrepareSubFlowEnum.collect_inputs.value,
+            ok=False,
+            info={"error": message, **info},
+        )
+        raise RuntimeError(f"prepare failed: {message}")
 
     def _validate_frontend_cpu_top(
         self,
@@ -388,7 +481,9 @@ class PrepareStep(BaseStep):
                 "source_in_inputs": source_in_inputs,
             },
             "interface": {
-                "applicable": contract_status != "not_required",
+                "applicable": bool(
+                    contract.get("interface_applicable", contract_status != "not_required")
+                ),
                 "verified": expected_ports > 0,
                 "expected_ports": expected_ports,
                 "matched_ports": matched_ports,
@@ -459,12 +554,18 @@ class PrepareStep(BaseStep):
     ) -> None:
         workspace["prepared_filelist"] = str(merged_path)
         workspace["prepared_manifest"] = str(manifest_path)
-        workspace["input_filelist"] = str(merged_path)
+        is_generic = (
+            normalize_frontend_design_kind(workspace.get("frontend_design_kind"))
+            == GENERIC_RTL
+        )
+        if not is_generic:
+            workspace["input_filelist"] = str(merged_path)
 
         params_path = str(workspace.get("parameters_path", "")).strip()
         if params_path:
             params = json_read(params_path)
-            params["input_filelist"] = str(merged_path)
+            if not is_generic:
+                params["input_filelist"] = str(merged_path)
             params["prepared_manifest"] = str(manifest_path)
             cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
             soc_filelist = str(workspace.get("soc_filelist", "")).strip()

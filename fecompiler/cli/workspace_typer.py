@@ -61,6 +61,10 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         origin_def: Annotated[str | None, typer.Option("--origin-def")] = None,
         origin_verilog: Annotated[str | None, typer.Option("--origin-verilog")] = None,
         filelist: Annotated[str | None, typer.Option("--filelist")] = None,
+        design_kind: Annotated[
+            str | None,
+            typer.Option("--design-kind", help="Frontend design kind: cpu_core or generic_rtl"),
+        ] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
         cpu_rtl: Annotated[list[str] | None, typer.Option("--cpu-rtl", help="CPU RTL source path; repeatable")] = None,
         cpu_top_module: Annotated[str | None, typer.Option("--cpu-top-module", help="User CPU top module name")] = None,
@@ -96,6 +100,7 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             origin_def=origin_def or "",
             origin_verilog=origin_verilog or "",
             filelist=filelist or "",
+            design_kind=design_kind or "",
             cpu_filelist=cpu_filelist or "",
             cpu_rtl=list(cpu_rtl or []),
             cpu_top_module=cpu_top_module or "",

@@ -14,6 +14,7 @@ from pathlib import Path
 from subprocess import SubprocessError, run as run_subprocess
 from typing import Any
 
+from fecompiler.tools.common.rtl_ownership import user_rtl_ownership
 from fecompiler.tools.verilator.runner import (
     effective_sim_cflags,
     effective_sim_ldflags,
@@ -611,6 +612,7 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
     warnings = _number(summary.get("actionable_warnings"))
     precheck_state = _review_precheck_gate_state(precheck)
     precheck_ok = 1 if precheck_state == "pass" else 0
+    ownership = user_rtl_ownership(workspace)
     result.metrics.extend(
         [
             _metric(
@@ -620,7 +622,7 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 "count",
                 "rtl_quality",
                 "lower_is_better",
-                "cpu_review",
+                f"{ownership}_review",
                 source,
                 gate=True,
             ),
@@ -631,7 +633,7 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 "count",
                 "rtl_quality",
                 "lower_is_better",
-                "cpu_review",
+                f"{ownership}_review",
                 source,
             ),
             _metric(
@@ -704,7 +706,8 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
     issues = [
         (index, item)
         for index, item in enumerate(_records(report.get("issues")))
-        if item.get("waived") is not True and str(item.get("ownership", "cpu")) == "cpu"
+        if item.get("waived") is not True
+        and str(item.get("ownership", ownership)) == ownership
     ][:50]
     result.hotspots.extend(
         _hotspot(
@@ -723,7 +726,7 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
             str(
                 item.get("detail")
                 or item.get("recommendation")
-                or "Review this CPU RTL issue."
+                or f"Review this {ownership}-owned RTL issue."
             ),
         )
         for index, item in issues
@@ -786,7 +789,11 @@ def _rtl_review_score(
             precheck_earned,
             30,
             (
-                "Yosys completed the CPU-only structural precheck."
+                (
+                    "Yosys completed the design structural precheck."
+                    if precheck.get("scope") == "design"
+                    else "Yosys completed the CPU-only structural precheck."
+                )
                 if precheck_state == "pass"
                 else f"Yosys precheck state is {precheck_state}."
             ),
@@ -1049,33 +1056,37 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
     if report is None:
         return result
     summary = _record(report.get("summary"))
+    ownership = user_rtl_ownership(workspace)
+    error_field = f"{ownership}_errors"
+    warning_field = f"{ownership}_warnings"
     result.source_available = _valid_count_fields(
-        summary, ("cpu_errors", "cpu_warnings", "warnings")
+        summary, (error_field, warning_field, "warnings")
     )
     source = _source("report/lint_summary.json", "/summary")
-    errors = _number(summary.get("cpu_errors"))
-    warnings = _number(summary.get("cpu_warnings"))
+    errors = _number(summary.get(error_field))
+    warnings = _number(summary.get(warning_field))
+    ownership_label = "CPU" if ownership == "cpu" else "Design"
     result.metrics.extend(
         [
             _metric(
-                "cpu_lint_error_count",
-                "CPU Lint Errors",
+                f"{ownership}_lint_error_count",
+                f"{ownership_label} Lint Errors",
                 errors,
                 "count",
                 "lint",
                 "lower_is_better",
-                "cpu_lint",
+                f"{ownership}_lint",
                 source,
                 gate=True,
             ),
             _metric(
-                "cpu_lint_warning_count",
-                "CPU Lint Warnings",
+                f"{ownership}_lint_warning_count",
+                f"{ownership_label} Lint Warnings",
                 warnings,
                 "count",
                 "lint",
                 "lower_is_better",
-                "cpu_lint",
+                f"{ownership}_lint",
                 source,
             ),
             _metric(
@@ -1091,16 +1102,24 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         ]
     )
     result.gates.append(
-        _gate("no_cpu_lint_errors", "No CPU-owned lint errors", errors, "==", 0, source)
+        _gate(
+            f"no_{ownership}_lint_errors",
+            f"No {ownership_label}-owned lint errors",
+            errors,
+            "==",
+            0,
+            source,
+        )
     )
     diagnostics = [
         (index, item)
         for index, item in enumerate(_records(report.get("diagnostics")))
-        if item.get("actionable") is True and str(item.get("ownership", "")) == "cpu"
+        if item.get("actionable") is True
+        and str(item.get("ownership", "")) == ownership
     ][:50]
     result.hotspots.extend(
         _hotspot(
-            "cpu_lint_diagnostic",
+            f"{ownership}_lint_diagnostic",
             str(item.get("code") or "Lint diagnostic"),
             _hotspot_severity(item.get("severity")),
             None,
@@ -1108,11 +1127,11 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 _relative_report_source(item.get("source"), "report/lint_summary.json"),
                 f"/diagnostics/{index}",
             ),
-            str(item.get("message") or "Review this CPU-owned lint diagnostic."),
+            str(item.get("message") or f"Review this {ownership_label}-owned lint diagnostic."),
         )
         for index, item in diagnostics
     )
-    result.score = _lint_score(report, summary)
+    result.score = _lint_score(report, summary, workspace)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -1126,12 +1145,16 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
 
 
 def _lint_score(
-    report: dict[str, Any], summary: dict[str, Any]
+    report: dict[str, Any], summary: dict[str, Any], workspace: dict[str, Any]
 ) -> dict[str, Any] | None:
     raw_diagnostics = report.get("diagnostics")
     diagnostics = _records(raw_diagnostics)
     status = str(report.get("status", "")).strip().lower()
     returncode = report.get("returncode")
+    ownership = user_rtl_ownership(workspace)
+    ownership_label = "CPU" if ownership == "cpu" else "Design"
+    error_field = f"{ownership}_errors"
+    warning_field = f"{ownership}_warnings"
     if (
         report.get("schema_version") != 1
         or report.get("tool") != "verilator"
@@ -1146,8 +1169,8 @@ def _lint_score(
                 "errors",
                 "warnings",
                 "diagnostics",
-                "cpu_errors",
-                "cpu_warnings",
+                error_field,
+                warning_field,
                 "actionable_diagnostics",
             ),
         )
@@ -1155,13 +1178,13 @@ def _lint_score(
     ):
         return None
 
-    cpu_diagnostics = [
+    actionable_diagnostics = [
         item
         for item in diagnostics
-        if item.get("actionable") is True and item.get("ownership") == "cpu"
+        if item.get("actionable") is True and item.get("ownership") == ownership
     ]
-    cpu_errors = sum(item.get("severity") == "error" for item in cpu_diagnostics)
-    cpu_warnings = sum(item.get("severity") == "warning" for item in cpu_diagnostics)
+    owned_errors = sum(item.get("severity") == "error" for item in actionable_diagnostics)
+    owned_warnings = sum(item.get("severity") == "warning" for item in actionable_diagnostics)
     total_errors = sum(item.get("severity") == "error" for item in diagnostics)
     total_warnings = sum(item.get("severity") == "warning" for item in diagnostics)
     if (
@@ -1175,28 +1198,28 @@ def _lint_score(
         or int(summary["diagnostics"]) != len(diagnostics)
         or int(summary["errors"]) != total_errors
         or int(summary["warnings"]) != total_warnings
-        or int(summary["cpu_errors"]) != cpu_errors
-        or int(summary["cpu_warnings"]) != cpu_warnings
-        or int(summary["actionable_diagnostics"]) != len(cpu_diagnostics)
+        or int(summary[error_field]) != owned_errors
+        or int(summary[warning_field]) != owned_warnings
+        or int(summary["actionable_diagnostics"]) != len(actionable_diagnostics)
         or (status == "pass") != (returncode == 0 and total_errors == 0)
     ):
         return None
 
     # A non-zero Verilator exit can contain unclassified fatal diagnostics (for
-    # example, a missing top module).  Those records do not prove that the CPU
+    # example, a missing top module). Those records do not prove that user RTL
     # was fully analyzed, so cleanliness credit is only valid after a clean exit.
     analysis_completed = returncode == 0
-    cpu_rule_count = len(
+    rule_count = len(
         {
             str(item["code"]).strip().upper()
-            for item in cpu_diagnostics
+            for item in actionable_diagnostics
             if str(item["code"]).strip()
         }
     )
     execution_earned = 25 if analysis_completed else 0
-    error_earned = max(0, 40 - cpu_errors * 20) if analysis_completed else 0
-    warning_earned = max(0, 25 - cpu_warnings * 2.5) if analysis_completed else 0
-    rule_earned = max(0, 10 - cpu_rule_count * 2) if analysis_completed else 0
+    error_earned = max(0, 40 - owned_errors * 20) if analysis_completed else 0
+    warning_earned = max(0, 25 - owned_warnings * 2.5) if analysis_completed else 0
+    rule_earned = max(0, 10 - rule_count * 2) if analysis_completed else 0
     components = [
         _score_component(
             "analysis_execution",
@@ -1206,33 +1229,33 @@ def _lint_score(
             (
                 "Verilator completed and produced classified lint diagnostics."
                 if analysis_completed
-                else "Verilator analysis did not complete; CPU cleanliness is unproven."
+                else f"Verilator analysis did not complete; {ownership_label} cleanliness is unproven."
             ),
         ),
         _score_component(
-            "cpu_errors",
-            "CPU errors",
+            f"{ownership}_errors",
+            f"{ownership_label} errors",
             error_earned,
             40,
-            f"{cpu_errors} actionable CPU error{'s' if cpu_errors != 1 else ''} reported.",
+            f"{owned_errors} actionable {ownership_label} error{'s' if owned_errors != 1 else ''} reported.",
         ),
         _score_component(
-            "cpu_warnings",
-            "CPU warnings",
+            f"{ownership}_warnings",
+            f"{ownership_label} warnings",
             warning_earned,
             25,
-            f"{cpu_warnings} actionable CPU warning{'s' if cpu_warnings != 1 else ''} reported.",
+            f"{owned_warnings} actionable {ownership_label} warning{'s' if owned_warnings != 1 else ''} reported.",
         ),
         _score_component(
-            "cpu_rule_breadth",
-            "CPU rule breadth",
+            f"{ownership}_rule_breadth",
+            f"{ownership_label} rule breadth",
             rule_earned,
             10,
-            f"{cpu_rule_count} distinct lint rule{'s' if cpu_rule_count != 1 else ''} affecting CPU-owned RTL.",
+            f"{rule_count} distinct lint rule{'s' if rule_count != 1 else ''} affecting {ownership_label}-owned RTL.",
         ),
     ]
     return {
-        "label": "CPU lint quality",
+        "label": f"{ownership_label} lint quality",
         "value": _round_score(sum(component["earned"] for component in components)),
         "maximum": 100,
         "scoring_version": 1,

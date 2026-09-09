@@ -175,6 +175,7 @@ class JsonRpcFault(RuntimeError):
 
 _COMMON_ALIASES = {
     "cpuRtlFiles": "cpu_rtl_files",
+    "frontendDesignKind": "frontend_design_kind",
     "configPath": "config_path",
     "id": "info_id",
     "infoId": "info_id",
@@ -203,6 +204,7 @@ _METHOD_FIELDS: dict[str, set[str] | None] = {
         "directory",
         "designTool",
         "filelist",
+        "frontend_design_kind",
         "origin_def",
         "origin_verilog",
         "parameters",

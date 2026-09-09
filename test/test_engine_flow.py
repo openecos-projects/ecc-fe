@@ -18,8 +18,10 @@ from fecompiler.engine.flow import EngineFlow, _format_runtime
 from fecompiler.cli.workspace import _apply_default_sim_smoke_suite, _apply_sim_test_suite, run as workspace_cli_run
 from fecompiler.soc.registry import soc_runtime_options
 from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.allflow.profile import GENERIC_RTL
 from fecompiler.tools.common.rtl_inputs import (
     prepared_inputs_current,
+    rtl_files,
     slang_defines,
     verilator_lint_defines,
     workspace_input_fingerprint,
@@ -69,6 +71,31 @@ def _build_engine(tmp_path: Path) -> tuple[EngineFlow, dict]:
         engine.load()
     engine.create_step_workspaces()
     return engine, ws
+
+
+def test_engine_preserves_generic_rtl_profile_without_sim(tmp_path):
+    rtl = tmp_path / "generic_top.sv"
+    rtl.write_text("module generic_top(); endmodule\n", encoding="utf-8")
+    create_workspace(
+        CreateWorkspaceData(
+            directory=str(tmp_path / "generic-ws"),
+            frontend_design_kind=GENERIC_RTL,
+            origin_verilog=str(rtl),
+            parameters={"Design": "generic", "Top module": "generic_top"},
+        )
+    )
+    workspace = load_workspace(str(tmp_path / "generic-ws"))
+
+    engine = EngineFlow(workspace)
+    engine.load()
+
+    assert [step.name for step in engine.workspace_steps] == [
+        "prepare",
+        "review",
+        "elab",
+        "lint",
+    ]
+    assert engine.get_workspace_step("sim") is None
 
 
 def test_generic_simulation_requires_explicit_good_trap():
@@ -868,6 +895,215 @@ def test_frontend_create_uses_soc_wrapper_top_even_with_legacy_top_param(tmp_pat
     assert ws["soc_wrapper_id"] == "ysyx-am-soc"
 
 
+def test_frontend_create_generic_rtl_uses_four_step_profile(tmp_path, capsys):
+    rtl_root = tmp_path / "generic rtl"
+    rtl_root.mkdir()
+    helper = rtl_root / "helper.sv"
+    top = rtl_root / "counter.sv"
+    helper.write_text("module helper(); endmodule\n", encoding="utf-8")
+    top.write_text(
+        "module counter(input logic clk);\n"
+        "  logic state;\n"
+        "  always_ff @(posedge clk) state <= ~state;\n"
+        "  helper u_helper();\n"
+        "endmodule\n",
+        encoding="utf-8",
+    )
+    request = tmp_path / "create_generic.json"
+    request.write_text(
+        json.dumps({
+            "directory": str(tmp_path / "ws_generic"),
+            "frontend_design_kind": "generic_rtl",
+            "top_module": "counter",
+            "rtl_list": [str(helper), str(top)],
+            "parameters": {"Design": "counter", "Clock": "clk"},
+        }),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 0
+    capsys.readouterr()
+    workspace = load_workspace(str(tmp_path / "ws_generic"))
+    flow = json.loads(Path(workspace["flow_path"]).read_text(encoding="utf-8"))
+    parameters = json.loads(Path(workspace["parameters_path"]).read_text(encoding="utf-8"))
+
+    assert workspace["frontend_design_kind"] == GENERIC_RTL
+    assert [item["name"] for item in flow["steps"]] == ["prepare", "review", "elab", "lint"]
+    assert workspace["top_module"] == "counter"
+    assert "frontend_core_id" not in parameters
+    assert "cpu_supports_difftest" not in parameters
+    assert "+define+ECOS_DIFFTEST" not in Path(workspace["input_filelist"]).read_text(encoding="utf-8")
+
+    engine = EngineFlow(workspace)
+    engine.create_step_workspaces()
+    assert engine.run_step("prepare", rerun=True) == StateEnum.Success
+    prepared = json.loads(Path(workspace["prepared_manifest"]).read_text(encoding="utf-8"))
+    report = json.loads(Path(engine.get_workspace_step("prepare").report["step"]).read_text(encoding="utf-8"))
+    assert prepared["ownership"] == {"design": 2}
+    assert prepared["design_top_contract"]["module"] == "counter"
+    assert report["readiness"]["interface"]["applicable"] is False
+
+    assert workspace_cli_run([
+        "get-info",
+        "--directory",
+        str(tmp_path / "ws_generic"),
+        "--step",
+        "prepare",
+        "--id",
+        "frontend_detail",
+        "--json",
+    ]) == 0
+    response = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    prepare = response["data"]["info"]["prepare"]
+    assert prepare["readiness"]["status"] == "Ready"
+    assert prepare["inputs"]["design_rtl_files"] == 2
+    assert "cpu_rtl_files" not in prepare["inputs"]
+    assert prepare["design_top_contract"]["module"] == "counter"
+    assert "cpu_top_contract" not in prepare
+    assert [item["label"] for item in prepare["configuration"]] == [
+        "Design",
+        "Top Module",
+        "Clock",
+        "Target Frequency",
+    ]
+    assert [item["label"] for item in prepare["contracts"]] == ["Custom RTL Input"]
+    assert [item["label"] for item in prepare["runtime"]] == [
+        "Workdir",
+        "Top Module",
+        "Step Logs",
+    ]
+
+
+def test_frontend_create_generic_rtl_rejects_cpu_configuration(tmp_path, capsys):
+    rtl = tmp_path / "top.sv"
+    rtl.write_text("module top(); endmodule\n", encoding="utf-8")
+    request = tmp_path / "create_invalid_generic.json"
+    request.write_text(
+        json.dumps({
+            "directory": str(tmp_path / "ws_invalid_generic"),
+            "frontend_design_kind": "generic_rtl",
+            "top_module": "top",
+            "rtl_list": [str(rtl)],
+            "core_id": "picorv32",
+        }),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["response"] == "failed"
+    assert result["data"]["unsupported_fields"] == ["core_id"]
+    assert not (tmp_path / "ws_invalid_generic").exists()
+
+
+def test_frontend_create_generic_rtl_rejects_nested_cpu_configuration(tmp_path, capsys):
+    rtl = tmp_path / "top.sv"
+    rtl.write_text("module top(); endmodule\n", encoding="utf-8")
+    request = tmp_path / "create_invalid_nested_generic.json"
+    request.write_text(
+        json.dumps({
+            "directory": str(tmp_path / "ws_invalid_nested_generic"),
+            "frontend_design_kind": "generic_rtl",
+            "top_module": "top",
+            "rtl_list": [str(rtl)],
+            "parameters": {
+                "cpu_filelist": "untrusted-cpu.f",
+                "soc_wrapper_id": "ysyx-am-soc",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["response"] == "failed"
+    assert result["data"]["unsupported_fields"] == [
+        "cpu_filelist",
+        "soc_wrapper_id",
+    ]
+    assert not (tmp_path / "ws_invalid_nested_generic").exists()
+
+
+def test_frontend_create_generic_rtl_rejects_header_only_selection(tmp_path, capsys):
+    header = tmp_path / "definitions.svh"
+    header.write_text("`define WIDTH 32\n", encoding="utf-8")
+    request = tmp_path / "create_header_only_generic.json"
+    request.write_text(
+        json.dumps({
+            "directory": str(tmp_path / "ws_header_only_generic"),
+            "frontend_design_kind": "generic_rtl",
+            "top_module": "top",
+            "rtl_list": [str(header)],
+        }),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "at least one .v or .sv source file" in result["message"][0]
+    assert not (tmp_path / "ws_header_only_generic").exists()
+
+
+def test_frontend_create_generic_rtl_validates_nested_filelist_compilation_units(
+    tmp_path,
+    capsys,
+):
+    header = tmp_path / "definitions.svh"
+    header.write_text("`define WIDTH 32\n", encoding="utf-8")
+    nested = tmp_path / "nested.f"
+    nested.write_text(f"{header.name}\n", encoding="utf-8")
+    filelist = tmp_path / "design.f"
+    filelist.write_text(f"-f {nested.name}\n", encoding="utf-8")
+    request = tmp_path / "create_header_filelist_generic.json"
+    request.write_text(
+        json.dumps({
+            "directory": str(tmp_path / "ws_header_filelist_generic"),
+            "frontend_design_kind": "generic_rtl",
+            "top_module": "top",
+            "filelist": str(filelist),
+        }),
+        encoding="utf-8",
+    )
+
+    assert workspace_cli_run(["create", "--input-json", str(request), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "at least one .v or .sv source file" in result["message"][0]
+    assert not (tmp_path / "ws_header_filelist_generic").exists()
+
+
+def test_input_filelist_remains_available_before_prepare_manifest(tmp_path):
+    source = tmp_path / "top.sv"
+    source.write_text("module top; endmodule\n", encoding="utf-8")
+    filelist = tmp_path / "design.f"
+    filelist.write_text(f"{source}\n", encoding="utf-8")
+
+    assert rtl_files({"input_filelist": str(filelist)}) == [str(source)]
+
+
+def test_frontend_create_missing_design_kind_remains_cpu_profile(tmp_path):
+    workspace = load_workspace(str(tmp_path / "legacy_missing"))
+    assert workspace is None
+
+    rtl = tmp_path / "legacy.v"
+    rtl.write_text("module legacy(); endmodule\n", encoding="utf-8")
+    create_workspace(
+        CreateWorkspaceData(
+            directory=str(tmp_path / "legacy"),
+            parameters={"Design": "legacy", "Top module": "legacy"},
+            origin_verilog=str(rtl),
+        )
+    )
+    workspace = load_workspace(str(tmp_path / "legacy"))
+    assert workspace["frontend_design_kind"] == "cpu_core"
+    assert [item["name"] for item in json.loads(Path(workspace["flow_path"]).read_text())["steps"]] == [
+        "prepare",
+        "review",
+        "elab",
+        "lint",
+        "sim",
+    ]
+
+
 def test_frontend_create_persists_default_cpu_test_smoke_case(tmp_path):
     request = tmp_path / "create_frontend_smoke.json"
     request.write_text(
@@ -1503,6 +1739,7 @@ def test_workspace_create_help_lists_gui_compatible_options(capsys):
     output = capsys.readouterr().out
     assert "Usage: ecc-fe workspace create" in output
     assert "--input-json" in output
+    assert "--design-kind" in output
     assert "--cpu-filelist" in output
     assert "--cpu-rtl" in output
     assert "--cpu-top-module" in output
@@ -3027,6 +3264,42 @@ def test_lint_summary_separates_actionable_cpu_and_soc_diagnostics(tmp_path):
     files = {item["path"]: item for item in summary["files"]}
     assert files[str(cpu_source)]["ownership"] == "cpu"
     assert files[str(soc_source)]["ownership"] == "soc"
+
+
+def test_lint_summary_marks_generic_design_diagnostics_actionable(tmp_path):
+    source = tmp_path / "peripheral.sv"
+    source.write_text("module peripheral(); endmodule\n", encoding="utf-8")
+    manifest = tmp_path / "prepared_inputs.json"
+    manifest.write_text(json.dumps({
+        "rtl_files": [str(source)],
+        "rtl_sources": [
+            {"path": str(source), "ownership": "design", "source": "input_filelist"},
+        ],
+    }), encoding="utf-8")
+    log = f"%Warning-WIDTH: {source}:3:2: Width mismatch"
+
+    summary = build_lint_summary(
+        {
+            "frontend_design_kind": GENERIC_RTL,
+            "top_module": "peripheral",
+            "prepared_manifest": str(manifest),
+        },
+        {
+            "returncode": 0,
+            "rtl_files": [str(source)],
+            "top_module": "peripheral",
+            "command": ["verilator", "--lint-only"],
+            "log_path": str(tmp_path / "log.txt"),
+        },
+        log,
+        summary_path=tmp_path / "lint_summary.json",
+    )
+
+    assert summary["summary"]["cpu_warnings"] == 0
+    assert summary["summary"]["design_warnings"] == 1
+    assert summary["summary"]["actionable_ownership"] == "design"
+    assert summary["summary"]["actionable_diagnostics"] == 1
+    assert summary["diagnostics"][0]["actionable"] is True
 
 
 def test_rtl_ownership_recognizes_bundled_adapters_and_third_party_sources():

@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.data.step import StateEnum
-from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
+from fecompiler.allflow.profile import (
+    CPU_CORE,
+    GENERIC_RTL,
+    flow_steps_for,
+    normalize_frontend_design_kind,
+)
 from fecompiler.tools.common.rtl_inputs import write_generated_rtl_filelist
 
 
@@ -39,6 +44,7 @@ _BOOL_PARAMETER_FIELDS = (
     "sim_coremark_use_difftest",
 )
 _STR_PARAMETER_FIELDS = (
+    "frontend_design_kind",
     "cpu_filelist",
     "soc_filelist",
     "prepared_manifest",
@@ -181,6 +187,7 @@ class CreateWorkspaceData:
     sim_coremark_has_float: bool = False
     sim_coremark_use_difftest: bool = False
     rtl_list: list[str] = field(default_factory=list)
+    frontend_design_kind: str = CPU_CORE
 
     @property
     def project_dir(self) -> Path:
@@ -235,7 +242,9 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     top_module   = str(parameters.get("Top module", "top"))
 
     origin_def     = _pick_first(origin_dir, [".def", ".def.gz"]) or str(origin_dir / f"{design}.def")
-    origin_verilog = _pick_first(origin_dir, [".v", ".v.gz"])     or str(origin_dir / f"{design}.v")
+    origin_verilog = _pick_first(origin_dir, [".sv", ".v", ".sv.gz", ".v.gz"]) or str(
+        origin_dir / f"{design}.v"
+    )
 
     # filelist: prefer path stored in parameters, then scan origin/
     filelist = str(parameters.get("input_filelist", "")).strip()
@@ -384,14 +393,18 @@ def build_parameter_overrides(
 
 def _build_parameters(spec: CreateWorkspaceData) -> dict[str, Any]:
     params = dict(spec.parameters)
+    requested_kind = params.get("frontend_design_kind", spec.frontend_design_kind)
+    design_kind = normalize_frontend_design_kind(requested_kind)
+    params["frontend_design_kind"] = design_kind
     params.setdefault("Design",              spec.design_name)
     params.setdefault("Top module",          "top")
     params.setdefault("Clock",               "clk")
     params.setdefault("Frequency max [MHz]", 100)
-    params.update(build_parameter_overrides(**{
-        field: getattr(spec, field)
-        for field in _PARAMETER_OVERRIDE_FIELDS
-    }))
+    if design_kind == CPU_CORE:
+        params.update(build_parameter_overrides(**{
+            field: getattr(spec, field)
+            for field in _PARAMETER_OVERRIDE_FIELDS
+        }))
     return params
 
 
@@ -405,6 +418,7 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
     design     = parameters["Design"]
     top_module = parameters["Top module"]
     origin_dir = project_dir / "origin"
+    design_kind = normalize_frontend_design_kind(parameters.get("frontend_design_kind"))
 
     if spec.cpu_rtl_files:
         generated = write_generated_rtl_filelist(
@@ -420,16 +434,29 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
         placeholder=f"# placeholder DEF for {design}\n",
     )
 
-    # Verilog (skip if filelist provided)
-    if spec.origin_verilog or not spec.filelist:
+    # Verilog (skip the placeholder when an explicit source set is provided)
+    has_explicit_sources = bool(spec.filelist or spec.rtl_list)
+    if spec.origin_verilog or not has_explicit_sources:
         _copy_or_touch(
             src=spec.origin_verilog,
             dst=origin_dir / (Path(spec.origin_verilog).name if spec.origin_verilog else f"{design}.v"),
             placeholder=f"module {top_module}(); endmodule\n",
         )
 
-    # rtl_list → copy files + write filelist
-    if spec.rtl_list:
+    # Generic RTL keeps absolute source paths so include relationships are not
+    # broken by flattening files with the same basename into origin/.
+    if design_kind == GENERIC_RTL and spec.rtl_list:
+        generated = write_generated_rtl_filelist(
+            origin_dir / ".rtl_sources.f",
+            spec.rtl_list,
+            enable_difftest=False,
+            description="selected RTL files",
+        )
+        parameters["input_filelist"] = str(generated)
+    elif design_kind == GENERIC_RTL and spec.filelist:
+        parameters["input_filelist"] = str(Path(spec.filelist).expanduser().resolve())
+    # Legacy / CPU rtl_list → copy files + write filelist.
+    elif spec.rtl_list:
         copied = _copy_rtl_list(origin_dir, spec.rtl_list)
         if copied:
             (origin_dir / "filelist").write_text("\n".join(copied) + "\n", encoding="utf-8")
@@ -460,7 +487,7 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
     params_path    = home_dir / "parameters.json"
     home_path      = home_dir / "home.json"
 
-    # flow.json — one entry per default step
+    # flow.json — one entry per selected frontend profile step
     _write_json(flow_path, {
         "steps": [
             {
@@ -471,7 +498,7 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
                 "peak memory (mb)":  0,
                 "info":              {},
             }
-            for name, tool in DEFAULT_FLOW_STEPS
+            for name, tool in flow_steps_for(parameters.get("frontend_design_kind"))
         ]
     })
 

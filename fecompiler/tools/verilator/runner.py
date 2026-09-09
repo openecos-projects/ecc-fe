@@ -23,7 +23,13 @@ from fecompiler.tools.common.rtl_inputs import (
     verilator_incdir_args,
     verilator_lint_define_args,
 )
-from fecompiler.tools.common.rtl_ownership import RTL_OWNERSHIPS, rtl_ownership_map, rtl_source_ownership
+from fecompiler.tools.common.rtl_ownership import (
+    RTL_OWNERSHIPS,
+    is_actionable_rtl_ownership,
+    rtl_ownership_map,
+    rtl_source_ownership,
+    user_rtl_ownership,
+)
 from fecompiler.tools.fe.subflow import update_substep_ok
 
 from fecompiler.tools.verilator.subflow import (
@@ -1406,6 +1412,8 @@ class VerilatorLintStep(BaseStep):
             "warnings": lint_summary["summary"]["warnings"],
             "cpu_errors": lint_summary["summary"]["cpu_errors"],
             "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
+            "design_errors": lint_summary["summary"]["design_errors"],
+            "design_warnings": lint_summary["summary"]["design_warnings"],
             "rules": lint_summary["summary"]["rules"],
             "files": lint_summary["summary"]["files"],
         })
@@ -1419,6 +1427,8 @@ class VerilatorLintStep(BaseStep):
                 "warnings": lint_summary["summary"]["warnings"],
                 "cpu_errors": lint_summary["summary"]["cpu_errors"],
                 "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
+                "design_errors": lint_summary["summary"]["design_errors"],
+                "design_warnings": lint_summary["summary"]["design_warnings"],
                 "rules": lint_summary["summary"]["rules"],
                 "files": lint_summary["summary"]["files"],
             },
@@ -1458,7 +1468,7 @@ def build_lint_summary(
             )
         )
         diagnostic["ownership"] = ownership
-        diagnostic["actionable"] = ownership == "cpu"
+        diagnostic["actionable"] = is_actionable_rtl_ownership(workspace, ownership)
     errors = len([item for item in diagnostics if item.get("severity") == "error"])
     warnings = len([item for item in diagnostics if item.get("severity") == "warning"])
     status = "pass" if int(run_info.get("returncode", 1)) == 0 and errors == 0 else "fail"
@@ -1467,6 +1477,8 @@ def build_lint_summary(
     file_hotspots = _lint_file_hotspots(diagnostics)
     ownership = _lint_ownership_breakdown(diagnostics)
     cpu_diagnostics = [item for item in diagnostics if item.get("ownership") == "cpu"]
+    design_diagnostics = [item for item in diagnostics if item.get("ownership") == "design"]
+    actionable_diagnostics = [item for item in diagnostics if item.get("actionable") is True]
 
     return {
         "schema_version": 1,
@@ -1493,7 +1505,10 @@ def build_lint_summary(
             "top_module": top_module,
             "cpu_errors": len([item for item in cpu_diagnostics if item.get("severity") == "error"]),
             "cpu_warnings": len([item for item in cpu_diagnostics if item.get("severity") == "warning"]),
-            "actionable_diagnostics": len(cpu_diagnostics),
+            "design_errors": len([item for item in design_diagnostics if item.get("severity") == "error"]),
+            "design_warnings": len([item for item in design_diagnostics if item.get("severity") == "warning"]),
+            "actionable_ownership": user_rtl_ownership(workspace),
+            "actionable_diagnostics": len(actionable_diagnostics),
         },
         "diagnostics": diagnostics,
         "rules": rules,
@@ -1642,7 +1657,11 @@ def _lint_file_hotspots(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any
             "total": int(record["total"]),
             "rules": sorted(record["rules"]),
             "ownership": str(record["ownership"]),
-            "actionable": record["ownership"] == "cpu",
+            "actionable": any(
+                item.get("actionable") is True
+                for item in diagnostics
+                if str(item.get("source", "")).strip() == source
+            ),
         })
     return sorted(
         hotspots,
@@ -1661,7 +1680,7 @@ def _lint_ownership_breakdown(diagnostics: list[dict[str, Any]]) -> list[dict[st
             "errors": len([item for item in owned if item.get("severity") == "error"]),
             "warnings": len([item for item in owned if item.get("severity") == "warning"]),
             "total": len(owned),
-            "actionable": ownership == "cpu",
+            "actionable": any(item.get("actionable") is True for item in owned),
         })
     return records
 
