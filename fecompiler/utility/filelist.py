@@ -1,4 +1,4 @@
-"""Filelist parsing utilities — mirrors chipcompiler/utility/filelist.py."""
+"""Filelist parsing utilities."""
 
 from __future__ import annotations
 

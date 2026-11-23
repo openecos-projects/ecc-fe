@@ -1,4 +1,4 @@
-"""Flow engine — mirrors chipcompiler/engine/flow.py in ecos-studio/ecc."""
+"""Flow engine: step ordering, state, provenance, and stale-result handling."""
 
 from __future__ import annotations
 
@@ -229,25 +229,14 @@ class EngineFlow:
         """Reconstruct workspace_steps from flow + workspace (no disk writes).
         Called on load() so workspace_steps survives a server restart.
         """
-        self.workspace_steps = []
-        pre_step: dict[str, Any] | None = None
-        for flow_step in self.flow.get("steps", []):
-            if pre_step is None:
-                input_def = self.workspace.get("origin_def", "")
-                input_verilog = self.workspace.get("origin_verilog", "")
-            else:
-                input_def = pre_step["output"]["def"]
-                input_verilog = pre_step["output"]["verilog"]
-
-            ws_step = builder.build_step(
+        self.workspace_steps = [
+            builder.build_step(
                 workspace=self.workspace,
                 step_name=flow_step["name"],
                 tool=flow_step["tool"],
-                input_def=input_def,
-                input_verilog=input_verilog,
             )
-            self.workspace_steps.append(ws_step)
-            pre_step = ws_step
+            for flow_step in self.flow.get("steps", [])
+        ]
 
     def get_workspace_step(self, name: str) -> dict[str, Any] | None:
         for step in self.workspace_steps:

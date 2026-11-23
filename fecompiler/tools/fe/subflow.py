@@ -2,36 +2,21 @@
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Any
 
 from fecompiler.data.step import StateEnum
 from fecompiler.utility.json import json_read, json_write
 
 
-class EccSubFlowEnum(Enum):
-    """Backward-compatible placeholder enum for removed legacy ECC subflows."""
-
-
-def build_subflow(step_name: str) -> list[dict[str, Any]]:
-    """Return default subflow template for a step.
-
-    Legacy ECC subflow templates are removed; callers should initialize their own
-    step-specific subflows (prepare/slang/verilator).
-    """
-    _ = step_name
-    return []
-
-
 def init_subflow(workspace_step: Any) -> None:
-    """Populate workspace_step.subflow["steps"] from disk or empty defaults."""
+    """Populate workspace_step.subflow["steps"] from disk, or start it empty."""
     path = workspace_step.subflow.get("path", "")
     existing = json_read(path) if path else {}
 
     if existing.get("steps"):
         workspace_step.subflow["steps"] = existing["steps"]
     else:
-        workspace_step.subflow["steps"] = build_subflow(workspace_step.name)
+        workspace_step.subflow["steps"] = []
         if path:
             json_write(path, workspace_step.subflow)
 

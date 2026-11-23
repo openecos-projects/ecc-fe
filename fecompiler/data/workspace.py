@@ -1,4 +1,4 @@
-"""Workspace persistence — mirrors chipcompiler/data/workspace.py in ecos-studio/ecc."""
+"""Workspace persistence: creating, loading, and saving a frontend workspace."""
 
 from __future__ import annotations
 
@@ -112,10 +112,9 @@ _PARAMETER_OVERRIDE_FIELDS = (
 class WorkspaceStep:
     """All paths that belong to one flow step's working directory.
 
-    Mirrors the dict returned by fecompiler/tools/fe/builder.py::build_step().
-    Nested groups (config, input, output, data, …) are kept as plain dicts so the
-    structure stays identical to what ecc uses — callers that already do
-    ``ws_step["output"]["def"]`` continue to work unchanged.
+    Built by fecompiler/tools/fe/builder.py::build_step(). Each group (config,
+    output, report, …) is a plain dict of paths, and the step also supports
+    dict-style access such as ``ws_step["report"]["dir"]``.
     """
 
     name: str
@@ -124,11 +123,9 @@ class WorkspaceStep:
     directory: str
 
     config:    dict[str, str]
-    input:     dict[str, str]
     output:    dict[str, str]
     data:      dict[str, str]
-    feature:   dict[str, str]
-    report:    dict[str, Any]   # "sta" sub-key is itself a dict
+    report:    dict[str, Any]
     log:       dict[str, str]
     script:    dict[str, str]
     analysis:  dict[str, str]
@@ -151,7 +148,6 @@ class WorkspaceStep:
 class CreateWorkspaceData:
     directory: str
     parameters: dict[str, Any] = field(default_factory=dict)
-    origin_def: str = ""
     origin_verilog: str = ""
     filelist: str = ""
     cpu_filelist: str = ""
@@ -244,7 +240,6 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
     design       = str(parameters.get("Design", project_dir.name))
     top_module   = str(parameters.get("Top module", "top"))
 
-    origin_def     = _pick_first(origin_dir, [".def", ".def.gz"]) or str(origin_dir / f"{design}.def")
     origin_verilog = _pick_first(origin_dir, [".sv", ".v", ".sv.gz", ".v.gz"]) or str(
         origin_dir / f"{design}.v"
     )
@@ -261,7 +256,6 @@ def load_workspace(directory: str) -> dict[str, Any] | None:
         "parameters_path": str(params_path),
         "flow_path":       str(flow_path),
         "home_path":       str(home_path),
-        "origin_def":      origin_def,
         "origin_verilog":  origin_verilog,
         "input_filelist":  filelist,
     }
@@ -429,13 +423,6 @@ def _prepare_origin(project_dir: Path, spec: CreateWorkspaceData, parameters: di
             spec.cpu_rtl_files,
         )
         parameters["cpu_filelist"] = str(generated)
-
-    # DEF
-    _copy_or_touch(
-        src=spec.origin_def,
-        dst=origin_dir / (Path(spec.origin_def).name if spec.origin_def else f"{design}.def"),
-        placeholder=f"# placeholder DEF for {design}\n",
-    )
 
     # Verilog (skip the placeholder when an explicit source set is provided)
     has_explicit_sources = bool(spec.filelist or spec.rtl_list)

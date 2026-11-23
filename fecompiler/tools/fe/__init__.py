@@ -1,16 +1,13 @@
-"""FE tool wrappers — mirrors chipcompiler/tools/ecc/ in ecos-studio/ecc (renamed to tools/fe in fecompiler)."""
+"""Shared step infrastructure: path tables, the handler base class, and subflows."""
 
 from .builder import build_step, build_step_space, build_step_config
 from .base import BaseStep
 from .subflow import (
-    EccSubFlowEnum,
-    build_subflow,
     init_subflow,
     reset_subflow,
     update_substep,
     update_substep_ok,
 )
-from .service import get_step_info
 
 _STEP_REGISTRY: dict[str, BaseStep] | None = None
 
@@ -33,11 +30,8 @@ __all__ = [
     "build_step_config",
     "BaseStep",
     "get_step_registry",
-    "EccSubFlowEnum",
-    "build_subflow",
     "init_subflow",
     "reset_subflow",
     "update_substep",
     "update_substep_ok",
-    "get_step_info",
 ]

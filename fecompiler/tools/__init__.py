@@ -1,1 +1,1 @@
-"""EDA tool wrappers (mirrors chipcompiler/tools/ in ecos-studio/ecc)."""
+"""Step handlers and the wrappers around the external frontend tools."""

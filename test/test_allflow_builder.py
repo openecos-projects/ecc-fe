@@ -1,13 +1,9 @@
 #!/usr/bin/env python
-"""Tests for fecompiler.allflow.builder — DEFAULT_FLOW_STEPS, sanitize_step_token, build_allflow."""
+"""Tests for the default flow and the design-kind profiles."""
 
 from __future__ import annotations
 
-from fecompiler.allflow.builder import (
-    DEFAULT_FLOW_STEPS,
-    build_allflow,
-    sanitize_step_token,
-)
+from fecompiler.allflow.builder import DEFAULT_FLOW_STEPS
 from fecompiler.allflow.profile import CPU_CORE, GENERIC_RTL, flow_steps_for
 
 
@@ -40,78 +36,12 @@ def test_default_flow_steps_match_production_flow():
     ]
 
 
-# ── sanitize_step_token ───────────────────────────────────────────────────────
-
-def test_sanitize_alphanumeric_unchanged():
-    assert sanitize_step_token("copyfiles") == "copyfiles"
-
-
-def test_sanitize_spaces_become_underscores():
-    assert sanitize_step_token("place route") == "place_route"
-
-
-def test_sanitize_special_chars_become_underscores():
-    # trailing underscore is stripped by .strip("_")
-    assert sanitize_step_token("fix-fanout!") == "fix_fanout"
-
-
-def test_sanitize_strips_leading_trailing_underscores():
-    assert sanitize_step_token("_step_") == "step"
-
-
-def test_sanitize_empty_string_returns_step():
-    assert sanitize_step_token("") == "step"
-
-
-def test_sanitize_all_special_chars_returns_step():
-    assert sanitize_step_token("---") == "step"
-
-
-def test_sanitize_mixed_case_preserved():
-    assert sanitize_step_token("MyStep") == "MyStep"
-
-
-def test_sanitize_numbers_preserved():
-    assert sanitize_step_token("step2") == "step2"
-
-
-# ── build_allflow ─────────────────────────────────────────────────────────────
-
-def test_build_allflow_returns_list_of_3_tuples():
-    flow = build_allflow()
-    assert isinstance(flow, list)
-    for entry in flow:
-        assert len(entry) == 3
-
-
-def test_build_allflow_length_matches_default_steps():
-    assert len(build_allflow()) == len(DEFAULT_FLOW_STEPS)
-
-
-def test_build_allflow_all_states_are_unstart():
-    for _, _, state in build_allflow():
-        assert state == "Unstart"
-
-
-def test_build_allflow_names_match_default_steps():
-    flow = build_allflow()
-    for (exp_name, exp_tool), (got_name, got_tool, _) in zip(DEFAULT_FLOW_STEPS, flow):
-        assert got_name == exp_name
-        assert got_tool == exp_tool
-
-
 def test_generic_rtl_profile_omits_simulation():
     assert flow_steps_for(GENERIC_RTL) == [
         ("prepare", "fe"),
         ("review", "fe"),
         ("elab", "slang"),
         ("lint", "verilator"),
-    ]
-    assert [name for name, _, _ in build_allflow(GENERIC_RTL)] == [
-        "prepare",
-        "review",
-        "elab",
-        "lint",
     ]
 
 

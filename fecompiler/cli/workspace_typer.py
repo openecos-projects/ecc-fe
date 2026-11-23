@@ -58,7 +58,6 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
         top: Annotated[str | None, typer.Option("--top", help="Top module name")] = None,
         clock: Annotated[str | None, typer.Option("--clock", help="Clock port name")] = None,
         freq: Annotated[float | None, typer.Option("--freq", help="Clock frequency in MHz")] = None,
-        origin_def: Annotated[str | None, typer.Option("--origin-def")] = None,
         origin_verilog: Annotated[str | None, typer.Option("--origin-verilog")] = None,
         filelist: Annotated[str | None, typer.Option("--filelist")] = None,
         design_kind: Annotated[
@@ -97,7 +96,6 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
             top=top or "",
             clock=clock or "",
             freq=freq,
-            origin_def=origin_def or "",
             origin_verilog=origin_verilog or "",
             filelist=filelist or "",
             design_kind=design_kind or "",

@@ -1,4 +1,4 @@
-"""Utility helpers — mirrors chipcompiler/utility/__init__.py in ecos-studio/ecc."""
+"""Utility helpers."""
 
 from .file import chmod_folder, find_files
 from .json import json_read, json_write, dict_to_str

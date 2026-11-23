@@ -1,4 +1,4 @@
-"""Utility helpers — json.py mirrors chipcompiler/utility/json.py."""
+"""JSON reading and writing helpers."""
 
 from __future__ import annotations
 
