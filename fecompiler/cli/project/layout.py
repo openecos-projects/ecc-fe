@@ -13,23 +13,35 @@ TEMPLATE_RELATIVE = Path(".ecc-fe") / "template"
 _STAGING_MARK = ".staging-"
 _RETIRED_MARK = ".retired-"
 
+# A run id names one directory directly below runs/. It is never a path, and it
+# cannot start with a dot, so it cannot collide with the hidden lock, staging,
+# and retired entries that live beside the runs.
+_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+RUN_ID_RULE = (
+    "a run id is a plain name of 1-64 letters, digits, '.', '_' or '-' that "
+    "starts with a letter or digit"
+)
+
+
+def is_valid_run_id(run_id: str) -> bool:
+    """Report whether *run_id* is a plain name that can sit under ``runs/``."""
+    return _RUN_ID.fullmatch(run_id) is not None
+
 
 def resolve_run_dir(
     project_dir: str, run_id: str | None = None
 ) -> tuple[str, str | None]:
-    project = Path(project_dir)
-    if run_id is None:
-        return str(project / "runs" / "default"), None
+    """Return the directory of one project run; it is always ``runs/<run-id>``.
+
+    ``None`` and the empty string select the ``default`` run. Raises
+    ``ValueError`` for anything that is not a plain run name.
+    """
+    runs = Path(project_dir) / "runs"
     if not run_id:
-        return str(project / "runs" / "default"), run_id
-    if run_id == "default":
-        return str(project / "runs" / "default"), "default"
-    candidate = Path(run_id).expanduser()
-    if candidate.is_absolute():
-        return str(candidate), run_id
-    if "/" in run_id or os.sep in run_id:
-        return str(project / candidate), run_id
-    return str(project / "runs" / run_id), run_id
+        return str(runs / "default"), run_id
+    if not is_valid_run_id(run_id):
+        raise ValueError(f"invalid run id {run_id!r}: {RUN_ID_RULE}")
+    return str(runs / run_id), run_id
 
 
 def template_dir(project_dir: str) -> str:

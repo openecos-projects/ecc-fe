@@ -73,7 +73,7 @@ jobs:
             test/test_cli_contract_alignment.py \
             test/test_cli_extended.py \
             test/test_cli_root.py \
-            test/test_cli_main.py \
+            test/test_run_id.py \
             test/test_data_step.py \
             test/test_data_workspace.py \
             test/test_examples.py \

@@ -114,29 +114,25 @@ def test_status_reports_stable_step_records(monkeypatch, tmp_path, capsys) -> No
     ]
 
 
-def test_legacy_flag_shape_keeps_argparse_entry(monkeypatch, tmp_path) -> None:
-    _isolate_xdg(monkeypatch, tmp_path)
-    received: list[str] = []
-
-    def fake_legacy(argv):
-        received.extend(argv)
-        return 7
-
-    monkeypatch.setattr(cli_main, "_run_legacy", fake_legacy)
-
-    assert cli_main.run(["--design", "legacy", "--top", "top"]) == 7
-    assert received == ["--design", "legacy", "--top", "top"]
-
-
-def test_init_design_option_is_not_misrouted_to_legacy(
+def test_removed_direct_form_points_to_the_project_commands(
     monkeypatch, tmp_path, capsys
 ) -> None:
     _isolate_xdg(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        cli_main,
-        "_run_legacy",
-        lambda argv: (_ for _ in ()).throw(AssertionError("legacy route used")),
-    )
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = cli_main.run(["--design", "legacy", "--top", "top", "--rtl", "a.v"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert "has been removed" in captured.err
+    assert "ecc-fe init <dir> --design <name>" in captured.err
+
+
+def test_init_design_option_is_not_treated_as_the_removed_form(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    _isolate_xdg(monkeypatch, tmp_path)
 
     assert (
         cli_main.run(
@@ -152,6 +148,27 @@ def test_init_design_option_is_not_misrouted_to_legacy(
         == 0
     )
     assert json.loads(capsys.readouterr().out)["records"][0]["status"] == "success"
+
+
+def test_init_passes_an_explicit_cpu_top_module_for_filelists_and_rtl() -> None:
+    from fecompiler.cli.core.inputs import InitInput
+    from fecompiler.cli.core.types import OutputMode
+
+    def request(**fields: object) -> dict[str, object]:
+        return cli_commands._init_request(
+            InitInput(workspace=None, output_mode=OutputMode.JSON, **fields),
+            "/destination",
+            default_design="demo",
+        )
+
+    assert "cpu_top_module" not in request(cpu_filelist="cpu.f")
+    assert request(cpu_filelist="cpu.f", cpu_top_module="my_cpu")[
+        "cpu_top_module"
+    ] == "my_cpu"
+    assert request(rtl="cpu.v", top="core")["cpu_top_module"] == "core"
+    assert request(rtl="cpu.v", top="core", cpu_top_module="my_cpu")[
+        "cpu_top_module"
+    ] == "my_cpu"
 
 
 def test_resource_env_default_output_is_directly_evaluable(

@@ -58,7 +58,7 @@ cli/main.py
 
 | 层 | 模块 | 职责 |
 |---|---|---|
-| CLI | `cli/main.py` | 解析参数，调用 engine |
+| CLI | `cli/main.py`、`cli/app.py` | 解析命令，调用应用服务与 engine |
 | 编排 | `engine/flow.py` | 按序驱动步骤、维护 flow.json 状态 |
 | 构建 | `tools/fe/builder.py` | 定义步骤目录结构、创建目录 |
 | 数据 | `data/workspace.py` | 创建/读取 workspace，读写 flow.json |
@@ -68,27 +68,24 @@ cli/main.py
 ## 3. 快速开始
 
 ```bash
-cd /home/luyoung/ecc-fe
+# 创建工程（默认使用 picorv32 核），再运行全部步骤
+ecc-fe init demo1
+cd demo1
+ecc-fe run
 
-# 创建项目并运行全部步骤（默认保存到 workspace_projects/<design>/）
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top
-
-# 指定自定义路径
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top \
-    --workspace /path/to/demo1
-
-# 重跑所有步骤（即使已成功）
-python3 -m fecompiler.cli.main --design demo1 --top demo1_top --rerun
+# 重跑：新建一个 run，或覆盖已有的 run
+ecc-fe run --run-id second
+ecc-fe run --overwrite
 ```
 
-> **`-m fecompiler.cli.main` 怎么找到的？**
-> Python 的 `-m` 参数会从当前目录开始，按照包路径 `fecompiler/cli/main.py` 找到对应文件并执行其 `main()` 函数，无需安装，在仓库根目录下直接运行即可。
+未安装时可在仓库根目录用 `python3 -m fecompiler.cli.main` 代替 `ecc-fe`。旧的
+`--design/--top` 直连参数形式已移除。
 
 ---
 
 ## 4. workspace 输出目录
 
-创建 `demo1` 项目后，默认生成于 `workspace_projects/demo1/`：
+创建 `demo1` 工程并运行后，每个 run 位于 `demo1/runs/<run-id>/`：
 
 ```text
 demo1/

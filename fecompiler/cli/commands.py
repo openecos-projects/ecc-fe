@@ -246,6 +246,8 @@ def _init_request(
     if command_input.rtl:
         request["cpu_rtl_files"] = [command_input.rtl]
         request["cpu_top_module"] = command_input.top
+    if command_input.cpu_top_module:
+        request["cpu_top_module"] = command_input.cpu_top_module
     for key, value in (
         ("cpu_filelist", command_input.cpu_filelist),
         ("soc_filelist", command_input.soc_filelist),

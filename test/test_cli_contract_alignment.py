@@ -270,7 +270,7 @@ def test_project_overwrite_rejects_ancestor_and_template_paths(
             "--overwrite",
         )
 
-        assert exit_code == 1
+        assert exit_code == 2
         assert payload["records"][0]["error"] == "invalid_run_id"
         assert (parent_workspace / "home" / "flow.json").is_file()
         assert (project / "ecc-fe.toml").is_file()
