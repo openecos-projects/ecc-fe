@@ -34,6 +34,7 @@ from fecompiler.cli.project.config import (
     apply_project_overrides,
     create_project_config,
     load_project_config,
+    load_run_parameter_overrides,
     project_config_path,
 )
 from fecompiler.cli.project.layout import (
@@ -46,10 +47,9 @@ from fecompiler.cli.project.layout import (
     template_dir,
 )
 from fecompiler.cli.project.params import (
-    lookup_parameter,
-    normalize_stored_value,
     parameter_records,
     parse_cli_overrides,
+    run_parameter_records,
 )
 from fecompiler.cli.resource_manager import ResourceManager, ResourceManagerError
 from fecompiler.cli.workspace_access import (
@@ -1063,31 +1063,29 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
                 )
             ]
         )
-    # [params] applies to a project; a direct workspace is its own source.
-    file_overrides = (
-        project_config.overrides
-        if project_config and not context.workspace_mode
-        else {}
-    )
-    effective_overrides = {**file_overrides, **run_overrides}
-    records[0]["source"] = (
-        str(project_config.path)
-        if project_config and not context.workspace_mode
-        else str(workspace["parameters_path"])
-    )
-    records[0]["overrides"] = effective_overrides
+    # The values shown are the ones stored in this workspace or run. A project's
+    # current [params] describes future runs, not this one.
+    defaults = project_config.defaults if project_config else None
+    if context.workspace_mode:
+        parameter_items = parameter_records(
+            parameters, defaults=defaults, overrides=None, step=command_input.step
+        )
+    else:
+        parameter_items = run_parameter_records(
+            parameters,
+            defaults=defaults,
+            cli_overrides=run_overrides,
+            step=command_input.step,
+        )
+    records[0]["source"] = str(workspace["parameters_path"])
+    records[0]["overrides"] = {
+        str(item["param"]): item["value"]
+        for item in parameter_items
+        if item["value"] != item["default"]
+    }
     if run_overrides:
         records[0]["run_overrides"] = run_overrides
     if command_input.resolved:
-        parameter_items = parameter_records(
-            parameters,
-            defaults=project_config.defaults if project_config else None,
-            overrides=effective_overrides,
-            step=command_input.step,
-        )
-        for item in parameter_items:
-            if item["param"] in run_overrides:
-                item["source"] = "cli"
         records.extend(parameter_items)
     if command_input.step:
         records.append(
@@ -1105,24 +1103,7 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
 def _load_run_parameter_overrides(context: CommandContext) -> dict[str, object]:
     if context.workspace_mode:
         return {}
-    path = Path(context.workspace_dir) / "home" / "cli-param-overrides.json"
-    if not path.is_file():
-        return {}
-    raw = read_json_object(path)
-    overrides: dict[str, object] = {}
-    for key, value in raw.items():
-        schema = lookup_parameter(key)
-        if schema is None:
-            raise ProjectConfigError(
-                f"Invalid CLI parameter provenance: unknown parameter {key}"
-            )
-        try:
-            overrides[schema.param] = normalize_stored_value(value, schema)
-        except (TypeError, ValueError) as error:
-            raise ProjectConfigError(
-                f"Invalid CLI parameter provenance for {schema.param}: {error}"
-            ) from error
-    return overrides
+    return load_run_parameter_overrides(context.workspace_dir)
 
 
 def resource_list(

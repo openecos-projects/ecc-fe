@@ -84,6 +84,7 @@ jobs:
             test/test_no_backend_leftovers.py \
             test/test_qor_analysis.py \
             test/test_resource_manager.py \
+            test/test_run_parameter_view.py \
             test/test_resources.py \
             test/test_rtl_review.py \
             test/test_runtime_server.py \

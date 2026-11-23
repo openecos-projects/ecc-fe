@@ -510,6 +510,7 @@ def build_app() -> typer.Typer:
     def param_list_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
+        run_id: RunIdOption = None,
         step: Annotated[str | None, typer.Option("--step")] = None,
         all_parameters: Annotated[
             bool, typer.Option("--all", help="Include parameters at default values")
@@ -526,6 +527,7 @@ def build_app() -> typer.Typer:
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
                 project=project,
+                run_id=run_id,
                 step=step,
                 all_parameters=all_parameters,
             ),
@@ -537,6 +539,7 @@ def build_app() -> typer.Typer:
         key: Annotated[str, typer.Argument(help="Parameter name")],
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
+        run_id: RunIdOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -549,6 +552,7 @@ def build_app() -> typer.Typer:
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
                 project=project,
+                run_id=run_id,
                 key=key,
             ),
             param_handlers.show_parameter,
@@ -621,6 +625,7 @@ def build_app() -> typer.Typer:
     def param_diff_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
+        run_id: RunIdOption = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -633,6 +638,7 @@ def build_app() -> typer.Typer:
                     json_output=json_output, jsonl=jsonl, plain=plain
                 ),
                 project=project,
+                run_id=run_id,
             ),
             param_handlers.diff_parameters,
         )

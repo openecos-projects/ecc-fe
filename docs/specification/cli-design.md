@@ -242,6 +242,14 @@ one run and records them in `home/cli-param-overrides.json`. `param set` and
 record of what that run was created with: it is never rewritten afterwards, and
 `param set --workspace <run directory>` is refused with `run_parameters_fixed`.
 
+A run reports the values it was created with. `config --resolved` on a run and
+`param list`, `show`, and `diff` with `--run-id` read that run's
+`home/parameters.json`: a value that differs from the baseline has source `cli`
+when it was given with `run --set` and `run` otherwise. The project's current
+`[params]` is not consulted. Without `--run-id` the `param` commands describe
+the next new run, with source `ecc-fe.toml` for values from `[params]`. A run
+that does not exist is `run_not_found`.
+
 **Direct-workspace mode: `home/parameters.json`.** This is the file the flow
 engine, the desktop application, and the JSON-RPC API read and write, and the
 CLI treats it the same way:

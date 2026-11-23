@@ -277,6 +277,10 @@ def parameter_records(
         if schema.param in configured_overrides:
             value = configured_overrides[schema.param]
             source = "ecc-fe.toml"
+        elif parameters.get(schema.parameter_key) in (None, ""):
+            # Stored empty means "not set": the baseline applies.
+            value = default
+            source = "default"
         elif schema.parameter_key in parameters:
             try:
                 value = normalize_stored_value(parameters[schema.parameter_key], schema)
@@ -305,3 +309,27 @@ def parameter_records(
             }
         )
     return records
+
+
+def run_parameter_records(
+    parameters: dict[str, Any],
+    *,
+    defaults: dict[str, object] | None = None,
+    cli_overrides: dict[str, object] | None = None,
+    step: str | None = None,
+) -> list[dict[str, object]]:
+    """Describe the parameters one project run was created with.
+
+    The values are the run's own ``home/parameters.json``. A value that differs
+    from the baseline has source ``cli`` when it was given with ``run --set``
+    and ``run`` otherwise; the project's current ``[params]`` plays no part.
+    """
+    given = cli_overrides or {}
+    records = parameter_records(parameters, defaults=defaults, overrides=None, step=step)
+    for record in records:
+        if record["param"] in given:
+            record["source"] = "cli"
+        elif record["source"] == "workspace":
+            record["source"] = "run"
+    return records
+

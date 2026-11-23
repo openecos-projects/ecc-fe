@@ -23,6 +23,7 @@ from fecompiler.cli.project.config import (
     ProjectConfigError,
     ensure_project_config,
     load_project_config,
+    load_run_parameter_overrides,
     set_workspace_parameter,
     write_parameter_override,
 )
@@ -32,6 +33,7 @@ from fecompiler.cli.project.params import (
     lookup_parameter,
     parameter_records,
     parse_cli_value,
+    run_parameter_records,
 )
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
 
@@ -53,16 +55,9 @@ def list_parameters(
             ],
             exit_code=2,
         )
-    loaded = _load(context)
-    if isinstance(loaded, CommandResult):
-        return loaded
-    _, parameters, config = loaded
-    records = parameter_records(
-        parameters,
-        defaults=config.defaults if config else None,
-        overrides=_file_overrides(context, config),
-        step=command_input.step,
-    )
+    records = _parameter_view(command_input, context, step=command_input.step)
+    if isinstance(records, CommandResult):
+        return records
     if not command_input.all_parameters:
         records = [record for record in records if not record["advanced"]]
     return CommandResult.ok(records)
@@ -77,15 +72,9 @@ def show_parameter(
         return CommandResult.err(
             [error_record("unknown_parameter", param=command_input.key)]
         )
-    loaded = _load(context)
-    if isinstance(loaded, CommandResult):
-        return loaded
-    _, parameters, config = loaded
-    record = parameter_records(
-        parameters,
-        defaults=config.defaults if config else None,
-        overrides=_file_overrides(context, config),
-    )
+    record = _parameter_view(command_input, context)
+    if isinstance(record, CommandResult):
+        return record
     selected = next(item for item in record if item["param"] == schema.param)
     selected.update(
         {
@@ -304,18 +293,9 @@ def diff_parameters(
     command_input: CommandInput, context: CommandContext
 ) -> CommandResult:
     assert isinstance(command_input, ParamDiffInput)
-    loaded = _load(context)
-    if isinstance(loaded, CommandResult):
-        return loaded
-    _, parameters, config = loaded
-    overrides = _file_overrides(context, config)
-    if config is None or (not context.workspace_mode and not overrides):
-        return CommandResult.ok([{"kind": "param_diff", "diff_status": "clean"}])
-    records = parameter_records(
-        parameters,
-        defaults=config.defaults,
-        overrides=overrides,
-    )
+    records = _parameter_view(command_input, context)
+    if isinstance(records, CommandResult):
+        return records
     changed = [
         {
             "kind": "param_diff",
@@ -325,8 +305,7 @@ def diff_parameters(
             "source": record["source"],
         }
         for record in records
-        if (context.workspace_mode or record["param"] in config.overrides)
-        and record["value"] != record["default"]
+        if record["value"] != record["default"]
     ]
     return (
         CommandResult.ok(changed)
@@ -335,25 +314,76 @@ def diff_parameters(
     )
 
 
-def _file_overrides(
-    context: CommandContext, config: ProjectConfig | None
-) -> dict[str, object] | None:
-    """Return the [params] that apply: a project's, never a direct workspace's."""
-    if config is None or context.workspace_mode:
-        return None
-    return config.overrides
+def _parameter_view(
+    command_input: CommandInput,
+    context: CommandContext,
+    *,
+    step: str | None = None,
+) -> list[dict[str, object]] | CommandResult:
+    """Return the parameter records the command is asked about.
+
+    * a direct workspace: the values stored in it;
+    * a project with ``--run-id``: the values that run was created with;
+    * a project otherwise: the values the next new run will get, which are the
+      template's values with the project's ``[params]`` applied.
+    """
+    of_run = not context.workspace_mode and command_input.run_id is not None
+    loaded = _load(context, of_run=of_run)
+    if isinstance(loaded, CommandResult):
+        return loaded
+    _, parameters, config = loaded
+    defaults = config.defaults if config else None
+    if context.workspace_mode:
+        return parameter_records(parameters, defaults=defaults, overrides=None, step=step)
+    if of_run:
+        try:
+            given = load_run_parameter_overrides(context.workspace_dir)
+        except (OSError, TypeError, ValueError) as error:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "invalid_cli_parameter_provenance",
+                        workspace=context.workspace_dir,
+                        reason=str(error),
+                    )
+                ]
+            )
+        return run_parameter_records(
+            parameters, defaults=defaults, cli_overrides=given, step=step
+        )
+    return parameter_records(
+        parameters,
+        defaults=defaults,
+        overrides=config.overrides if config else None,
+        step=step,
+    )
 
 
 def _load(
     context: CommandContext,
+    *,
+    of_run: bool = False,
 ) -> tuple[dict[str, object], dict[str, object], ProjectConfig | None] | CommandResult:
     try:
         workspace_dir = (
             context.workspace_dir
-            if context.workspace_mode
+            if context.workspace_mode or of_run
             else str(context.template_dir)
         )
         workspace = load_existing_workspace(workspace_dir)
+        if workspace is None and of_run:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "run_not_found",
+                        run=context.run_id or "default",
+                        workspace=workspace_dir,
+                        create_cmd=disclosure_cmd(
+                            "ecc-fe run", project=context.project, run_id=context.run_id
+                        ),
+                    )
+                ]
+            )
         if workspace is None:
             return CommandResult.err(
                 [
