@@ -308,6 +308,26 @@ Project mode creates a fresh run and refuses an existing target unless
 or a real ECC-FE workspace. Project roots, the `runs/` container, the internal
 template, symlink targets, and redirected paths are never replacement targets.
 
+### Inputs And Stale Results
+
+A project created by `ecc-fe init` refers to its RTL: `--rtl`, `--cpu-filelist`,
+`--soc-filelist`, and catalog cores are recorded as paths, not copied. Editing
+the RTL therefore needs no import step. The next `run` compares each finished
+step with the current inputs, configuration, and tools, re-executes the first
+step that no longer matches and every step after it, and a new run always
+reads the current files.
+
+`status` reports this before anything is re-executed. A step whose stored
+result no longer matches carries `stale: true` and `stale_reason` while keeping
+its stored `state`; the workspace record lists them in `stale_steps` and gives
+the `resume_cmd`. `status` never modifies the run and does not fail because of
+stale steps.
+
+Two creation forms of `ecc-fe workspace create` copy their input into
+`origin/` instead of referring to it: `--origin-verilog`, and for CPU designs
+`--filelist` and `--rtl`. Such a workspace keeps using its copy; the path the
+copy came from is not recorded.
+
 ### Step Selectors
 
 `run` accepts the ECC selectors for a project run and for a direct workspace:
