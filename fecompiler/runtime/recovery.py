@@ -7,6 +7,7 @@ from fecompiler.analysis import clear_step_qor
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import load_workspace
 from fecompiler.engine.flow import EngineFlow
+from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
 
 
 def recover_interrupted_operations(
@@ -14,6 +15,28 @@ def recover_interrupted_operations(
     *,
     active_operation_ids: set[str],
     operation_id: str = "",
+) -> dict[str, list[dict[str, str]]]:
+    """Mark steps interrupted by a dead runtime as incomplete.
+
+    A workspace locked by another live command still owns its running steps,
+    so nothing is recovered while that lock is held.
+    """
+    try:
+        with workspace_lock(directory):
+            return _recover_interrupted_operations(
+                directory,
+                active_operation_ids=active_operation_ids,
+                operation_id=operation_id,
+            )
+    except WorkspaceBusyError:
+        return {"recovered": []}
+
+
+def _recover_interrupted_operations(
+    directory: str | Path,
+    *,
+    active_operation_ids: set[str],
+    operation_id: str,
 ) -> dict[str, list[dict[str, str]]]:
     workspace = load_workspace(str(directory))
     if workspace is None:

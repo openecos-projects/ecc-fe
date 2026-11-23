@@ -17,7 +17,9 @@ from fecompiler.data.workspace import (
 )
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.resources import activate_managed_resources
-from fecompiler.utility.json import json_read, json_write
+from fecompiler.utility.atomic_write import atomic_write_json
+from fecompiler.utility.json import json_read_strict
+from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,9 +157,9 @@ def _persist_parameter_overrides(ws: dict[str, object], updates: dict[str, objec
     params_path = str(ws.get("parameters_path", "")).strip()
     if not params_path:
         return
-    params = json_read(params_path)
+    params = json_read_strict(params_path)
     params.update(updates)
-    json_write(params_path, params)
+    atomic_write_json(params_path, params)
 
 
 def _workspace_dir(args: argparse.Namespace) -> str:
@@ -278,7 +280,16 @@ def _run_legacy(raw_argv: Sequence[str]) -> int:
         return _print_error(f"no .soc.bin found in --sim-tests-dir={args.sim_tests_dir}")
 
     workspace_dir = _workspace_dir(args)
+    try:
+        with workspace_lock(workspace_dir):
+            return _run_legacy_workspace(args, workspace_dir, sim_images)
+    except WorkspaceBusyError as error:
+        return _print_error(str(error))
 
+
+def _run_legacy_workspace(
+    args: argparse.Namespace, workspace_dir: str, sim_images: list[str]
+) -> int:
     # load existing or create new
     ws = load_workspace(workspace_dir)
     if ws is None and args.sim_only:

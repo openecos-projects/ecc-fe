@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
 
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.utility.atomic_write import atomic_write_json
 
 
 def build_step(
@@ -109,6 +109,4 @@ def build_step_config(step: dict[str, Any]) -> None:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _write_json(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    atomic_write_json(path, data)

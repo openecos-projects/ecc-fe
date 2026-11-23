@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +15,7 @@ from fecompiler.cli.project.params import (
     normalize_stored_value,
 )
 from fecompiler.cli.workspace_access import read_json_object
+from fecompiler.utility.atomic_write import atomic_write_json, atomic_write_text
 
 CONFIG_FILENAME = "ecc-fe.toml"
 CONFIG_SCHEMA_VERSION = 1
@@ -142,7 +141,7 @@ def create_project_config(
     }
     flow = {"run": "default"} if project_layout else {}
     text = _render_config(design, frontend, flow, defaults, {})
-    _atomic_write_text(path, text)
+    atomic_write_text(path, text)
     loaded = load_project_config(directory)
     if loaded is None:
         raise ProjectConfigError(f"Unable to create project config: {path}")
@@ -164,7 +163,7 @@ def write_parameter_override(
         overrides[key] = value
     original = config.path.read_text(encoding="utf-8")
     updated = _replace_params_table(original, overrides)
-    _atomic_write_text(config.path, updated)
+    atomic_write_text(config.path, updated)
     loaded = load_project_config(str(config.path.parent))
     if loaded is None:
         raise ProjectConfigError(f"Unable to update project config: {config.path}")
@@ -195,7 +194,7 @@ def apply_project_overrides(
             key,
             config.overrides.get(key, config.defaults.get(key, schema.default)),
         )
-    _atomic_write_json(parameters_path, parameters)
+    atomic_write_json(parameters_path, parameters)
     return config, changed
 
 
@@ -266,7 +265,7 @@ def restore_parameter_default(directory: str, config: ProjectConfig, key: str) -
     if normalized_current == value:
         return False
     parameters[schema.parameter_key] = value
-    _atomic_write_json(parameters_path, parameters)
+    atomic_write_json(parameters_path, parameters)
     return True
 
 
@@ -352,26 +351,3 @@ def _replace_params_table(text: str, overrides: dict[str, object]) -> str:
     if suffix and not replacement.endswith("\n\n"):
         replacement += "\n"
     return text[: match.start()] + replacement + suffix
-
-
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    _atomic_write_text(
-        path,
-        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
-    )
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from fecompiler.utility.atomic_write import atomic_write_json
+
 
 def json_read(file_path: str | Path) -> dict[str, Any]:
     """Read a JSON file and return its content as a dictionary.
@@ -28,17 +30,42 @@ def json_read(file_path: str | Path) -> dict[str, Any]:
 def json_write(file_path: str | Path, data: dict[str, Any] | None = None, indent: int = 2) -> bool:
     """Write *data* as JSON to *file_path*; create parent dirs as needed.
 
-    Supports plain JSON and gzip-compressed JSON (.gz suffix).
+    Plain JSON replaces the destination atomically. Gzip-compressed JSON
+    (.gz suffix) is written in place.
     Returns True on success, False on any OS/IO error.
     """
     p = str(file_path)
+    payload = {} if data is None else data
     try:
-        os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-        with _open_json(p, "wt") as f:
-            json.dump({} if data is None else data, f, indent=indent, ensure_ascii=False)
+        if p.endswith(".gz"):
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            with _open_json(p, "wt") as f:
+                json.dump(payload, f, indent=indent, ensure_ascii=False)
+        else:
+            atomic_write_json(p, payload, indent=indent)
         return True
     except Exception:
         return False
+
+
+def json_read_strict(file_path: str | Path) -> dict[str, Any]:
+    """Read a JSON object that is about to be modified and written back.
+
+    A missing file is an empty object. A malformed file raises ``ValueError``
+    instead of reading as empty, so a read-modify-write can never replace
+    damaged state with only the keys being updated.
+    """
+    path = Path(file_path)
+    if not path.is_file():
+        return {}
+    try:
+        with _open_json(str(path), "rt") as f:
+            value = json.load(f)
+    except ValueError as error:
+        raise ValueError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
 
 
 def _open_json(path: str, mode: str):
@@ -163,4 +190,4 @@ def dict_to_str(d: Any, indent: int = 0) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["json_read", "json_write", "dict_to_str"]
+__all__ = ["json_read", "json_read_strict", "json_write", "dict_to_str"]

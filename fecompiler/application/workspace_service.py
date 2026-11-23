@@ -38,7 +38,9 @@ from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.soc import soc_runtime_options
 from fecompiler.tools.common.rtl_inputs import prepared_inputs_current, write_generated_rtl_filelist
 from fecompiler.tools.common.sv_module import is_simple_sv_identifier
-from fecompiler.utility.json import json_read, json_write
+from fecompiler.utility.atomic_write import atomic_write_json
+from fecompiler.utility.json import json_read_strict, json_write
+from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
 
 try:
     import click
@@ -434,14 +436,37 @@ def _dispatch(args: argparse.Namespace) -> CliResult:
     if command == "load":
         return _load(args)
     if command == "run-flow":
-        return _run_flow(args)
+        return _exclusively(args.directory, "rtl2gds", lambda: _run_flow(args))
     if command == "run-step":
-        return _run_step(args)
+        return _exclusively(args.directory, "run_step", lambda: _run_step(args))
     if command == "get-info":
         return _get_info(args)
     if command == "get-home":
         return _get_home(args)
     raise WorkspaceCliError("workspace", "error", f"unknown workspace command: {command}")
+
+
+def _exclusively(
+    directory: Any, cmd: str, action: Callable[[], CliResult]
+) -> CliResult:
+    """Run a mutating workspace operation while holding its cross-process lock."""
+    workspace_dir = _resolve_path(directory, Path.cwd())
+    if not workspace_dir:
+        return action()
+    try:
+        with workspace_lock(workspace_dir):
+            return action()
+    except WorkspaceBusyError as error:
+        raise WorkspaceCliError(
+            cmd,
+            "failed",
+            str(error),
+            data={
+                "directory": workspace_dir,
+                "error": "workspace_busy",
+                "owner_pid": error.owner.get("pid"),
+            },
+        ) from None
 
 
 def _catalog_list() -> CliResult:
@@ -552,6 +577,27 @@ def _create_normalized_workspace(
     directory = str(normalized.get("directory", "")).strip()
     if not directory:
         raise WorkspaceCliError("create_workspace", "failed", "missing required field: directory")
+    return _exclusively(
+        directory,
+        "create_workspace",
+        lambda: _create_locked_workspace(
+            normalized,
+            directory=directory,
+            design_kind=design_kind,
+            catalog_config=catalog_config,
+            cpu_rtl_files=cpu_rtl_files,
+        ),
+    )
+
+
+def _create_locked_workspace(
+    normalized: dict[str, Any],
+    *,
+    directory: str,
+    design_kind: str,
+    catalog_config: dict[str, Any],
+    cpu_rtl_files: list[str],
+) -> CliResult:
     _validate_create_request_paths(normalized)
 
     parameters = _normalize_parameters(
@@ -669,7 +715,7 @@ def _load(args: argparse.Namespace) -> CliResult:
         else False
     )
     recovered = (
-        engine.clear_stale_ongoing_states()
+        _recover_stale_ongoing(workspace, engine)
         if bool(getattr(args, "recover_stale_ongoing", True))
         else False
     )
@@ -696,6 +742,20 @@ def _load(args: argparse.Namespace) -> CliResult:
             ),
         ],
     )
+
+
+def _recover_stale_ongoing(workspace: dict[str, Any], engine: EngineFlow) -> bool:
+    """Reset steps left running by a dead command.
+
+    A workspace whose lock is held has a live owner, so its running step is
+    real and must be left alone.
+    """
+    try:
+        with workspace_lock(workspace["directory"]):
+            engine.load()
+            return engine.clear_stale_ongoing_states()
+    except WorkspaceBusyError:
+        return False
 
 
 def _run_flow(args: argparse.Namespace) -> CliResult:
@@ -2136,9 +2196,9 @@ def _update_workspace_parameters(workspace: dict[str, Any], updates: dict[str, A
     if not params_path:
         workspace.update(updates)
         return
-    parameters = json_read(params_path)
+    parameters = json_read_strict(params_path)
     parameters.update(updates)
-    json_write(params_path, parameters)
+    atomic_write_json(params_path, parameters)
     workspace.update(updates)
 
 
@@ -3303,11 +3363,19 @@ def _dispatch_payload(
     if command == "create":
         return _create_request(payload, base_dir)
     if command == "refresh-config":
-        return _refresh_config_payload(payload)
+        return _exclusively(
+            payload.get("directory"),
+            "refresh_config",
+            lambda: _refresh_config_payload(payload),
+        )
     if command == "sync-config":
         return _sync_config_payload(payload)
     if command == "reset-flow":
-        return _reset_flow_payload(payload)
+        return _exclusively(
+            payload.get("directory"),
+            "reset_flow",
+            lambda: _reset_flow_payload(payload),
+        )
 
     defaults: dict[str, Any] = {
         "directory": "",

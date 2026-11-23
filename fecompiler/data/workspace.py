@@ -17,6 +17,7 @@ from fecompiler.allflow.profile import (
     normalize_frontend_design_kind,
 )
 from fecompiler.tools.common.rtl_inputs import write_generated_rtl_filelist
+from fecompiler.utility.atomic_write import atomic_write_json
 
 
 _RUNTIME_LIST_PARAMETER_FIELDS = (
@@ -596,9 +597,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+    atomic_write_json(path, payload)
 
 
 def _resolve_param_path(value: Any) -> str:
