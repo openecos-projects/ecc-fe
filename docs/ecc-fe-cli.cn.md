@@ -209,12 +209,17 @@ JSON 字符串数组。以 `-` 开头的值使用 `--value=<值>`，避免被命
 run 保持可复现。单次实验使用可重复的 `ecc-fe run --set key=value`，覆盖会写入
 该 run 的 `home/cli-param-overrides.json`，不会写回工程配置。
 
-在直接工作区模式中，每次有效变更仍会同步到 `home/parameters.json` 并重置旧
-流程状态，防止复用过期结果。也可以直接编辑 `[params]`；下一次
-`ecc-fe run --workspace ...` 会先校验、同步并重置受影响的流程。
+参数只有一个来源，按模式区分：
+
+- **工程模式**：`ecc-fe.toml` 是唯一来源。新建 run 时用 `[defaults]` 加 `[params]`
+  的值；run 建好后它的 `home/parameters.json` 只是记录，不会再被改写。
+- **直接工作区模式**：`home/parameters.json` 是唯一来源，桌面端和 RPC 改的也是它。
+  `param set` 直接写这个文件并重置旧流程状态；`ecc-fe run --workspace ...` 按工作区
+  现状运行，不会再用 `ecc-fe.toml` 里的值去覆盖它。此时 `ecc-fe.toml` 只保存
+  `[defaults]` 基线，供 `param unset` 恢复用，其中的 `[params]` 不生效。
 
 旧版桌面工作区没有 `ecc-fe.toml` 时仍可直接查询。第一次执行 `param set` 时，
-CLI 会根据现有 workspace 生成配置文件；只读命令不会修改旧工作区。
+CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修改旧工作区。
 
 ## Catalog 查询
 

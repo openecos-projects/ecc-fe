@@ -224,19 +224,40 @@ The tables have distinct ownership:
 | `[frontend]` | Creation-time catalog selection snapshot. |
 | `[flow].run` | Default run id when `--run-id` is omitted. |
 | `[defaults]` | Typed baseline captured from `home/parameters.json`. |
-| `[params]` | Explicit CLI overrides applied before a flow run. |
+| `[params]` | Project mode only: overrides applied when a run is created. |
 
 Only quoted, flat, known parameter names are accepted in `[defaults]` and
 `[params]`. Unknown top-level keys, schema versions, parameter names, invalid
-types, non-finite numbers, out-of-range values, and unsupported choices fail
-before flow execution. `param set` and `param unset` update only `[params]` and
-preserve the rest of the TOML file.
+types, non-finite numbers, out-of-range values, and unsupported choices are
+rejected.
 
-`home/parameters.json` remains the runtime source consumed by the existing flow
-engine, desktop integration, and JSON-RPC API. On `param set`, or before `run`
-after a manual TOML edit, explicit overrides are synchronized atomically into
-that file. A semantic change resets the frontend flow so stale results cannot
-be reused. `param unset` restores the captured baseline.
+### Parameter Ownership
+
+Each mode has exactly one source of parameter values.
+
+**Project mode: `ecc-fe.toml`.** `[defaults]` plus `[params]` are the values a
+new run is created with; `ecc-fe run --set key=value` adds overrides for that
+one run and records them in `home/cli-param-overrides.json`. `param set` and
+`param unset` edit only `[params]`. A run's `home/parameters.json` is the
+record of what that run was created with: it is never rewritten afterwards, and
+`param set --workspace <run directory>` is refused with `run_parameters_fixed`.
+
+**Direct-workspace mode: `home/parameters.json`.** This is the file the flow
+engine, the desktop application, and the JSON-RPC API read and write, and the
+CLI treats it the same way:
+
+- `ecc-fe run --workspace` runs the workspace as it is. It does not compare the
+  workspace with `ecc-fe.toml`, does not reset the flow because they differ,
+  and does not write values from the TOML back.
+- `param set` writes the value into `home/parameters.json`; `param unset`
+  writes back the `[defaults]` value. The value is stored first and the flow is
+  then reset, so a failed reset cannot lose the change.
+- `param list`, `show`, and `diff` report the stored value with source
+  `workspace` when it differs from the baseline, whoever wrote it.
+- `ecc-fe.toml` beside `home/` only holds the `[defaults]` baseline. `[params]`
+  in it is ignored; an entry left by an older ecc-fe is removed the next time
+  that parameter is set or unset. A broken file fails `doctor` but does not
+  stop a run.
 
 The version 1 parameter namespace is:
 
@@ -259,11 +280,8 @@ and CoreMark settings. `param show` exposes the type, bounds, choices, baseline,
 effective value, source, and runtime mapping. `param diff` reports explicit
 non-default overrides.
 
-In project mode, `param set/unset` changes defaults for future runs without
-mutating completed runs. Repeated `ecc-fe run --set key=value` options take
-precedence for one run and are recorded in
-`home/cli-param-overrides.json`. Direct-workspace parameter mutations preserve
-the M3 behavior: update `home/parameters.json` and reset stale flow state.
+Repeated `ecc-fe run --set key=value` options take precedence over `[params]`
+for the run being created.
 
 ## Project And Run Selection
 

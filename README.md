@@ -54,8 +54,9 @@ command and output contract.
 Each new project includes `ecc-fe.toml`; project mode uses its `[flow].run` to
 select `runs/default` or another run. Its `[params]` table supplies persistent
 defaults, while `ecc-fe run --set` records run-local overrides. In direct
-workspace mode, `param set/unset` continues to synchronize
-`home/parameters.json` and invalidate stale results. Existing desktop
+workspace mode `home/parameters.json` is the only source of parameter values:
+`param set/unset` writes it and invalidates stale results, and `ecc-fe.toml`
+there only keeps the baseline that `param unset` restores. Existing desktop
 workspaces without this file remain readable and gain it only on the first
 parameter mutation.
 

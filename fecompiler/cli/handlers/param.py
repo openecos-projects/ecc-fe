@@ -21,15 +21,15 @@ from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import (
     ProjectConfig,
     ProjectConfigError,
-    apply_project_overrides,
     ensure_project_config,
     load_project_config,
-    restore_parameter_default,
+    set_workspace_parameter,
     write_parameter_override,
 )
+from fecompiler.cli.project.layout import enclosing_project
 from fecompiler.cli.project.params import (
+    ParameterSchema,
     lookup_parameter,
-    normalize_stored_value,
     parameter_records,
     parse_cli_value,
 )
@@ -60,7 +60,7 @@ def list_parameters(
     records = parameter_records(
         parameters,
         defaults=config.defaults if config else None,
-        overrides=config.overrides if config else None,
+        overrides=_file_overrides(context, config),
         step=command_input.step,
     )
     if not command_input.all_parameters:
@@ -84,7 +84,7 @@ def show_parameter(
     record = parameter_records(
         parameters,
         defaults=config.defaults if config else None,
-        overrides=config.overrides if config else None,
+        overrides=_file_overrides(context, config),
     )
     selected = next(item for item in record if item["param"] == schema.param)
     selected.update(
@@ -136,32 +136,20 @@ def _set_parameter(
         return CommandResult.err(
             [error_record("invalid_value", param=schema.param, reason=str(error))]
         )
+    refused = _fixed_run_parameters(context, schema)
+    if refused is not None:
+        return refused
     loaded = _load(context)
     if isinstance(loaded, CommandResult):
         return loaded
     _, parameters, config = loaded
-    previous = config.overrides.get(schema.param) if config else None
-    current = parameters.get(schema.parameter_key)
-    try:
-        normalized_current = normalize_stored_value(current, schema)
-    except (TypeError, ValueError):
-        normalized_current = current
-    reset = context.workspace_mode and bool(
-        normalized_current != value or previous != value
-    )
-    if reset:
-        failure = _reset_flow(context.workspace_dir)
-        if failure is not None:
-            return failure
+    if context.workspace_mode:
+        return _write_workspace_parameter(
+            context, schema, parameters, config, value, status="set"
+        )
     try:
         config = config or ensure_project_config(context.config_dir, parameters)
         config = write_parameter_override(config, schema.param, value)
-        if context.workspace_mode:
-            _, changed = apply_project_overrides(
-                context.workspace_dir, config_directory=context.config_dir
-            )
-        else:
-            changed = []
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
             [error_record(str(error), workspace=context.workspace_dir)]
@@ -174,8 +162,81 @@ def _set_parameter(
                 "value": value,
                 "status": "set",
                 "source": config.path.name,
-                "flow_reset": reset,
-                "parameters_changed": bool(changed),
+                "flow_reset": False,
+                "parameters_changed": False,
+            }
+        ]
+    )
+
+
+def _fixed_run_parameters(
+    context: CommandContext, schema: ParameterSchema
+) -> CommandResult | None:
+    """Refuse to edit a project run that is addressed as a direct workspace."""
+    project = (
+        enclosing_project(context.workspace_dir) if context.workspace_mode else None
+    )
+    if project is None:
+        return None
+    return CommandResult.err(
+        [
+            error_record(
+                "run_parameters_fixed",
+                workspace=context.workspace_dir,
+                project=project,
+                reason="a project run keeps the parameters it was created with",
+                new_run_cmd=(
+                    f"ecc-fe run --project {shlex.quote(project)} "
+                    f"--run-id <new-run> --set {schema.param}=<value>"
+                ),
+            )
+        ],
+        exit_code=2,
+    )
+
+
+def _write_workspace_parameter(
+    context: CommandContext,
+    schema: ParameterSchema,
+    parameters: dict[str, object],
+    config: ProjectConfig | None,
+    value: object,
+    *,
+    status: str,
+) -> CommandResult:
+    """Change one parameter of a direct workspace.
+
+    home/parameters.json is the only source of a direct workspace's values.
+    ecc-fe.toml beside it only remembers the baseline that `param unset`
+    restores; it never overrides the workspace.
+    """
+    try:
+        # Capture the baseline before the first change made through the CLI.
+        config = config or ensure_project_config(context.config_dir, parameters)
+        changed = set_workspace_parameter(context.workspace_dir, schema.param, value)
+        if schema.param in config.overrides:
+            # Left by an older ecc-fe that mirrored values into [params].
+            config = write_parameter_override(config, schema.param, None, unset=True)
+    except (OSError, TypeError, ValueError, ProjectConfigError) as error:
+        return CommandResult.err(
+            [error_record(str(error), workspace=context.workspace_dir)]
+        )
+    if changed:
+        # The value is stored first: if the reset fails, the next run still
+        # sees the change and marks the affected results stale.
+        failure = _reset_flow(context.workspace_dir)
+        if failure is not None:
+            return failure
+    return CommandResult.ok(
+        [
+            {
+                "kind": "param_update",
+                "param": schema.param,
+                "value": value,
+                "status": status if changed or status == "set" else "no_override",
+                "source": "home/parameters.json" if status == "set" else "default",
+                "flow_reset": changed,
+                "parameters_changed": changed,
             }
         ]
     )
@@ -190,10 +251,22 @@ def _unset_parameter(
         return CommandResult.err(
             [error_record("unknown_parameter", param=command_input.key)]
         )
+    refused = _fixed_run_parameters(context, schema)
+    if refused is not None:
+        return refused
     loaded = _load(context)
     if isinstance(loaded, CommandResult):
         return loaded
     _, parameters, config = loaded
+    if context.workspace_mode and config is not None:
+        return _write_workspace_parameter(
+            context,
+            schema,
+            parameters,
+            config,
+            config.defaults.get(schema.param, schema.default),
+            status="unset",
+        )
     if config is None or schema.param not in config.overrides:
         return CommandResult.ok(
             [
@@ -206,26 +279,7 @@ def _unset_parameter(
                 }
             ]
         )
-    default = config.defaults.get(schema.param, schema.default)
-    previous = config.overrides[schema.param]
-    current = parameters.get(schema.parameter_key)
     try:
-        normalized_current = normalize_stored_value(current, schema)
-    except (TypeError, ValueError):
-        normalized_current = current
-    reset = context.workspace_mode and bool(
-        previous != default or normalized_current != default
-    )
-    if reset:
-        failure = _reset_flow(context.workspace_dir)
-        if failure is not None:
-            return failure
-    try:
-        changed = (
-            restore_parameter_default(context.workspace_dir, config, schema.param)
-            if context.workspace_mode
-            else False
-        )
         updated = write_parameter_override(config, schema.param, None, unset=True)
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
@@ -239,8 +293,8 @@ def _unset_parameter(
                 "value": updated.defaults.get(schema.param, schema.default),
                 "status": "unset",
                 "source": "default",
-                "flow_reset": reset,
-                "parameters_changed": changed,
+                "flow_reset": False,
+                "parameters_changed": False,
             }
         ]
     )
@@ -254,12 +308,13 @@ def diff_parameters(
     if isinstance(loaded, CommandResult):
         return loaded
     _, parameters, config = loaded
-    if config is None or not config.overrides:
+    overrides = _file_overrides(context, config)
+    if config is None or (not context.workspace_mode and not overrides):
         return CommandResult.ok([{"kind": "param_diff", "diff_status": "clean"}])
     records = parameter_records(
         parameters,
         defaults=config.defaults,
-        overrides=config.overrides,
+        overrides=overrides,
     )
     changed = [
         {
@@ -270,13 +325,23 @@ def diff_parameters(
             "source": record["source"],
         }
         for record in records
-        if record["param"] in config.overrides and record["value"] != record["default"]
+        if (context.workspace_mode or record["param"] in config.overrides)
+        and record["value"] != record["default"]
     ]
     return (
         CommandResult.ok(changed)
         if changed
         else CommandResult.ok([{"kind": "param_diff", "diff_status": "clean"}])
     )
+
+
+def _file_overrides(
+    context: CommandContext, config: ProjectConfig | None
+) -> dict[str, object] | None:
+    """Return the [params] that apply: a project's, never a direct workspace's."""
+    if config is None or context.workspace_mode:
+        return None
+    return config.overrides
 
 
 def _load(

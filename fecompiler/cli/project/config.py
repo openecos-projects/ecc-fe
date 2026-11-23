@@ -251,11 +251,24 @@ def restore_parameter_default(directory: str, config: ProjectConfig, key: str) -
     schema = lookup_parameter(key)
     if schema is None:
         raise ProjectConfigError(f"Unknown parameter: {key}")
+    return set_workspace_parameter(
+        directory, key, config.defaults.get(key, schema.default)
+    )
+
+
+def set_workspace_parameter(directory: str, key: str, value: object) -> bool:
+    """Write one parameter into a workspace's home/parameters.json.
+
+    Returns whether the stored value changed. In a direct workspace this file
+    is the only source of parameter values.
+    """
+    schema = lookup_parameter(key)
+    if schema is None:
+        raise ProjectConfigError(f"Unknown parameter: {key}")
     parameters_path = (
         Path(directory).expanduser().resolve() / "home" / "parameters.json"
     )
     parameters = read_json_object(parameters_path)
-    value = config.defaults.get(key, schema.default)
     current = parameters.get(schema.parameter_key)
     try:
         normalized_current = normalize_stored_value(current, schema)

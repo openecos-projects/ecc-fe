@@ -34,7 +34,6 @@ from fecompiler.cli.project.config import (
     apply_project_overrides,
     create_project_config,
     load_project_config,
-    pending_project_overrides,
     project_config_path,
 )
 from fecompiler.cli.project.layout import (
@@ -299,51 +298,13 @@ def _run_workspace(
         )
     if workspace is None:
         return _workspace_not_found(context)
+    # A direct workspace is run as it is: home/parameters.json is its only
+    # source of parameter values, whoever wrote them.
     try:
-        project_config, pending = pending_project_overrides(
-            context.workspace_dir, config_directory=context.config_dir
-        )
-    except (OSError, TypeError, ValueError) as error:
-        return CommandResult.err(
-            [
-                error_record(
-                    "invalid_project_config",
-                    workspace=context.workspace_dir,
-                    reason=str(error),
-                )
-            ]
-        )
-    if pending:
-        reset = workspace_application.execute_payload(
-            "reset-flow",
-            {"directory": context.workspace_dir},
-            base_dir=Path.cwd(),
-        )
-        if reset.response != "success":
-            return CommandResult.err(
-                [
-                    error_record(
-                        "config_sync_failed",
-                        workspace=context.workspace_dir,
-                        changed=pending,
-                        messages=reset.message,
-                    )
-                ]
-            )
-    try:
-        project_config, changed = apply_project_overrides(
-            context.workspace_dir, config_directory=context.config_dir
-        )
-    except (OSError, TypeError, ValueError) as error:
-        return CommandResult.err(
-            [
-                error_record(
-                    "config_sync_failed",
-                    workspace=context.workspace_dir,
-                    reason=str(error),
-                )
-            ]
-        )
+        project_config = load_project_config(context.config_dir)
+    except (OSError, TypeError, ValueError):
+        project_config = None
+    changed: list[str] = []
     only = selection.only
     result = _execute_selection(selection, context.workspace_dir)
     record = {
@@ -1102,13 +1063,16 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
                 )
             ]
         )
-    effective_overrides = {
-        **(project_config.overrides if project_config else {}),
-        **run_overrides,
-    }
+    # [params] applies to a project; a direct workspace is its own source.
+    file_overrides = (
+        project_config.overrides
+        if project_config and not context.workspace_mode
+        else {}
+    )
+    effective_overrides = {**file_overrides, **run_overrides}
     records[0]["source"] = (
         str(project_config.path)
-        if project_config
+        if project_config and not context.workspace_mode
         else str(workspace["parameters_path"])
     )
     records[0]["overrides"] = effective_overrides
