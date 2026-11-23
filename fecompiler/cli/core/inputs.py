@@ -30,6 +30,7 @@ class InitInput(CommandInput):
     top: str = "top"
     rtl: str | None = None
     cpu_filelist: str | None = None
+    cpu_top_module: str | None = None
     soc_filelist: str | None = None
     core_id: str | None = None
     soc_harness_id: str | None = None

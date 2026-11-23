@@ -135,6 +135,14 @@ def build_app() -> typer.Typer:
             str | None, typer.Option("--rtl", help="Custom CPU RTL source")
         ] = None,
         cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        cpu_top_module: Annotated[
+            str | None,
+            typer.Option(
+                "--cpu-top-module",
+                help="Top module of the custom CPU (default: --top for --rtl, "
+                "cpu_top for --cpu-filelist)",
+            ),
+        ] = None,
         soc_filelist: Annotated[str | None, typer.Option("--soc-filelist")] = None,
         core_id: Annotated[
             str | None,
@@ -157,6 +165,7 @@ def build_app() -> typer.Typer:
                 top=top,
                 rtl=rtl,
                 cpu_filelist=cpu_filelist,
+                cpu_top_module=cpu_top_module,
                 soc_filelist=soc_filelist,
                 core_id=core_id,
                 soc_harness_id=soc_harness_id,

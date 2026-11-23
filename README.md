@@ -38,7 +38,8 @@ ecc-fe status
 ecc-fe report qor
 ```
 
-Project runs are stored under `runs/<run-id>`. Use `--run-id`, `--overwrite`,
+Project runs are stored under `runs/<run-id>`; a run id is a plain name, never
+a path. Use `--run-id`, `--overwrite`,
 and repeated `run --set key=value` options for isolated experiments. Existing
 ECOS Studio workspaces remain directly usable through `--workspace`; they also
 support `--resume`, `--from`, `--only`, and `--force` for iterative execution.
@@ -145,7 +146,7 @@ ecc-fe/
 │   │   └── {cpu-snapshot}/     # intentionally vendored CPU RTL snapshots
 │   └── utility/                # JSON/file/log helpers
 ├── test/                       # unit and integration tests
-└── workspace_projects/         # generated workspaces, git-ignored
+└── workspace_projects/         # workspaces of the integration tests, git-ignored
 ```
 
 ## Flow Steps
@@ -246,10 +247,11 @@ sources, and at least one supported test suite.
 
 ## Workspace Output
 
-Each project is created under `workspace_projects/<design>/` by default.
+Each project run is a workspace under `<project>/runs/<run-id>/`; a direct
+workspace created with `--workspace <dir>` has the same layout.
 
 ```text
-workspace_projects/<design>/
+<project>/runs/<run-id>/
 ├── home/
 │   ├── parameters.json
 │   ├── flow.json
@@ -344,38 +346,23 @@ Step states are `Invalid`, `Unstart`, `Success`, `Ongoing`, `Pending`, and
 
 `ecc-fe` is the stable command line boundary for ECOS Studio integration.
 The GUI invokes this command and consumes JSON responses instead of importing
-internal Python modules directly.  The legacy `fecompiler` console script and
-`python3 -m fecompiler.cli.main` entry point are kept as compatibility aliases.
+internal Python modules directly.  The `fecompiler` console script and
+`python3 -m fecompiler.cli.main` are aliases of the same command.
+
+Run the bundled `ysyx_00000000` CPU on the default SoC harness:
 
 ```bash
-cd /home/luyoung/ecc-fe
-
-ecc-fe \
+ecc-fe init ysyx-demo \
   --design ysyx_00000000_soc \
-  --top ecos_sim_top \
-  --cpu-top-module ysyx_00000000 \
   --cpu-filelist examples/ysyx_00000000/filelist.cpu.f \
-  --soc-filelist fecompiler/thirdparty/SoC/filelist.soc.f \
-  --testbench fecompiler/thirdparty/SoC/driver/main.cpp \
-  --sim-cpp fecompiler/thirdparty/SoC/driver/dpi_mem.cpp \
-  --sim-cpp fecompiler/thirdparty/SoC/driver/difftest.cpp \
-  --sim-cflag=-Ifecompiler/thirdparty/SoC \
-  --sim-ldflag=-ldl \
-  --sim-compile-march rv32i_zicsr \
-  --sim-compile-mabi ilp32 \
-  --sim-compile-opt-level=-O2 \
-  --sim-program add \
-  --sim-arg=--max-cycles \
-  --sim-arg=10000000 \
-  --sim-arg=--diff \
-  --sim-arg=--ref \
-  --sim-arg=fecompiler/thirdparty/SoC/tools/riscv32-spike-so \
-  --sim-arg=--diff-image-offset \
-  --sim-arg=0x100 \
-  --sim-arg=--diff-reset-vector \
-  --sim-arg=0x80000000 \
-  --rerun
+  --cpu-top-module ysyx_00000000
+cd ysyx-demo
+ecc-fe run
+ecc-fe run --workspace runs/default --only sim --force   # re-run one step
 ```
+
+The former direct form (`ecc-fe --design <name> --top <top> ...`) has been
+removed; it exits with status 2 and prints these replacement commands.
 
 Workspace-oriented commands use a JSON protocol suitable for GUI adapters:
 
@@ -391,9 +378,6 @@ ecc-fe workspace get-home --directory /path/to/workspace --json
 ## Bazel Commands
 
 ```bash
-# ysyx_00000000 CPU + SoC example
-bazel run //:run_ysyx_00000000_soc
-
 # Main regressions
 bazel test //:test_cpu_soc_flow --test_output=errors --test_env=PATH="$PATH"
 bazel test //:test_cpu_soc_matrix_flow --test_output=errors --test_env=PATH="$PATH"

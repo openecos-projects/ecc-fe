@@ -14,6 +14,7 @@ from fecompiler.cli.project.params import (
     lookup_parameter,
     normalize_stored_value,
 )
+from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id
 from fecompiler.cli.workspace_access import read_json_object
 from fecompiler.utility.atomic_write import atomic_write_json, atomic_write_text
 
@@ -45,10 +46,8 @@ class ProjectConfig:
     @property
     def run_id(self) -> str:
         value = self.flow.get("run", "default")
-        if not isinstance(value, str) or not value or value != value.strip():
-            raise ProjectConfigError(f"Unsupported flow.run: {value}")
-        if "\x00" in value:
-            raise ProjectConfigError("Unsupported flow.run: contains a null byte")
+        if not isinstance(value, str) or not is_valid_run_id(value):
+            raise ProjectConfigError(f"Unsupported flow.run {value!r}: {RUN_ID_RULE}")
         return value
 
     @property

@@ -10,7 +10,13 @@ from fecompiler.cli.core.inputs import CommandInput
 from fecompiler.cli.core.records import error_record
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import ProjectConfigError, load_project_config
-from fecompiler.cli.project.layout import is_workspace, resolve_run_dir, template_dir
+from fecompiler.cli.project.layout import (
+    RUN_ID_RULE,
+    is_valid_run_id,
+    is_workspace,
+    resolve_run_dir,
+    template_dir,
+)
 from fecompiler.cli.rendering.render import render_result
 
 CommandHandler = Callable[[CommandInput, CommandContext], CommandResult]
@@ -40,6 +46,17 @@ def execute_command(
         raise typer.Exit(code=result.exit_code)
 
     project_dir = os.path.abspath(os.path.expanduser(project or "."))
+    if command_input.run_id and not is_valid_run_id(command_input.run_id):
+        result = CommandResult.err(
+            [
+                error_record(
+                    "invalid_run_id", run=command_input.run_id, reason=RUN_ID_RULE
+                )
+            ],
+            exit_code=2,
+        )
+        render_result(command, result, command_input.output_mode)
+        raise typer.Exit(code=result.exit_code)
     workspace_mode = workspace is not None
     selected_run_id = command_input.run_id
     config_dir = project_dir

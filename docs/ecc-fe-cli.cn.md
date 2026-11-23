@@ -63,7 +63,9 @@ ecc-fe status
 ecc-fe report qor
 ```
 
-每次工程运行都位于独立的 `runs/<run-id>` 目录。创建另一个实验运行：
+每次工程运行都位于独立的 `runs/<run-id>` 目录。run id 只能是普通名字（1-64 个字母、
+数字、`.`、`_`、`-`，以字母或数字开头），不能是路径；其他写法会被拒绝并返回
+`invalid_run_id`。创建另一个实验运行：
 
 ```bash
 ecc-fe run --run-id faster-sim --set sim.compile_preset=speed
@@ -93,8 +95,11 @@ ecc-fe log lint --workspace ./legacy-workspace
 ```bash
 ecc-fe init ./my-cpu \
   --design my-cpu \
-  --cpu-filelist ./rtl/filelist.cpu.f
+  --cpu-filelist ./rtl/filelist.cpu.f \
+  --cpu-top-module my_cpu_top
 ```
+
+`--cpu-top-module` 省略时，filelist 形式默认顶层模块名为 `cpu_top`。
 
 ## 环境诊断
 
@@ -253,8 +258,6 @@ ecc-fe workspace load --directory ./frontend-demo --json
 ecc-fe rpc --help
 ```
 
-原有参数模式也继续支持：
-
-```bash
-ecc-fe --design demo --top top --rtl demo.v
-```
+旧的直连参数形式（`ecc-fe --design demo --top top --rtl demo.v`）已移除：它在未指定
+`--workspace` 时会把工作区建在安装目录里。现在这样调用会以状态码 2 退出并提示改用
+`ecc-fe init` 加 `ecc-fe run`，不会创建任何文件。

@@ -39,11 +39,12 @@ project-oriented commands call the same workspace application service.
 `ecc-fe doctor` retains the same checks and is the compatibility name for
 environment-focused diagnostics.
 
-The legacy direct form remains supported:
-
-```bash
-ecc-fe --design demo --top top --rtl demo.v
-```
+The former direct form, `ecc-fe --design <name> --top <top> ...`, has been
+removed. It created its workspace inside the installation tree when
+`--workspace` was omitted. Such an invocation now exits with status 2 and
+prints the replacement, `ecc-fe init` followed by `ecc-fe run`, without
+creating anything. `ecc-fe init --cpu-top-module` names the top module of a
+custom CPU given by `--cpu-filelist` or `--rtl`.
 
 ## Output Contract
 
@@ -246,8 +247,13 @@ the M3 behavior: update `home/parameters.json` and reset stale flow state.
 
 Project and inspection commands accept `--project`; omission means the current
 directory. `--run-id` wins over `[flow].run`, which falls back to `default`.
-A bare run id resolves below `runs/`; project-relative and absolute paths use
-the same resolution rules as ECC.
+A run id is a plain name, not a path: 1-64 letters, digits, `.`, `_`, or `-`,
+starting with a letter or digit. It always resolves to `runs/<run-id>`. Any
+other value, in `--run-id` or in `[flow].run`, is rejected as `invalid_run_id`
+(exit status 2) before anything is read or written, so a run can never be
+created, replaced, or locked outside the project's `runs/` directory. This is
+deliberately stricter than ECC, which also accepts project-relative and
+absolute paths. An empty `--run-id` selects the `default` run.
 
 Project mode creates a fresh run and refuses an existing target unless
 `--overwrite` is explicit. Replacement is allowed only for an empty directory
@@ -299,6 +305,6 @@ inspection command.
 - JSON-RPC protocol and stdout framing do not change.
 - Workspace files under `home/` do not change.
 - `ecc-fe.toml` is additive and optional for legacy workspaces.
-- Existing `--design/--top` invocations continue through the argparse runner.
+- The direct `--design/--top` form is removed; see Command Shape.
 - New commands are adapters over existing Python application and flow APIs.
 - M3 `--workspace`, `--step`, and `--rerun` invocations remain valid.
