@@ -5,6 +5,7 @@ import shlex
 from collections.abc import Callable
 from pathlib import Path
 
+from fecompiler.allflow.steps import step_names
 from fecompiler.application.workspace_service import workspace_application
 from fecompiler.cli.core.inputs import (
     CommandInput,
@@ -34,7 +35,7 @@ from fecompiler.cli.project.params import (
 )
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
 
-_FLOW_STEPS = {"prepare", "review", "elab", "lint", "sim"}
+_FLOW_STEPS = set(step_names())
 
 
 def list_parameters(

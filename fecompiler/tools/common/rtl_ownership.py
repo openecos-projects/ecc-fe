@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
+from fecompiler.allflow.steps import step_directory_suffixes
 from fecompiler.resources import frontend_repo_root
 from fecompiler.utility.json import json_read
 
@@ -137,7 +138,7 @@ def _is_generated_path(path: Path, workspace: dict[str, Any] | None) -> bool:
     directory = str(workspace.get("directory", "")).strip()
     if not directory or not _is_relative_to(path, Path(directory).expanduser().resolve()):
         return False
-    return any(part.endswith(("_fe", "_slang", "_verilator")) for part in path.parts)
+    return any(part.endswith(step_directory_suffixes()) for part in path.parts)
 
 
 def _is_workspace_file(path: Path, workspace: dict[str, Any] | None, field: str) -> bool:

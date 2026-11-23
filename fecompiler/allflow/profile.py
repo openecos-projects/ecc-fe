@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from fecompiler.allflow.steps import step_definition
+
 
 CPU_CORE: Final = "cpu_core"
 GENERIC_RTL: Final = "generic_rtl"
@@ -17,15 +19,17 @@ class FrontendFlowProfile:
     capabilities: frozenset[str]
 
 
+def _steps(*names: str) -> tuple[tuple[str, str], ...]:
+    """Resolve registered step names to the (name, tool) pairs of a profile."""
+    return tuple(
+        (definition.name, definition.tool)
+        for definition in map(step_definition, names)
+    )
+
+
 _CPU_CORE_PROFILE = FrontendFlowProfile(
     design_kind=CPU_CORE,
-    steps=(
-        ("prepare", "fe"),
-        ("review", "fe"),
-        ("elab", "slang"),
-        ("lint", "verilator"),
-        ("sim", "verilator"),
-    ),
+    steps=_steps("prepare", "review", "elab", "lint", "sim"),
     capabilities=frozenset(
         {
             "source",
@@ -41,12 +45,7 @@ _CPU_CORE_PROFILE = FrontendFlowProfile(
 
 _GENERIC_RTL_PROFILE = FrontendFlowProfile(
     design_kind=GENERIC_RTL,
-    steps=(
-        ("prepare", "fe"),
-        ("review", "fe"),
-        ("elab", "slang"),
-        ("lint", "verilator"),
-    ),
+    steps=_steps("prepare", "review", "elab", "lint"),
     capabilities=frozenset({"source", "qor"}),
 )
 

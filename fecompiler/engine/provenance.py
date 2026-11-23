@@ -8,57 +8,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.steps import find_step_definition
 from fecompiler.resources import frontend_repo_root
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.utility.json import json_read
 
 
 _SCHEMA_VERSION = 1
-_STEP_CONFIG_FIELDS: dict[str, tuple[str, ...]] = {
-    "prepare": (
-        "top_module",
-        "cpu_wrapper_id",
-        "cpu_wrapper_contract",
-        "cpu_socket_contract",
-        "cpu_wrapper_top",
-        "required_cpu_top_module",
-        "required_cpu_top_ports",
-        "required_cpu_top_port_contract",
-        "cpu_reset_vector",
-        "soc_cpu_reset_vector",
-        "soc_wrapper_id",
-        "soc_wrapper_contract",
-        "soc_wrapper_top",
-    ),
-    "review": ("review_waivers",),
-    "elab": ("top_module",),
-    "lint": ("top_module", "lint_profile", "lint_baseline", "lint_waivers"),
-}
-_SIM_CONFIG_FIELDS = (
-    "testbench",
-    "frequency_max",
-    "Frequency max [MHz]",
-    "cpu_supports_difftest",
-    "soc_supports_difftest",
-)
-_STEP_SOURCE_FILES: dict[str, tuple[str, ...]] = {
-    "prepare": ("tools/prepare/runner.py",),
-    "review": (
-        "tools/review/runner.py",
-        "tools/review/analyzer.py",
-        "tools/review/structural_probe.py",
-    ),
-    "elab": ("tools/slang/runner.py",),
-    "lint": ("tools/verilator/runner.py",),
-    "sim": ("tools/verilator/runner.py",),
-}
 _COMMON_STEP_SOURCE_FILES = ("analysis/qor.py",)
-_STEP_EXECUTABLES: dict[str, tuple[str, ...]] = {
-    "review": ("yosys",),
-    "elab": ("slang",),
-    "lint": ("verilator",),
-    "sim": ("verilator",),
-}
 
 
 def build_step_provenance(
@@ -142,10 +99,18 @@ def _step_configuration(
 ) -> dict[str, Any]:
     merged = dict(parameters)
     merged.update(workspace)
-    fields = list(_STEP_CONFIG_FIELDS.get(step_name, ()))
-    if step_name == "sim":
-        fields.extend(_SIM_CONFIG_FIELDS)
-        fields.extend(sorted(key for key in merged if str(key).startswith("sim_")))
+    definition = find_step_definition(step_name)
+    fields: list[Any] = []
+    if definition is not None:
+        fields.extend(definition.config_fields)
+        if definition.config_prefixes:
+            fields.extend(
+                sorted(
+                    key
+                    for key in merged
+                    if str(key).startswith(definition.config_prefixes)
+                )
+            )
     return {
         field: _normalize_value(merged.get(field))
         for field in dict.fromkeys(fields)
@@ -160,16 +125,17 @@ def _resource_versions(parameters: dict[str, Any]) -> Any:
 
 def _tool_identity(step_name: str, tool: str) -> dict[str, Any]:
     root = frontend_repo_root()
+    definition = find_step_definition(step_name)
     source_files = [
         root / "fecompiler" / relative
         for relative in (
-            *_STEP_SOURCE_FILES.get(step_name, ()),
+            *(definition.source_files if definition else ()),
             *_COMMON_STEP_SOURCE_FILES,
         )
     ]
     executables = {
         name: _path_identity(shutil.which(name) or name)
-        for name in _STEP_EXECUTABLES.get(step_name, ())
+        for name in (definition.executables if definition else ())
     }
     return {
         "runner": tool,

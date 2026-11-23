@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from fecompiler.allflow.steps import find_step_definition, step_directory, step_names
 from fecompiler.application.workspace_service import workspace_application
 from fecompiler.catalog import check_catalog_contracts
 from fecompiler.cli.core.inputs import (
@@ -65,7 +66,7 @@ from fecompiler.resources import (
 from fecompiler.utility.atomic_write import atomic_write_json
 from fecompiler.utility.workspace_lock import workspace_lock_owner
 
-_FLOW_STEPS = ("prepare", "review", "elab", "lint", "sim")
+_FLOW_STEPS = step_names()
 _LOG_TAIL_MAX_BYTES = 4 * 1024 * 1024
 _RESOURCE_ENV_KEYS = (
     "ECOS_FE_CLI",
@@ -1258,14 +1259,9 @@ def _doctor_requirements(
         ),
         "yosys": ("yosys", "Yosys", ("yosys",), False),
     }
-    if step in {"prepare", "review"}:
-        names: tuple[str, ...] = ()
-    elif step == "elab":
-        names = ("slang",)
-    elif step == "lint":
-        names = ("verilator",)
-    elif step == "sim":
-        names = ("verilator", "cxx", "make", "riscv")
+    definition = find_step_definition(step)
+    if definition is not None:
+        names: tuple[str, ...] = definition.doctor_checks
     else:
         names = ("slang", "verilator", "cxx", "make", "riscv", "yosys")
     return tuple(checks[name] for name in names)
@@ -1316,14 +1312,7 @@ def _tool_version(executable: str) -> str | None:
 
 
 def _step_directory(workspace: Path, step: str) -> Path:
-    tool = {
-        "prepare": "fe",
-        "review": "fe",
-        "elab": "slang",
-        "lint": "verilator",
-        "sim": "verilator",
-    }[step]
-    return workspace / f"{step}_{tool}"
+    return step_directory(workspace, step)
 
 
 def _step_log_path(workspace: Path, step: str | None) -> Path:

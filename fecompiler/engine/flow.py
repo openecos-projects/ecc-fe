@@ -12,6 +12,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from fecompiler.allflow.profile import flow_steps_for
+from fecompiler.allflow.steps import step_directory_name
 from fecompiler.analysis import (
     clear_step_qor,
     step_qor_source_revision,
@@ -150,9 +151,7 @@ class EngineFlow:
             info = step.get("info")
             if isinstance(info, dict):
                 info.pop("runtime_operation", None)
-            clear_step_qor(
-                Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
-            )
+            clear_step_qor(self._step_directory(step))
             changed = True
         if changed:
             self.save()
@@ -437,15 +436,16 @@ class EngineFlow:
         step.pop("provenance", None)
         return True
 
-    def _reset_step_config(self, step: dict[str, Any]) -> None:
-        builder.reset_step_config(
-            Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
+    def _step_directory(self, step: dict[str, Any]) -> Path:
+        return Path(self.workspace["directory"]) / step_directory_name(
+            step["name"], step["tool"]
         )
 
+    def _reset_step_config(self, step: dict[str, Any]) -> None:
+        builder.reset_step_config(self._step_directory(step))
+
     def _clear_step_qor(self, step: dict[str, Any]) -> None:
-        clear_step_qor(
-            Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
-        )
+        clear_step_qor(self._step_directory(step))
 
     @staticmethod
     def _clear_step_stale(step: dict[str, Any]) -> None:
