@@ -74,6 +74,20 @@ ecc-fe log sim --run-id faster-sim
 ecc-fe config sim --resolved --run-id faster-sim
 ```
 
+在已有的 run 上迭代（改了 RTL 后只重跑需要的步骤）：
+
+```bash
+ecc-fe run --to lint                 # 新建 run，只跑到 lint，跳过耗时的 sim
+ecc-fe run --resume                  # 从第一个未完成的步骤继续
+ecc-fe run --from review             # 从 review 开始重跑后面的步骤
+ecc-fe run --from review --to lint   # 只重跑 review 到 lint
+ecc-fe run --only lint --force       # 只重跑 lint
+ecc-fe run --run-id faster-sim --only sim
+```
+
+这些选择器在原地继续已有的 run，不会新建；run 不存在时报 `run_not_found`。run 的参数在
+创建时就固定了，之后改 `[params]` 不会影响它，要换参数请用 `--run-id` 新建一个 run。
+
 已存在的 run 默认不会被覆盖；确认替换时显式使用 `--overwrite`。覆盖前 CLI 会
 验证目标确实是 ECC-FE run，并拒绝项目根目录、`runs/` 容器、内部模板及符号链接
 重定向的路径。

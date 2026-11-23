@@ -176,9 +176,15 @@ def build_typer_app(typer_module: Any, handlers: WorkspaceTyperHandlers) -> Any:
     def run_flow_cmd(
         directory: Annotated[str, typer.Option("--directory")] = "",
         rerun: Annotated[bool, typer.Option("--rerun")] = False,
+        from_step: Annotated[
+            str, typer.Option("--from", help="Re-execute a step and its suffix")
+        ] = "",
+        to_step: Annotated[str, typer.Option("--to", help="Stop after this step")] = "",
         json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
     ) -> None:
-        args = argparse.Namespace(directory=directory, rerun=rerun)
+        args = argparse.Namespace(
+            directory=directory, rerun=rerun, from_step=from_step, to_step=to_step
+        )
         finish("run-flow", json_output, lambda: handlers.run_flow(args))
 
     @app.command("run-step", help="Run one frontend flow step")
