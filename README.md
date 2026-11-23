@@ -98,7 +98,7 @@ automation shown below.
 | Electron bridge | `ecos-studio/ecos/gui/apps/desktop-electron` | Typed IPC, frontend/backend routing, sidecar launch, operation events, cancellation, and workspace handles. |
 | Transport | `fecompiler/runtime/stdio_server.py` | `Content-Length` framed JSON-RPC 2.0 over stdin/stdout. stdout is reserved for frames; diagnostics go to stderr. |
 | Runtime API | `fecompiler/runtime/server.py` and `workspace_api.py` | Protocol validation, capabilities, workspace sessions, per-workspace mutation locks, and event notifications. |
-| Application service | `fecompiler/application/workspace_service.py` | Shared CLI/RPC use cases for catalog validation, workspace lifecycle, flow execution, and report shaping. |
+| Application service | `fecompiler/application/` | Shared CLI/RPC use cases. `workspace_service.py` holds the operations (catalog validation, workspace lifecycle, flow execution); `create_request.py`, `sim_config.py`, and `step_detail.py` hold request validation, simulation settings, and report shaping. |
 | Flow engine | `fecompiler/engine/flow.py` | Fixed step ordering, state transitions, provenance fingerprints, stale-result invalidation, and failure propagation. |
 | Step handlers | `fecompiler/tools/*` | RTL preparation, CPU review, Slang elaboration, Verilator lint, simulation build, tests, difftest, logs, and artifacts. |
 

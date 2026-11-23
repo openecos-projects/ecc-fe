@@ -68,6 +68,7 @@ jobs:
         run: |
           uv run --frozen --group test --python 3.11 pytest -q \
             test/test_allflow_builder.py \
+            test/test_application_layout.py \
             test/test_catalog_compatibility.py \
             test/test_catalog_contract.py \
             test/test_cli_contract_alignment.py \
