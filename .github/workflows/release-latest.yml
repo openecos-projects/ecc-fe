@@ -92,6 +92,7 @@ jobs:
             test/test_runtime_transport.py \
             test/test_sv_module.py \
             test/test_setup_script.py \
+            test/test_status_stale.py \
             test/test_step_registry.py \
             test/test_utility.py \
             test/test_workspace_application.py \

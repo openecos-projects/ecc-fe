@@ -22,6 +22,7 @@ from fecompiler.data import workspace as workspace_data
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.engine.provenance import build_step_provenance, output_fingerprint
+from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.fe import builder
 
 
@@ -100,42 +101,10 @@ class EngineFlow:
     def refresh_stale_states(self) -> bool:
         """Invalidate successful steps whose inputs, config, tools, or upstream changed."""
         changed = False
-        upstream: dict[str, Any] | None = None
-        stale_from = ""
-        tracked_flow = any(isinstance(step.get("provenance"), dict) for step in self.flow.get("steps", []))
-
-        for step in self.flow.get("steps", []):
-            state = str(step.get("state", ""))
-            provenance = step.get("provenance") if isinstance(step.get("provenance"), dict) else None
-            if stale_from:
-                changed |= self._mark_step_stale(step, f"upstream step {stale_from} is stale", stale_from)
-                continue
-
-            if state != StateEnum.Success.value:
-                upstream = None
-                continue
-
-            expected = build_step_provenance(
-                self.workspace,
-                str(step.get("name", "")),
-                str(step.get("tool", "")),
-                upstream,
-            )
-            if provenance is None:
-                if tracked_flow:
-                    stale_from = str(step.get("name", ""))
-                    changed |= self._mark_step_stale(step, "step result has no provenance", stale_from)
-                continue
-            if str(provenance.get("signature", "")) != expected["signature"]:
-                stale_from = str(step.get("name", ""))
-                changed |= self._mark_step_stale(
-                    step,
-                    _provenance_change_reason(provenance, expected),
-                    stale_from,
-                )
-                continue
-            upstream = provenance
-
+        for step, reason, stale_from in stale_steps(
+            self.workspace, self.flow.get("steps", [])
+        ):
+            changed |= self._mark_step_stale(step, reason, stale_from)
         if changed:
             self.save()
         return changed
@@ -442,6 +411,50 @@ class EngineFlow:
         for key in ("stale", "stale_reason", "stale_from"):
             info.pop(key, None)
         step["info"] = info
+
+
+def stale_steps(
+    workspace: dict[str, Any], steps: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], str, str]]:
+    """Find the steps whose recorded result no longer matches the workspace.
+
+    Returns ``(step, reason, stale_from)`` in flow order: the first successful
+    step whose inputs, configuration, or tools changed, then every step after
+    it. Nothing is modified, so inspection commands can call this too.
+    """
+    found: list[tuple[dict[str, Any], str, str]] = []
+    upstream: dict[str, Any] | None = None
+    stale_from = ""
+    source: dict[str, Any] | None = None
+    tracked_flow = any(isinstance(step.get("provenance"), dict) for step in steps)
+
+    for step in steps:
+        name = str(step.get("name", ""))
+        provenance = step.get("provenance") if isinstance(step.get("provenance"), dict) else None
+        if stale_from:
+            found.append((step, f"upstream step {stale_from} is stale", stale_from))
+            continue
+
+        if str(step.get("state", "")) != StateEnum.Success.value:
+            upstream = None
+            continue
+
+        if source is None:
+            source = workspace_input_fingerprint(workspace)
+        expected = build_step_provenance(
+            workspace, name, str(step.get("tool", "")), upstream, source=source
+        )
+        if provenance is None:
+            if tracked_flow:
+                stale_from = name
+                found.append((step, "step result has no provenance", stale_from))
+            continue
+        if str(provenance.get("signature", "")) != expected["signature"]:
+            stale_from = name
+            found.append((step, _provenance_change_reason(provenance, expected), stale_from))
+            continue
+        upstream = provenance
+    return found
 
 
 def _new_flow_step(name: str, tool: str) -> dict[str, Any]:

@@ -23,10 +23,17 @@ def build_step_provenance(
     step_name: str,
     tool: str,
     upstream: dict[str, Any] | None,
+    *,
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return the current provenance inputs and their deterministic signature."""
+    """Return the current provenance inputs and their deterministic signature.
+
+    *source* is the workspace input fingerprint when the caller already has
+    it; it is the same for every step, and computing it reads all RTL.
+    """
     parameters = _workspace_parameters(workspace)
-    source = workspace_input_fingerprint(workspace)
+    if source is None:
+        source = workspace_input_fingerprint(workspace)
     configuration = _step_configuration(workspace, parameters, step_name)
     resources = _resource_versions(parameters)
     tools = _tool_identity(step_name, tool)

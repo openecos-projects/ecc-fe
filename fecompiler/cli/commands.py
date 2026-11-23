@@ -57,10 +57,12 @@ from fecompiler.cli.workspace_access import (
     read_json_object,
     workspace_markers,
 )
+from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import (
     UnsupportedWorkspaceSchemaError,
     workspace_schema_version,
 )
+from fecompiler.engine.flow import stale_steps
 from fecompiler.resources import (
     activate_managed_resources,
     installed_tool_entries,
@@ -915,31 +917,64 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         summary["owner_pid"] = owner.get("pid")
     records: list[dict[str, object]] = [summary]
     steps = flow.get("steps", []) if isinstance(flow, dict) else []
+    stale = _stale_step_reasons(workspace, steps) if owner is None else {}
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
+        name = str(step.get("name", ""))
         state = normalize_state(step.get("state"))
         if state == "ongoing" and owner is None:
             state = "interrupted"
             summary["resume_cmd"] = disclosure_cmd(
                 "ecc-fe run --resume", context.workspace_dir
             )
-        records.append(
-            {
-                "kind": "step",
-                "index": index,
-                "step": str(step.get("name", "")),
-                "tool": str(step.get("tool", "")),
-                "state": state,
-                "runtime": step.get("runtime", ""),
-                "peak_memory_mb": step.get("peak memory (mb)", 0),
-            }
-        )
+        record: dict[str, object] = {
+            "kind": "step",
+            "index": index,
+            "step": name,
+            "tool": str(step.get("tool", "")),
+            "state": state,
+            "runtime": step.get("runtime", ""),
+            "peak_memory_mb": step.get("peak memory (mb)", 0),
+        }
+        if name in stale:
+            record["stale"] = True
+            record["stale_reason"] = stale[name]
+        records.append(record)
+    if stale:
+        # The stored results are kept until the next run re-executes them.
+        summary["stale_steps"] = list(stale)
+        summary.setdefault("resume_cmd", _target_cmd("ecc-fe run --resume", context))
     failed = any(
         record.get("state") in {"incomplete", "invalid", "interrupted"}
         for record in records
     )
     return CommandResult.err(records) if failed else CommandResult.ok(records)
+
+
+def _stale_step_reasons(
+    workspace: dict[str, object], steps: object
+) -> dict[str, str]:
+    """Name the steps the next run will re-execute, with the reason for each.
+
+    Covers results that no longer match the current inputs, configuration, or
+    tools, and steps a previous run already reset for that reason. Read-only.
+    """
+    entries = [step for step in steps if isinstance(step, dict)] if isinstance(steps, list) else []
+    reasons: dict[str, str] = {}
+    for step in entries:
+        info = step.get("info")
+        if isinstance(info, dict) and info.get("stale") is True:
+            reasons[str(step.get("name", ""))] = str(info.get("stale_reason", "stale"))
+    try:
+        for step, reason, _ in stale_steps(workspace, entries):
+            if step.get("state") == StateEnum.Success.value:
+                reasons[str(step.get("name", ""))] = reason
+    except (OSError, ValueError, TypeError, KeyError):
+        # Inspection must not fail because staleness cannot be evaluated.
+        pass
+    ordered = [str(step.get("name", "")) for step in entries]
+    return {name: reasons[name] for name in ordered if name in reasons}
 
 
 def log(command_input: CommandInput, context: CommandContext) -> CommandResult:

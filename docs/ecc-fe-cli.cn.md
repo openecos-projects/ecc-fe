@@ -74,6 +74,16 @@ ecc-fe log sim --run-id faster-sim
 ecc-fe config sim --resolved --run-id faster-sim
 ```
 
+工程引用的是 RTL 的路径，不会把 RTL 拷进工程，所以改了 RTL 之后不需要"重新导入"：
+
+```bash
+ecc-fe status      # 结果已过期的步骤会带 stale=True 和原因，并给出继续的命令
+ecc-fe run --resume
+```
+
+`status` 只是提示，不会改动 run；真正的重跑发生在下一次 `run`，它会从第一个过期的步骤
+开始重跑。新建的 run 读到的也总是当前的文件。
+
 在已有的 run 上迭代（改了 RTL 后只重跑需要的步骤）：
 
 ```bash
