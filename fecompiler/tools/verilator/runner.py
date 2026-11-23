@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import shlex
-import subprocess
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.tools.common.process import run_tool, tool_timeout
 from fecompiler.tools.common.rtl_inputs import (
     incdirs,
     rtl_files,
@@ -239,9 +239,16 @@ def _sim_difftest_enabled(workspace: dict[str, Any]) -> bool:
     return _sim_difftest_supported(workspace) and "--diff" in _sim_run_args(workspace)
 
 
-def _run_sim_process(cmd: list[str]) -> tuple[int, str]:
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return int(result.returncode), result.stdout + result.stderr
+def _run_sim_process(
+    cmd: list[str], *, log_path: Path, session_dir: Path
+) -> tuple[int, str]:
+    result = run_tool(
+        cmd,
+        log_path=log_path,
+        timeout=tool_timeout("sim_case"),
+        session_dir=session_dir,
+    )
+    return result.returncode, result.output
 
 
 def _coremark_requested(workspace: dict[str, Any]) -> bool:
@@ -1240,9 +1247,14 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = _build_program_command(build_script, src, name, out_dir)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-            output = (result.stdout + result.stderr).strip()
-            rc = int(result.returncode)
+            result = run_tool(
+                cmd,
+                env=env,
+                timeout=tool_timeout("program_build"),
+                session_dir=out_dir,
+            )
+            output = result.output.strip()
+            rc = result.returncode
         except OSError as exc:
             output = str(exc)
             rc = 1
@@ -1361,10 +1373,18 @@ class VerilatorLintStep(BaseStep):
             top,
         ] + files
         lint_path.parent.mkdir(parents=True, exist_ok=True)
+        timeout = tool_timeout("lint")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            returncode = int(result.returncode)
-            output = (result.stdout + result.stderr).strip() or "lint OK"
+            result = run_tool(
+                cmd,
+                log_path=lint_path,
+                timeout=timeout,
+                session_dir=Path(step.log["dir"]),
+            )
+            returncode = result.returncode
+            output = result.output.strip() or "lint OK"
+            if result.timed_out:
+                output += f"\n%Error: verilator lint did not finish within {timeout:g}s"
         except OSError as exc:
             returncode = 127
             output = f"%Error: failed to execute verilator: {exc}"
@@ -1814,9 +1834,11 @@ class VerilatorSimStep(BaseStep):
             "-o", str(sim_bin),
         ] + files + cpp_sources
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        (Path(step.log["dir"]) / "log.txt").write_text(
-            result.stdout + result.stderr, encoding="utf-8"
+        result = run_tool(
+            cmd,
+            log_path=Path(step.log["dir"]) / "log.txt",
+            timeout=tool_timeout("sim_compile"),
+            session_dir=Path(step.log["dir"]),
         )
         ok = result.returncode == 0
         update_substep_ok(step, SimSubFlowEnum.compile.value, ok)
@@ -1937,7 +1959,11 @@ class VerilatorSimStep(BaseStep):
                 output = f"image not found: {image}\n"
                 rc = 1
             else:
-                rc, output = _run_sim_process([str(sim_bin), *run_args])
+                rc, output = _run_sim_process(
+                    [str(sim_bin), *run_args],
+                    log_path=logs["output_log"],
+                    session_dir=Path(step.log["dir"]),
+                )
 
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
             if (

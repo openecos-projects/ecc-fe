@@ -108,6 +108,35 @@ Workspace and project state files (`home/*.json`, `ecc-fe.toml`, step
 `subflow.json` and `checklist.json`) are replaced atomically: an interrupted
 write leaves the previous complete file.
 
+## Tool Execution
+
+Every external tool a step runs (Slang, Verilator, the simulator binary, test
+program builds, the Yosys precheck) goes through one runner:
+
+- The tool and everything it spawns run in their own process group. On a
+  timeout, on `Ctrl-C`, or on `SIGTERM` the whole group is terminated
+  (`SIGTERM`, then `SIGKILL` after 5 seconds).
+- stdout and stderr are interleaved directly into the step log file while the
+  tool runs, so `tail -f` shows progress and the log survives an interruption.
+  Tools do not inherit the command's stdin.
+- Each call has a wall-clock limit. A call that exceeds it fails its step and
+  the log names the limit.
+- A command killed with `SIGKILL` cannot stop its tools. They are identified
+  and stopped the next time the same step runs, before it starts new work.
+
+Default limits, each overridable in seconds through the environment (`0`
+disables that limit):
+
+| Call | Default | Variable |
+| --- | --- | --- |
+| Slang elaboration | 30 min | `ECOS_FE_TIMEOUT_ELAB` |
+| Verilator lint | 30 min | `ECOS_FE_TIMEOUT_LINT` |
+| Simulator compile | 2 h | `ECOS_FE_TIMEOUT_SIM_COMPILE` |
+| One test program build | 30 min | `ECOS_FE_TIMEOUT_PROGRAM_BUILD` |
+| One simulation case | 4 h | `ECOS_FE_TIMEOUT_SIM_CASE` |
+
+The Yosys precheck keeps its fixed 45 second review bound.
+
 ## Resource Contract
 
 The CLI and Electron use the same state:
