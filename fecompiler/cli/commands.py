@@ -38,7 +38,9 @@ from fecompiler.cli.project.layout import (
     clone_workspace_template,
     is_protected_run_target,
     is_safe_run_directory,
+    publish_workspace_replacement,
     resolves_as_spelled,
+    stage_workspace_replacement,
     template_dir,
 )
 from fecompiler.cli.project.params import (
@@ -61,6 +63,7 @@ from fecompiler.resources import (
     tool_entry_health,
 )
 from fecompiler.utility.atomic_write import atomic_write_json
+from fecompiler.utility.workspace_lock import workspace_lock_owner
 
 _FLOW_STEPS = ("prepare", "review", "elab", "lint", "sim")
 _LOG_TAIL_MAX_BYTES = 4 * 1024 * 1024
@@ -464,7 +467,8 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
-    if os.path.lexists(run_dir):
+    replacing = os.path.lexists(run_dir)
+    if replacing:
         if not command_input.overwrite:
             return CommandResult.err(
                 [
@@ -489,7 +493,6 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                     )
                 ]
             )
-        shutil.rmtree(run_dir)
     elif not resolves_as_spelled(run_dir, context.project_dir):
         return CommandResult.err(
             [
@@ -501,21 +504,31 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
+    # A replacement is built beside the run it replaces and swapped in only
+    # once complete, so a failure here leaves the previous run untouched.
+    build_dir = run_dir
     owns_run = False
     try:
-        clone_workspace_template(str(context.template_dir), run_dir)
+        if replacing:
+            build_dir = stage_workspace_replacement(
+                str(context.template_dir), run_dir
+            )
+        else:
+            clone_workspace_template(str(context.template_dir), run_dir)
         owns_run = True
         _, changed = apply_project_overrides(
-            run_dir,
+            build_dir,
             config_directory=context.config_dir,
             extra_overrides=overrides,
         )
         if overrides:
-            provenance = Path(run_dir) / "home" / "cli-param-overrides.json"
+            provenance = Path(build_dir) / "home" / "cli-param-overrides.json"
             atomic_write_json(provenance, overrides)
+        if replacing:
+            publish_workspace_replacement(build_dir, run_dir)
     except FileExistsError as error:
         if owns_run:
-            shutil.rmtree(run_dir, ignore_errors=True)
+            shutil.rmtree(build_dir, ignore_errors=True)
             return CommandResult.err(
                 [
                     error_record(
@@ -538,7 +551,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
         )
     except (OSError, TypeError, ValueError) as error:
         if owns_run:
-            shutil.rmtree(run_dir, ignore_errors=True)
+            shutil.rmtree(build_dir, ignore_errors=True)
         return CommandResult.err(
             [
                 error_record(
@@ -797,32 +810,46 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         return CommandResult.err(
             [error_record(str(error), workspace=context.workspace_dir)]
         )
-    records: list[dict[str, object]] = [
-        {
-            "kind": "workspace",
-            "project": context.project_dir if not context.workspace_mode else None,
-            "run": None if context.workspace_mode else (context.run_id or "default"),
-            "workspace": context.workspace_dir,
-            "design": workspace.get("design", ""),
-            "top_module": workspace.get("top_module", ""),
-        }
-    ]
+    # A step stays "ongoing" on disk when its command is killed. The workspace
+    # lock tells a flow that is really running from one that died.
+    owner = workspace_lock_owner(context.workspace_dir)
+    summary: dict[str, object] = {
+        "kind": "workspace",
+        "project": context.project_dir if not context.workspace_mode else None,
+        "run": None if context.workspace_mode else (context.run_id or "default"),
+        "workspace": context.workspace_dir,
+        "design": workspace.get("design", ""),
+        "top_module": workspace.get("top_module", ""),
+        "running": owner is not None,
+    }
+    if owner is not None:
+        summary["owner_pid"] = owner.get("pid")
+    records: list[dict[str, object]] = [summary]
     steps = flow.get("steps", []) if isinstance(flow, dict) else []
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
+        state = normalize_state(step.get("state"))
+        if state == "ongoing" and owner is None:
+            state = "interrupted"
+            summary["resume_cmd"] = disclosure_cmd(
+                "ecc-fe run --resume", context.workspace_dir
+            )
         records.append(
             {
                 "kind": "step",
                 "index": index,
                 "step": str(step.get("name", "")),
                 "tool": str(step.get("tool", "")),
-                "state": normalize_state(step.get("state")),
+                "state": state,
                 "runtime": step.get("runtime", ""),
                 "peak_memory_mb": step.get("peak memory (mb)", 0),
             }
         )
-    failed = any(record.get("state") in {"incomplete", "invalid"} for record in records)
+    failed = any(
+        record.get("state") in {"incomplete", "invalid", "interrupted"}
+        for record in records
+    )
     return CommandResult.err(records) if failed else CommandResult.ok(records)
 
 

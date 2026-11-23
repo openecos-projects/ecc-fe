@@ -86,13 +86,43 @@ def workspace_lock(directory: str | Path) -> Iterator[None]:
                 _release(held.descriptor)
 
 
+def workspace_lock_owner(directory: str | Path) -> dict[str, Any] | None:
+    """Return the owner record of a different command holding *directory*.
+
+    ``None`` means no other command owns the workspace. This is a read-only
+    probe for inspection commands: it never creates the lock file and never
+    keeps the lock.
+    """
+    path = _resolved(directory)
+    with _guard:
+        held = _held.get(str(path))
+    if held is not None:
+        if held.thread_id == threading.get_ident():
+            return None
+        return {"pid": os.getpid()}
+    if fcntl is None:
+        return None
+    for candidate in _lock_candidates(path):
+        try:
+            descriptor = os.open(candidate, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in {errno.EAGAIN, errno.EACCES}:
+                return _read_owner(descriptor)
+            raise
+        else:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+    return None
+
+
 def workspace_is_busy(directory: str | Path) -> bool:
     """Report whether a different command currently owns *directory*."""
-    try:
-        with workspace_lock(directory):
-            return False
-    except WorkspaceBusyError:
-        return True
+    return workspace_lock_owner(directory) is not None
 
 
 def _resolved(directory: str | Path) -> Path:
@@ -126,9 +156,9 @@ def _open_lock_file(path: Path) -> int | None:
     """
     if not path.parent.is_dir():
         return None
-    candidates = [workspace_lock_path(path)]
-    if path.is_dir():
-        candidates.append(path / ".ecc-fe.lock")
+    candidates = _lock_candidates(path)
+    if not path.is_dir():
+        candidates = candidates[:1]
     for candidate in candidates:
         try:
             return os.open(candidate, os.O_RDWR | os.O_CREAT, 0o644)
@@ -136,6 +166,10 @@ def _open_lock_file(path: Path) -> int | None:
             if error.errno not in _UNWRITABLE:
                 raise
     return None
+
+
+def _lock_candidates(path: Path) -> list[Path]:
+    return [workspace_lock_path(path), path / ".ecc-fe.lock"]
 
 
 def _write_owner(descriptor: int) -> None:
@@ -167,5 +201,6 @@ __all__ = [
     "WorkspaceBusyError",
     "workspace_is_busy",
     "workspace_lock",
+    "workspace_lock_owner",
     "workspace_lock_path",
 ]

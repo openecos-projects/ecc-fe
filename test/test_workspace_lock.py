@@ -20,6 +20,7 @@ from fecompiler.utility.workspace_lock import (
     WorkspaceBusyError,
     workspace_is_busy,
     workspace_lock,
+    workspace_lock_owner,
     workspace_lock_path,
 )
 
@@ -208,3 +209,47 @@ def test_load_recovers_running_steps_only_when_no_owner_is_alive(tmp_path) -> No
     dead = workspace_application.execute_payload("load", {"directory": str(directory)})
     assert dead.data["recovered_stale_ongoing"] is True
     assert _first_step_state(flow_path) == "Incomplete"
+
+
+def test_owner_probe_is_read_only(tmp_path) -> None:
+    directory = _workspace(tmp_path)
+
+    assert workspace_lock_owner(directory) is None
+    assert not workspace_lock_path(directory).exists()
+
+    with _held_by_another_process(directory) as holder:
+        assert workspace_lock_owner(directory)["pid"] == holder.pid
+
+
+def _status(capsys, directory: Path) -> tuple[int, list[dict[str, object]]]:
+    exit_code = cli_main.run(["status", "--workspace", str(directory), "--json"])
+    return exit_code, json.loads(capsys.readouterr().out)["records"]
+
+
+def test_status_tells_a_running_step_from_an_interrupted_one(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    for name in ("XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / name.lower()))
+    directory = _workspace(tmp_path)
+    flow_path = _mark_first_step_ongoing(directory)
+    stored = flow_path.read_text(encoding="utf-8")
+
+    with _held_by_another_process(directory) as holder:
+        running_exit, running = _status(capsys, directory)
+    interrupted_exit, interrupted = _status(capsys, directory)
+
+    assert running_exit == 0
+    assert running[0]["running"] is True
+    assert running[0]["owner_pid"] == holder.pid
+    assert "resume_cmd" not in running[0]
+    assert running[1]["state"] == "ongoing"
+
+    assert interrupted_exit == 1
+    assert interrupted[0]["running"] is False
+    assert "owner_pid" not in interrupted[0]
+    assert interrupted[0]["resume_cmd"] == (
+        f"ecc-fe run --resume --workspace {directory}"
+    )
+    assert interrupted[1]["state"] == "interrupted"
+    assert flow_path.read_text(encoding="utf-8") == stored

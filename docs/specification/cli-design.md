@@ -94,6 +94,16 @@ Inspection commands (`status`, `log`, `config`, `report`) do not take the lock
 and remain usable while a flow is running. Steps left in the running state are
 reset by recovery only when no live command holds the lock.
 
+`status` probes the lock without taking it. Its workspace record carries
+`running` and, while a command owns the workspace, `owner_pid`. A step stored
+as running whose owner is gone is reported as `state=interrupted`; the
+workspace record then carries `resume_cmd` and the command exits with status
+`1`. `status` never rewrites the stored state.
+
+`run --overwrite` builds the replacement run beside the existing one and swaps
+it in only after it is complete. If the template, the parameter overrides, or
+the copy fails, the previous run is left untouched.
+
 Workspace and project state files (`home/*.json`, `ecc-fe.toml`, step
 `subflow.json` and `checklist.json`) are replaced atomically: an interrupted
 write leaves the previous complete file.
