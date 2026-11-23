@@ -88,6 +88,7 @@ class EngineFlow:
     def clear_states(self) -> None:
         for step in self.flow.get("steps", []):
             self._clear_step_qor(step)
+            self._reset_step_config(step)
             step["state"] = StateEnum.Unstart.value
             step["runtime"] = ""
             step["peak memory (mb)"] = 0
@@ -427,6 +428,7 @@ class EngineFlow:
         )
         if already_stale:
             return False
+        self._reset_step_config(step)
         step["state"] = StateEnum.Unstart.value
         step["runtime"] = ""
         step["peak memory (mb)"] = 0
@@ -434,6 +436,11 @@ class EngineFlow:
         step["info"] = info
         step.pop("provenance", None)
         return True
+
+    def _reset_step_config(self, step: dict[str, Any]) -> None:
+        builder.reset_step_config(
+            Path(self.workspace["directory"]) / f"{step['name']}_{step['tool']}"
+        )
 
     def _clear_step_qor(self, step: dict[str, Any]) -> None:
         clear_step_qor(

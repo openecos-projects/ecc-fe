@@ -101,9 +101,30 @@ def build_step_space(step: dict[str, Any]) -> None:
 
 
 def build_step_config(step: dict[str, Any]) -> None:
-    """Write initial JSON stubs for subflow and checklist."""
-    _write_json(step["subflow"]["path"], {"steps": []})
-    _write_json(step["checklist"]["path"], {"path": step["checklist"]["path"], "checklist": []})
+    """Create the subflow and checklist files of a step that has none yet.
+
+    Existing files hold the stages recorded by the step's last execution and
+    are left untouched, so loading a workspace never erases them.
+    """
+    for path, initial in _initial_step_config(Path(step["subflow"]["path"]).parent):
+        if not path.exists():
+            _write_json(str(path), initial)
+
+
+def reset_step_config(step_dir: Path) -> None:
+    """Discard the recorded stages of a step whose result was invalidated."""
+    if not step_dir.is_dir():
+        return
+    for path, initial in _initial_step_config(step_dir):
+        _write_json(str(path), initial)
+
+
+def _initial_step_config(step_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
+    checklist = step_dir / "checklist.json"
+    return [
+        (step_dir / "subflow.json", {"steps": []}),
+        (checklist, {"path": str(checklist), "checklist": []}),
+    ]
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
