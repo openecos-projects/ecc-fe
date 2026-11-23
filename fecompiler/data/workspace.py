@@ -230,10 +230,12 @@ def create_workspace(spec: CreateWorkspaceData) -> dict[str, Any]:
 def load_workspace(directory: str) -> dict[str, Any] | None:
     """Load an existing workspace from disk."""
     project_dir = Path(directory).expanduser().resolve()
-    if not project_dir.exists():
+    params_path  = project_dir / "home" / "parameters.json"
+    # parameters.json is what makes a directory a workspace. Without this
+    # check any existing directory would load and be scaffolded as one.
+    if not params_path.is_file():
         return None
 
-    params_path  = project_dir / "home" / "parameters.json"
     flow_path    = project_dir / "home" / "flow.json"
     home_path    = project_dir / "home" / "home.json"
     origin_dir   = project_dir / "origin"

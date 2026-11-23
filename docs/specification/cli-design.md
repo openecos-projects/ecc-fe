@@ -108,6 +108,17 @@ Workspace and project state files (`home/*.json`, `ecc-fe.toml`, step
 `subflow.json` and `checklist.json`) are replaced atomically: an interrupted
 write leaves the previous complete file.
 
+## Workspace Queries
+
+A directory is a workspace only if it contains `home/parameters.json`. Every
+operation, including the JSON-RPC ones, refuses any other directory and leaves
+it untouched.
+
+Loading or querying a workspace keeps each step's recorded stages
+(`subflow.json`) and checklist. They are reset only when the step's result is
+invalidated: by `reset-flow`, a full rerun, or a stale upstream. `get-info` and
+`get-home` create no files or directories.
+
 ## Tool Execution
 
 Every external tool a step runs (Slang, Verilator, the simulator binary, test

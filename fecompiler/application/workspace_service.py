@@ -978,7 +978,9 @@ def _refresh_prepare_if_stale(
 
 
 def _get_info(args: argparse.Namespace) -> CliResult:
-    workspace, engine = _load_runtime(args.directory, cmd="get_info")
+    workspace, engine = _load_runtime(
+        args.directory, cmd="get_info", create_step_workspaces=False
+    )
     _repair_workspace_sim_defaults(workspace)
     step_name = str(args.step).strip()
     info_id = str(args.id).strip()
@@ -1045,6 +1047,8 @@ def _load_runtime(
     engine = _build_engine(workspace)
     if create_step_workspaces:
         engine.create_step_workspaces()
+    else:
+        engine.load()
     return workspace, engine
 
 
