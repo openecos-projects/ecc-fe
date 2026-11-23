@@ -44,6 +44,17 @@ def resolve_run_dir(
     return str(runs / run_id), run_id
 
 
+def enclosing_project(workspace_dir: str) -> str | None:
+    """Return the project a workspace belongs to as one of its runs, if any."""
+    path = Path(workspace_dir).expanduser().resolve()
+    if path.parent.name != "runs":
+        return None
+    project = path.parent.parent
+    if (project / TEMPLATE_RELATIVE).is_dir() and (project / "ecc-fe.toml").is_file():
+        return str(project)
+    return None
+
+
 def template_dir(project_dir: str) -> str:
     return str(Path(project_dir) / TEMPLATE_RELATIVE)
 
