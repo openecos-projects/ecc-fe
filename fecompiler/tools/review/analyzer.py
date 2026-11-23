@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fecompiler.tools.common.filelist import read_complete_filelist
 from fecompiler.tools.common.rtl_ownership import (
     is_actionable_rtl_ownership,
     rtl_ownership_map,
@@ -272,13 +273,11 @@ def _filelist_rtl_files(filelist: str) -> list[str]:
     collected: list[str] = []
     seen: set[str] = set()
     try:
-        from fecompiler.tools.prepare.runner import PrepareStep
-
-        parsed = PrepareStep._parse_sv_filelist(filelist)
+        parsed = read_complete_filelist(filelist)
     except Exception:
         return collected
 
-    for raw in parsed.get("rtl_files", []):
+    for raw in parsed.sources:
         text = str(raw)
         if text in seen:
             continue

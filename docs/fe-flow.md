@@ -196,6 +196,17 @@ sequenceDiagram
     Sim-->>WS: output/cases/case/log.txt, wave.vcd, cases.json
 ```
 
+## filelist 格式
+
+所有读取 filelist 的地方（prepare、review、目录校验、源码指纹、工作区创建）都使用
+`fecompiler/tools/common/filelist.py` 这一个解析器，规则只有一份：
+
+- 一行可以写多个条目，支持引号和 `#` 注释；以 `#`、`//`、反引号开头的整行是注释。
+- 嵌套 filelist：`-f X`、`-F X`、`-fX`、`-FX`，相对路径以写出它的那个 filelist 所在目录为基准。
+- `+incdir+a+b`、`+define+A+B=1`。
+- 按后缀识别 RTL：编译单元 `.v`/`.sv`，头文件 `.vh`/`.svh`；其余选项忽略。
+- 校验类命令把找不到的文件列为问题；prepare 等实际编译前的读取遇到缺失文件直接失败。
+
 ## Step 注册表
 
 每个步骤在 `fecompiler/allflow/steps.py` 里有且只有一条 `StepDefinition`，记录：

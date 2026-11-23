@@ -19,6 +19,7 @@ from fecompiler.application.values import (
     _optional_text,
     _resolve_path,
 )
+from fecompiler.tools.common.filelist import read_complete_filelist
 from fecompiler.tools.common.rtl_inputs import write_generated_rtl_filelist
 from fecompiler.tools.common.sv_module import is_simple_sv_identifier
 
@@ -389,17 +390,15 @@ def _validate_generic_create_request(normalized: dict[str, Any]) -> None:
     if normalized.get("origin_verilog"):
         rtl_files.append(str(normalized["origin_verilog"]))
     if normalized.get("filelist"):
-        from fecompiler.tools.prepare.runner import PrepareStep
-
         try:
-            parsed = PrepareStep._parse_sv_filelist(str(normalized["filelist"]))
+            parsed = read_complete_filelist(str(normalized["filelist"]))
         except (OSError, ValueError) as exc:
             raise WorkspaceCliError(
                 "create_workspace",
                 "failed",
                 f"invalid generic RTL filelist: {exc}",
             ) from exc
-        rtl_files.extend(str(path) for path in parsed["rtl_files"])
+        rtl_files.extend(str(path) for path in parsed.sources)
     invalid = [
         path
         for path in rtl_files

@@ -25,6 +25,7 @@ from fecompiler.application.values import (
 )
 from fecompiler.data.step import StateEnum
 from fecompiler.engine.flow import EngineFlow
+from fecompiler.tools.common.filelist import read_complete_filelist
 from fecompiler.utility.json import json_write
 
 
@@ -878,10 +879,7 @@ def _collect_cpu_filelist_sources(cpu_filelist: str) -> list[Path]:
         return []
 
     try:
-        from fecompiler.tools.prepare.runner import PrepareStep
-
-        parsed = PrepareStep._parse_sv_filelist(str(filelist_path))
-        raw_files = parsed.get("rtl_files", []) if isinstance(parsed, dict) else []
+        raw_files = read_complete_filelist(filelist_path).sources
     except Exception:
         return []
 

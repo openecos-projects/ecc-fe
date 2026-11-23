@@ -12,8 +12,11 @@ understands:
 
 Relative paths are resolved against the directory of the filelist that names
 them, and paths under ``thirdparty/`` follow managed resources. Every other
-option is ignored. Parsing never raises for a missing file: anything that
-cannot be found is reported in :attr:`Filelist.missing`.
+option is ignored.
+
+:func:`parse_filelist` never raises for a missing file: anything that cannot
+be found is reported in :attr:`Filelist.missing`. :func:`read_complete_filelist`
+is the strict form used when the design is about to be compiled.
 """
 
 from __future__ import annotations
@@ -68,6 +71,23 @@ def parse_filelist(path: str | Path) -> Filelist:
         incdirs=tuple(collected.incdirs),
         defines=tuple(collected.defines),
     )
+
+
+def read_complete_filelist(path: str | Path) -> Filelist:
+    """Parse *path* for compilation: every file it lists must exist.
+
+    Raises ``FileNotFoundError`` naming what is missing. Validation code that
+    wants to report problems instead uses :func:`parse_filelist`.
+    """
+    parsed = parse_filelist(path)
+    if not parsed.filelists:
+        raise FileNotFoundError(f"filelist not found: {parsed.path}")
+    if parsed.missing:
+        listed = ", ".join(str(item) for item in parsed.missing)
+        raise FileNotFoundError(
+            f"files listed in {parsed.path} were not found: {listed}"
+        )
+    return parsed
 
 
 def filelist_tokens(raw_line: str) -> list[str]:
@@ -170,4 +190,5 @@ __all__ = [
     "filelist_tokens",
     "is_rtl_path_token",
     "parse_filelist",
+    "read_complete_filelist",
 ]

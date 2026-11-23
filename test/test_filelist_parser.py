@@ -5,11 +5,14 @@ from pathlib import Path
 import pytest
 
 from fecompiler.catalog import cpu_filelist_supports_difftest
+from fecompiler.data.workspace import CreateWorkspaceData, create_workspace
 from fecompiler.tools.common.filelist import (
     filelist_tokens,
     is_rtl_path_token,
     parse_filelist,
+    read_complete_filelist,
 )
+from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.prepare.runner import PrepareStep
 
 
@@ -117,25 +120,95 @@ def test_difftest_capability_reads_defines_through_nested_filelists(tmp_path) ->
     assert cpu_filelist_supports_difftest(plain) is False
 
 
-def test_agrees_with_the_prepare_step_on_one_entry_per_line_filelists(tmp_path) -> None:
-    """Prepare still has its own reader; both must see the same design."""
+def _design(tmp_path: Path) -> Path:
     _write(tmp_path / "rtl" / "a.sv")
     _write(tmp_path / "rtl" / "b.v")
     _write(tmp_path / "rtl" / "pkg.svh", "`define P 1\n")
     _write(tmp_path / "sub" / "c.sv")
     _write(tmp_path / "sub" / "sub.f", "+incdir+inc\n+define+SUB=2\nc.sv\n")
-    filelist = _write(
+    return _write(
         tmp_path / "rtl" / "top.f",
-        "+incdir+include\n+define+TOP\na.sv\nb.v\npkg.svh\n-f ../sub/sub.f\n",
+        "+incdir+include\n+define+TOP\na.sv b.v\npkg.svh\n-f../sub/sub.f\n",
     )
+
+
+def test_prepare_reads_what_validation_reads(tmp_path) -> None:
+    """Two entries on one line and an attached -f used to be dropped by prepare."""
+    filelist = _design(tmp_path)
 
     shared = parse_filelist(filelist)
     prepared = PrepareStep._parse_sv_filelist(str(filelist))
 
-    assert [str(path) for path in shared.sources] == [
-        str(path) for path in prepared["rtl_files"]
+    assert prepared["rtl_files"] == [
+        tmp_path / "rtl" / "a.sv",
+        tmp_path / "rtl" / "b.v",
+        tmp_path / "sub" / "c.sv",
     ]
-    assert [str(path) for path in shared.incdirs] == [
-        str(path) for path in prepared["incdirs"]
-    ]
-    assert list(shared.defines) == prepared["defines"]
+    assert prepared["rtl_files"] == list(shared.sources)
+    assert prepared["incdirs"] == [tmp_path / "rtl" / "include", tmp_path / "sub" / "inc"]
+    assert prepared["defines"] == ["TOP", "SUB=2"]
+    assert tmp_path / "rtl" / "pkg.svh" in shared.files
+
+
+def test_prepare_refuses_a_filelist_with_missing_entries(tmp_path) -> None:
+    filelist = _design(tmp_path)
+    (tmp_path / "sub" / "c.sv").unlink()
+
+    with pytest.raises(FileNotFoundError, match="were not found: .*c.sv"):
+        PrepareStep._parse_sv_filelist(str(filelist))
+    with pytest.raises(FileNotFoundError, match="filelist not found"):
+        read_complete_filelist(tmp_path / "absent.f")
+
+
+def test_fingerprint_covers_nested_filelists_headers_and_every_entry(tmp_path) -> None:
+    filelist = _design(tmp_path)
+    workspace = {"cpu_filelist": str(filelist)}
+
+    def fingerprint() -> str:
+        return workspace_input_fingerprint(workspace)["cpu_filelist_content_sha256"]
+
+    baseline = fingerprint()
+    assert fingerprint() == baseline
+
+    seen = {baseline}
+    for changed in ("rtl/b.v", "rtl/pkg.svh", "sub/c.sv", "sub/sub.f"):
+        path = tmp_path / changed
+        path.write_text(path.read_text(encoding="utf-8") + "// edit\n", encoding="utf-8")
+        current = fingerprint()
+        assert current not in seen, changed
+        seen.add(current)
+
+
+def test_workspace_creation_keeps_incdirs_defines_and_colliding_names(tmp_path) -> None:
+    source = tmp_path / "src"
+    _write(source / "a" / "core.sv", "module core_a; endmodule\n")
+    _write(source / "b" / "core.sv", "module core_b; endmodule\n")
+    _write(source / "a" / "defs.svh", "`define D 1\n")
+    _write(source / "nested" / "leaf.sv")
+    _write(source / "nested" / "leaf.f", "leaf.sv\n")
+    filelist = _write(
+        source / "design.f",
+        "+incdir+a\n+define+SYNTH\na/core.sv b/core.sv\na/defs.svh\n-F nested/leaf.f\n",
+    )
+
+    workspace = create_workspace(
+        CreateWorkspaceData(
+            directory=str(tmp_path / "workspace"),
+            parameters={"Design": "demo", "Top module": "core_a"},
+            filelist=str(filelist),
+        ),
+    )
+    assert workspace is not None
+    origin = tmp_path / "workspace" / "origin"
+
+    rewritten = parse_filelist(origin / "design.f")
+    assert rewritten.missing == ()
+    assert rewritten.defines == ("SYNTH",)
+    assert rewritten.incdirs == (origin, source / "a")
+    assert rewritten.sources == (
+        origin / "core.sv",
+        source / "b" / "core.sv",
+        origin / "leaf.sv",
+    )
+    assert (origin / "core.sv").read_text(encoding="utf-8") == "module core_a; endmodule\n"
+    assert (origin / "defs.svh").is_file()

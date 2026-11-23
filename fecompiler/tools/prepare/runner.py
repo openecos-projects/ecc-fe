@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.fe.base import BaseStep
+from fecompiler.tools.common.filelist import read_complete_filelist
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.common.rtl_ownership import classify_rtl_source, ownership_summary
 from fecompiler.tools.common.sv_module import (
@@ -19,7 +19,6 @@ from fecompiler.tools.common.sv_module import (
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
-from fecompiler.resources import resolve_thirdparty_path
 from fecompiler.utility.json import json_read, json_write
 
 
@@ -577,83 +576,13 @@ class PrepareStep(BaseStep):
 
 
     @staticmethod
-    def _parse_sv_filelist(filelist_path: str, visited: set[str] | None = None) -> dict[str, list[Any]]:
-        path = Path(filelist_path).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"filelist not found: {path}")
-
-        if visited is None:
-            visited = set()
-        canonical = str(path)
-        if canonical in visited:
-            return {
-                "rtl_files": [],
-                "incdirs": [],
-                "defines": [],
-            }
-        visited.add(canonical)
-
-        base = path.parent
-        resolved: list[Path] = []
-        incdirs: list[Path] = []
-        defines: list[str] = []
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith(("#", "//", "`")):
-                continue
-            try:
-                parts = shlex.split(line, comments=True, posix=True)
-            except ValueError as exc:
-                raise ValueError(f"invalid filelist entry in {path}: {line}") from exc
-            option = parts[0] if parts else ""
-            if option in ("-f", "-F"):
-                nested_ref = parts[1].strip() if len(parts) > 1 else ""
-                if not nested_ref:
-                    continue
-                nested_ref = nested_ref.strip("\"'")
-                nested_path = Path(nested_ref) if Path(nested_ref).is_absolute() else base / nested_ref
-                nested_path = resolve_thirdparty_path(nested_path)
-                nested = PrepareStep._parse_sv_filelist(str(nested_path), visited)
-                resolved.extend(nested["rtl_files"])
-                incdirs.extend(nested["incdirs"])
-                defines.extend(nested["defines"])
-                continue
-            if line.startswith("+incdir+"):
-                payload = line.removeprefix("+incdir+").strip()
-                if not payload:
-                    continue
-                for inc in [x for x in payload.split("+") if x]:
-                    inc = inc.strip("\"'")
-                    if not inc:
-                        continue
-                    inc_path = Path(inc) if Path(inc).is_absolute() else base / inc
-                    incdirs.append(resolve_thirdparty_path(inc_path))
-                continue
-            if line.startswith("+define+"):
-                payload = line.removeprefix("+define+").strip()
-                if not payload:
-                    continue
-                for define in [x for x in payload.split("+") if x]:
-                    define = define.strip()
-                    if define:
-                        defines.append(define)
-                continue
-            if line.startswith("+") or line.startswith("-"):
-                continue
-            token = option.strip("\"'")
-            if not (token.endswith(".v") or token.endswith(".sv")):
-                continue
-
-            src = Path(token) if Path(token).is_absolute() else base / token
-            src = resolve_thirdparty_path(src)
-            if not src.exists():
-                raise FileNotFoundError(f"RTL source not found in {path}: {line}")
-            resolved.append(src)
-
+    def _parse_sv_filelist(filelist_path: str) -> dict[str, list[Any]]:
+        """Read one filelist tree; every listed file must exist."""
+        parsed = read_complete_filelist(filelist_path)
         return {
-            "rtl_files": resolved,
-            "incdirs": incdirs,
-            "defines": defines,
+            "rtl_files": list(parsed.sources),
+            "incdirs": list(parsed.incdirs),
+            "defines": list(parsed.defines),
         }
 
     @staticmethod

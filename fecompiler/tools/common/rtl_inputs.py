@@ -8,6 +8,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from fecompiler.tools.common.filelist import parse_filelist
 from fecompiler.utility.json import json_read
 
 
@@ -58,45 +59,9 @@ def _input_content_sha256(field: str, path_text: str) -> str:
 
 
 def _filelist_tree_sha256(root: Path) -> str:
-    files: list[Path] = []
-    visited: set[Path] = set()
-
-    def visit(filelist: Path) -> None:
-        path = filelist.expanduser().resolve()
-        if path in visited:
-            return
-        visited.add(path)
-        files.append(path)
-        if not path.is_file():
-            return
-        try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except OSError:
-            return
-        for raw_line in lines:
-            try:
-                tokens = shlex.split(raw_line, comments=True, posix=True)
-            except ValueError:
-                tokens = raw_line.split()
-            if not tokens:
-                continue
-            if tokens[0] in {"-f", "-F"} and len(tokens) > 1:
-                visit(_resolve_filelist_path(path.parent, tokens[1]))
-                continue
-            if (tokens[0].startswith("-f") or tokens[0].startswith("-F")) and len(tokens[0]) > 2:
-                visit(_resolve_filelist_path(path.parent, tokens[0][2:]))
-                continue
-            token = tokens[0].strip("\"'")
-            if Path(token).suffix.lower() in {".v", ".sv", ".vh", ".svh"}:
-                files.append(_resolve_filelist_path(path.parent, token))
-
-    visit(root)
-    return _files_sha256(files)
-
-
-def _resolve_filelist_path(base: Path, value: str) -> Path:
-    path = Path(value.strip("\"'")).expanduser()
-    return path.resolve() if path.is_absolute() else (base / path).resolve()
+    """Hash a filelist, every filelist it nests, and every RTL file they list."""
+    parsed = parse_filelist(root)
+    return _files_sha256([*parsed.filelists, *parsed.files, *parsed.missing])
 
 
 def rtl_sources_provide_difftest_adapter(sources: list[str | Path]) -> bool:
@@ -205,13 +170,7 @@ def rtl_files(workspace: dict[str, Any]) -> list[str]:
 
     filelist = workspace.get("input_filelist", "")
     if filelist and Path(filelist).exists():
-        return [
-            line.strip()
-            for line in Path(filelist).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-            and not line.strip().startswith(("#", "//"))
-            and (line.strip().endswith(".v") or line.strip().endswith(".sv"))
-        ]
+        return [str(path) for path in parse_filelist(filelist).sources]
 
     verilog = workspace.get("origin_verilog", "")
     if verilog and Path(verilog).exists():
