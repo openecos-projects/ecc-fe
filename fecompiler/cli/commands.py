@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import codecs
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from fecompiler.allflow.steps import find_step_definition, step_directory, step_names
+from fecompiler.application.events import workspace_event_sink
 from fecompiler.application.workspace_service import workspace_application
 from fecompiler.catalog import check_catalog_contracts
 from fecompiler.cli.core.inputs import (
@@ -27,7 +30,7 @@ from fecompiler.cli.core.inputs import (
 )
 from fecompiler.cli.core.locking import with_workspace_lock
 from fecompiler.cli.core.records import disclosure_cmd, error_record, normalize_state
-from fecompiler.cli.core.types import CommandContext, CommandResult
+from fecompiler.cli.core.types import CommandContext, CommandResult, OutputMode
 from fecompiler.cli.project.config import (
     ProjectConfig,
     ProjectConfigError,
@@ -51,6 +54,7 @@ from fecompiler.cli.project.params import (
     parse_cli_overrides,
     run_parameter_records,
 )
+from fecompiler.cli.rendering.progress import RunProgress
 from fecompiler.cli.resource_manager import ResourceManager, ResourceManagerError
 from fecompiler.cli.workspace_access import (
     load_existing_workspace,
@@ -308,7 +312,7 @@ def _run_workspace(
         project_config = None
     changed: list[str] = []
     only = selection.only
-    result = _execute_selection(selection, context.workspace_dir)
+    result = _execute_selection(selection, context.workspace_dir, context)
     record = {
         "kind": "run",
         "status": result.response,
@@ -406,7 +410,9 @@ def _run_selection(command_input: RunInput) -> _RunSelection | CommandResult:
     )
 
 
-def _execute_selection(selection: _RunSelection, directory: str):
+def _execute_selection(
+    selection: _RunSelection, directory: str, context: CommandContext
+):
     payload: dict[str, object] = {"directory": directory, "rerun": selection.rerun}
     if selection.only:
         payload["step"] = selection.only
@@ -415,9 +421,11 @@ def _execute_selection(selection: _RunSelection, directory: str):
             payload["from_step"] = selection.from_step
         if selection.to_step:
             payload["to_step"] = selection.to_step
-    return workspace_application.execute_payload(
-        "run-step" if selection.only else "run-flow", payload, base_dir=Path.cwd()
-    )
+    # Steps are reported as they start and finish, not only at the end.
+    with workspace_event_sink(RunProgress(context.output_mode)):
+        return workspace_application.execute_payload(
+            "run-step" if selection.only else "run-flow", payload, base_dir=Path.cwd()
+        )
 
 
 def _continue_project_run(
@@ -476,7 +484,7 @@ def _continue_project_run(
         return CommandResult.err([error_record(str(error), workspace=run_dir)])
     if workspace is None:
         return _workspace_not_found(context)
-    result = _execute_selection(selection, run_dir)
+    result = _execute_selection(selection, run_dir, context)
     record = {
         "kind": "run",
         "run": run_name,
@@ -656,7 +664,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
-    result = _execute_selection(selection, run_dir)
+    result = _execute_selection(selection, run_dir, context)
     record = {
         "kind": "run",
         "run": run_name,
@@ -992,6 +1000,24 @@ def log(command_input: CommandInput, context: CommandContext) -> CommandResult:
             [error_record(f"Unknown flow step: {command_input.step}")]
         )
     log_path = _step_log_path(Path(context.workspace_dir), command_input.step)
+    if command_input.follow:
+        if context.output_mode in {OutputMode.JSON, OutputMode.JSONL}:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "follow_requires_text_output",
+                        reason="--follow prints the log itself, not records",
+                    )
+                ],
+                exit_code=2,
+            )
+        live = _live_log_paths(Path(context.workspace_dir), command_input.step)
+        if (
+            any(path.is_file() for path in live)
+            or workspace_lock_owner(context.workspace_dir) is not None
+        ):
+            _follow_logs(live, command_input.lines, context.workspace_dir)
+            return CommandResult(rendered=True)
     if not log_path.is_file():
         return CommandResult.err(
             [
@@ -1021,6 +1047,84 @@ def log(command_input: CommandInput, context: CommandContext) -> CommandResult:
             }
         ]
     )
+
+
+def _live_log_paths(workspace: Path, step: str | None) -> list[Path]:
+    """Return the files a running flow or step writes its output to.
+
+    Lint and elaboration stream into the step's report log. Simulation streams
+    its build into the step's own log and writes the report log at the end.
+    """
+    primary = _step_log_path(workspace, step)
+    if step is None:
+        return [primary]
+    return [primary, _step_directory(workspace, step) / "log" / "log.txt"]
+
+
+def _follow_logs(
+    paths: list[Path],
+    line_count: int,
+    workspace_dir: str,
+    *,
+    poll_seconds: float = 0.2,
+) -> None:
+    """Print the end of the newest log, then whatever is appended to any of them.
+
+    Returns once no command holds the workspace and every file has been read
+    to its end, so following a finished run prints its tail and stops. A log
+    that is rewritten, as when a step starts over, is read from its beginning.
+    A header names the file whenever the output switches to another one.
+    """
+
+    def size_of(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+
+    def modified(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return -1.0
+
+    decoders = {
+        path: codecs.getincrementaldecoder("utf-8")(errors="replace") for path in paths
+    }
+    positions = {path: size_of(path) for path in paths}
+    current = max(paths, key=modified)
+    if current.is_file():
+        tail = _read_log_tail(current, line_count)
+        if tail:
+            sys.stdout.write("\n".join(tail) + "\n")
+            sys.stdout.flush()
+    try:
+        while True:
+            running = workspace_lock_owner(workspace_dir) is not None
+            progressed = False
+            for path in paths:
+                size = size_of(path)
+                if size < positions[path]:
+                    positions[path] = 0
+                if size <= positions[path]:
+                    continue
+                with path.open("rb") as stream:
+                    stream.seek(positions[path])
+                    chunk = stream.read(size - positions[path])
+                positions[path] += len(chunk)
+                if path != current:
+                    current = path
+                    sys.stdout.write(f"==> {path} <==\n")
+                sys.stdout.write(decoders[path].decode(chunk))
+                sys.stdout.flush()
+                progressed = True
+            if progressed:
+                continue
+            if not running:
+                return
+            time.sleep(poll_seconds)
+    except KeyboardInterrupt:
+        return
 
 
 def _read_log_tail(path: Path, line_count: int) -> list[str]:

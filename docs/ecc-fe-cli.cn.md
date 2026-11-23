@@ -84,6 +84,15 @@ ecc-fe run --resume
 `status` 只是提示，不会改动 run；真正的重跑发生在下一次 `run`，它会从第一个过期的步骤
 开始重跑。新建的 run 读到的也总是当前的文件。
 
+运行过程中 `ecc-fe run` 会在每个步骤开始和结束时输出一行进度；`--jsonl` 和 `--plain`
+下进度以 `kind=progress` 的记录逐行输出到 stdout，便于脚本边跑边读。另开一个终端可以
+跟随日志：
+
+```bash
+ecc-fe log sim --follow      # 打印日志末尾并持续输出新增内容，run 结束后自动退出
+ecc-fe log --follow          # 跟随整个流程的日志
+```
+
 在已有的 run 上迭代（改了 RTL 后只重跑需要的步骤）：
 
 ```bash

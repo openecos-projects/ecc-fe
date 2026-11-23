@@ -18,6 +18,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,12 @@ class WorkspaceApplicationService:
         request = dict(payload or {})
         resolved_base_dir = Path(base_dir or Path.cwd()).expanduser().resolve()
         normalized_command = _normalize_application_command(command)
-        with workspace_event_sink(event_sink), runtime_operation_marker(runtime_operation):
+        # A caller may already have installed a sink around this call; only an
+        # explicit one replaces it.
+        sink_scope = (
+            workspace_event_sink(event_sink) if event_sink is not None else nullcontext()
+        )
+        with sink_scope, runtime_operation_marker(runtime_operation):
             return self.call(
                 normalized_command,
                 lambda: _dispatch_payload(
