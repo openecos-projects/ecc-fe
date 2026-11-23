@@ -112,5 +112,6 @@ def execute_command(
         result = handler(command_input, context)
     except Exception as error:  # noqa: BLE001 - command boundaries return stable error records.
         result = CommandResult.err([error_record(str(error), command=command)])
-    render_result(command, result, context.output_mode)
+    if not result.rendered:
+        render_result(command, result, context.output_mode)
     raise typer.Exit(code=result.exit_code)

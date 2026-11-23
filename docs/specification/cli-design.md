@@ -308,6 +308,28 @@ Project mode creates a fresh run and refuses an existing target unless
 or a real ECC-FE workspace. Project roots, the `runs/` container, the internal
 template, symlink targets, and redirected paths are never replacement targets.
 
+### Progress While Running
+
+`run` reports each step when it starts and when it finishes, instead of
+staying silent until the flow ends.
+
+| Mode | Where | What |
+| --- | --- | --- |
+| text | stderr | `ecc-fe: lint started`, `ecc-fe: lint success (0.5s)` |
+| `--json` | stderr | the same lines; stdout stays one JSON document |
+| `--jsonl` | stdout | `progress` records, one per line, before the `run` record |
+| `--plain` | stdout | the same records as `key=value` lines |
+
+A `progress` record has `event` set to `step_started` (`step`, `tool`),
+`step_finished` (`step`, `state`, `elapsed_s`, `log`), or `stage` (`step`,
+`stage`, `state`). Stage records are written only in `--jsonl` and `--plain`.
+
+`ecc-fe log [step] --follow` prints the end of the log and then whatever is
+appended while a command holds the workspace, and returns when the run is over
+and the log is read to its end. For a step it follows both the report log and
+the step's own log, naming the file when the output switches. `--follow`
+writes the log itself, so it cannot be combined with `--json` or `--jsonl`.
+
 ### Inputs And Stale Results
 
 A project created by `ecc-fe init` refers to its RTL: `--rtl`, `--cpu-filelist`,

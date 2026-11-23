@@ -27,6 +27,8 @@ class CommandContext:
 class CommandResult:
     records: tuple[dict[str, object], ...] = field(default_factory=tuple)
     exit_code: int = 0
+    # True when the handler wrote its own output, as a followed log does.
+    rendered: bool = False
 
     @classmethod
     def ok(cls, records: list[dict[str, object]]) -> CommandResult:

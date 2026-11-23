@@ -325,6 +325,14 @@ def build_app() -> typer.Typer:
             str | None, typer.Option("--step", help="Frontend step log")
         ] = None,
         lines: Annotated[int, typer.Option("--lines", min=1, max=10000)] = 80,
+        follow: Annotated[
+            bool,
+            typer.Option(
+                "--follow",
+                "-f",
+                help="Keep printing the log while a run is in progress",
+            ),
+        ] = False,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -343,6 +351,7 @@ def build_app() -> typer.Typer:
                 run_id=run_id,
                 step=step,
                 lines=lines,
+                follow=follow,
             ),
             commands.log,
         )

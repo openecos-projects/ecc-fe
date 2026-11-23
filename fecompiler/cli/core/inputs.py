@@ -58,6 +58,7 @@ class StatusInput(CommandInput):
 class LogInput(CommandInput):
     step: str | None = None
     lines: int = 80
+    follow: bool = False
 
 
 @dataclass(frozen=True, slots=True)
