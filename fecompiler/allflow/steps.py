@@ -39,6 +39,8 @@ class StepDefinition:
     executables: tuple[str, ...] = ()
     # Environment checks `ecc-fe doctor --step <name>` performs.
     doctor_checks: tuple[str, ...] = ()
+    # True for the one step that produces the prepared inputs later steps read.
+    prepares_inputs: bool = False
 
     @property
     def directory_name(self) -> str:
@@ -79,6 +81,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
             "soc_wrapper_top",
         ),
         source_files=("tools/prepare/runner.py",),
+        prepares_inputs=True,
     ),
     StepDefinition(
         name="review",
@@ -165,6 +168,11 @@ def step_definition(name: str) -> StepDefinition:
         raise KeyError(f"unknown frontend flow step {name!r}; known steps: {known}") from None
 
 
+def input_preparation_step() -> StepDefinition:
+    """Return the step whose output every later step reads its inputs from."""
+    return next(definition for definition in _DEFINITIONS if definition.prepares_inputs)
+
+
 def step_directory(workspace_dir: str | Path, name: str) -> Path:
     """Return the directory of a registered step inside *workspace_dir*."""
     return step_definition(name).directory(workspace_dir)
@@ -178,6 +186,7 @@ def step_directory_suffixes() -> tuple[str, ...]:
 __all__ = [
     "StepDefinition",
     "find_step_definition",
+    "input_preparation_step",
     "is_step",
     "step_definition",
     "step_definitions",

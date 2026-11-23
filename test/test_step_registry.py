@@ -148,3 +148,71 @@ def test_doctor_checks_per_step() -> None:
     assert checks("lint") == ["verilator"]
     assert checks("sim") == ["verilator", "cxx", "make", "riscv"]
     assert checks(None) == ["slang", "verilator", "cxx", "make", "riscv", "yosys"]
+
+
+def test_application_step_tables_name_only_registered_steps() -> None:
+    from fecompiler.allflow.steps import input_preparation_step
+    from fecompiler.application import sim_config, step_detail
+
+    assert set(step_detail._STEP_DETAILS) == set(step_names())
+    assert set(step_detail._STEP_ARTIFACTS) <= set(step_names())
+    assert set(sim_config._STEP_RUN_SETUP) <= set(step_names())
+    assert input_preparation_step().name == "prepare"
+    assert [step.name for step in step_definitions() if step.prepares_inputs] == [
+        "prepare"
+    ]
+
+
+def test_run_setup_only_applies_to_steps_that_declare_it(monkeypatch) -> None:
+    from fecompiler.application import sim_config
+
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setitem(
+        sim_config._STEP_RUN_SETUP,
+        "sim",
+        lambda workspace, args: calls.append(("sim", args)) or True,
+    )
+
+    assert sim_config._prepare_step_run({}, "lint") is False
+    assert sim_config._prepare_step_run({}, "sim", "arguments") is True
+    assert calls == [("sim", "arguments")]
+
+
+def test_sim_run_setup_forces_a_rerun_only_for_a_named_suite(monkeypatch) -> None:
+    from argparse import Namespace
+
+    from fecompiler.application import sim_config
+
+    applied: list[object] = []
+    monkeypatch.setattr(
+        sim_config, "_apply_default_sim_smoke_suite", lambda ws: applied.append("smoke")
+    )
+    monkeypatch.setattr(
+        sim_config,
+        "_apply_sim_test_suite",
+        lambda ws, suite, mode, cases: applied.append((suite, mode, cases)),
+    )
+    monkeypatch.setattr(
+        sim_config,
+        "_apply_coremark_compile_options",
+        lambda ws, args: applied.append("coremark-options"),
+    )
+
+    def named(suite: str) -> Namespace:
+        return Namespace(
+            sim_test_suite=suite, sim_cpu_test_mode="selected", sim_cpu_test_case=["add"]
+        )
+
+    assert sim_config._configure_sim_run({}, None) is False
+    assert sim_config._configure_sim_run({}, named("")) is False
+    assert sim_config._configure_sim_run({}, named("Default")) is False
+    assert sim_config._configure_sim_run({}, named("cpu_tests")) is True
+    assert sim_config._configure_sim_run({}, named("CoreMark")) is True
+    assert applied == [
+        "smoke",
+        "smoke",
+        "smoke",
+        ("cpu_tests", "selected", ["add"]),
+        "coremark-options",
+        ("CoreMark", "selected", ["add"]),
+    ]

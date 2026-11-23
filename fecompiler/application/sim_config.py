@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -680,3 +681,38 @@ def _update_workspace_parameters(workspace: dict[str, Any], updates: dict[str, A
     parameters.update(updates)
     atomic_write_json(params_path, parameters)
     workspace.update(updates)
+
+
+def _configure_sim_run(workspace: dict[str, Any], args: argparse.Namespace | None) -> bool:
+    """Select the test suite of the next sim run; return True to force a rerun.
+
+    A named suite in *args* is applied and always re-executed. Otherwise the
+    default smoke suite is selected and an existing result may be reused.
+    """
+    suite_name = str(getattr(args, "sim_test_suite", "") or "").strip()
+    if suite_name and suite_name.lower() != "default":
+        if suite_name.lower() == "coremark":
+            _apply_coremark_compile_options(workspace, args)
+        _apply_sim_test_suite(
+            workspace,
+            suite_name,
+            args.sim_cpu_test_mode,
+            args.sim_cpu_test_case,
+        )
+        return True
+    _apply_default_sim_smoke_suite(workspace)
+    return False
+
+
+# Steps whose workspace settings are chosen just before they run.
+_STEP_RUN_SETUP: dict[str, Callable[[dict[str, Any], argparse.Namespace | None], bool]] = {
+    "sim": _configure_sim_run,
+}
+
+
+def _prepare_step_run(
+    workspace: dict[str, Any], step_name: str, args: argparse.Namespace | None = None
+) -> bool:
+    """Apply the pre-run setup of *step_name*; return True to force a rerun."""
+    setup = _STEP_RUN_SETUP.get(step_name)
+    return setup(workspace, args) if setup is not None else False
