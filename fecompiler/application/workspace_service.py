@@ -148,7 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--top", default="", help="Top module name")
     create.add_argument("--clock", default="", help="Clock port name")
     create.add_argument("--freq", type=float, default=None, help="Clock frequency in MHz")
-    create.add_argument("--origin-def", default="")
     create.add_argument("--origin-verilog", default="")
     create.add_argument("--filelist", default="")
     create.add_argument(
@@ -552,7 +551,6 @@ def _create_locked_workspace(
         directory=directory,
         frontend_design_kind=design_kind,
         parameters=parameters,
-        origin_def=str(normalized.get("origin_def", "")),
         origin_verilog=str(normalized.get("origin_verilog", "")),
         filelist=str(normalized.get("filelist", "")),
         cpu_filelist=str(normalized.get("cpu_filelist", "")),

@@ -1,4 +1,4 @@
-"""Step workspace builder — mirrors chipcompiler/tools/ecc/builder.py in ecos-studio/ecc."""
+"""Build the directory layout and path table of one flow step."""
 
 from __future__ import annotations
 
@@ -16,23 +16,11 @@ def build_step(
     workspace: dict[str, Any],
     step_name: str,
     tool: str,
-    input_def: str,
-    input_verilog: str,
-    output_def: str | None = None,
-    output_verilog: str | None = None,
-    output_gds: str | None = None,
 ) -> WorkspaceStep:
     """Return a WorkspaceStep for *step_name* inside *workspace*."""
     design = workspace["design"]
     step_dir = Path(workspace["directory"]) / step_directory_name(step_name, tool)
     sd = str(step_dir)
-
-    if output_def is None:
-        output_def = f"{sd}/output/{design}_{step_name}.def.gz"
-    if output_verilog is None:
-        output_verilog = f"{sd}/output/{design}_{step_name}.v"
-    if output_gds is None:
-        output_gds = f"{sd}/output/{design}_{step_name}.gds"
 
     return WorkspaceStep(
         name=step_name,
@@ -43,24 +31,12 @@ def build_step(
             "dir": f"{sd}/config",
             "flow": f"{sd}/config/flow_config.json",
         },
-        input={
-            "def":     input_def,
-            "verilog": input_verilog,
-        },
         output={
-            "dir":     f"{sd}/output",
-            "def":     output_def,
-            "verilog": output_verilog,
-            "gds":     output_gds,
-            "image":   f"{sd}/output/{design}_{step_name}.png",
-            "json":    f"{sd}/output/{design}_{step_name}.json",
+            "dir":  f"{sd}/output",
+            "json": f"{sd}/output/{design}_{step_name}.json",
         },
         data={
             "dir": f"{sd}/data",
-        },
-        feature={
-            "dir": f"{sd}/feature",
-            "step": f"{sd}/feature/{step_name}.step.json",
         },
         report={
             "dir": f"{sd}/report",
@@ -72,7 +48,6 @@ def build_step(
         },
         script={
             "dir":  f"{sd}/script",
-            "main": f"{sd}/script/{step_name}_main.tcl",
         },
         analysis={
             "dir":        f"{sd}/analysis",
@@ -80,7 +55,6 @@ def build_step(
             "qor_metrics": f"{sd}/analysis/qor_metrics.json",
             "qor_summary": f"{sd}/analysis/qor_summary.json",
             "qor_hotspots": f"{sd}/analysis/qor_hotspots.json",
-            "statis_csv": f"{sd}/analysis/{step_name}_statis.csv",
         },
         subflow={
             "path":  f"{sd}/subflow.json",
@@ -95,7 +69,7 @@ def build_step(
 
 def build_step_space(step: dict[str, Any]) -> None:
     """Create all directories for *step* on disk."""
-    for section in ("config", "output", "data", "feature", "report", "log", "script", "analysis"):
+    for section in ("config", "output", "data", "report", "log", "script", "analysis"):
         d = step.get(section, {}).get("dir", "")
         if d:
             os.makedirs(d, exist_ok=True)

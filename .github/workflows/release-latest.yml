@@ -79,6 +79,7 @@ jobs:
             test/test_data_workspace.py \
             test/test_examples.py \
             test/test_frontend_detail_snapshot.py \
+            test/test_no_backend_leftovers.py \
             test/test_qor_analysis.py \
             test/test_resource_manager.py \
             test/test_resources.py \

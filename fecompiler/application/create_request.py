@@ -25,7 +25,6 @@ from fecompiler.tools.common.sv_module import is_simple_sv_identifier
 
 _PATH_FIELDS = {
     "directory",
-    "origin_def",
     "origin_verilog",
     "filelist",
     "cpu_filelist",
@@ -59,7 +58,6 @@ def _create_request_from_args(args: argparse.Namespace) -> tuple[dict[str, Any],
     for arg_name, field in (
         ("directory", "directory"),
         ("design_kind", "frontend_design_kind"),
-        ("origin_def", "origin_def"),
         ("origin_verilog", "origin_verilog"),
         ("filelist", "filelist"),
         ("cpu_filelist", "cpu_filelist"),

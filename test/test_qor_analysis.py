@@ -26,8 +26,6 @@ def _step(tmp_path: Path, name: str, tool: str):
         workspace=workspace,
         step_name=name,
         tool=tool,
-        input_def="",
-        input_verilog="",
     )
     build_step_space(step)
     return workspace, step

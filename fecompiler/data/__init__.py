@@ -1,6 +1,6 @@
 """Data layer — workspace and step state management."""
 
-from .step import StateEnum, StepEnum, StepMetrics, load_metrics, save_metrics
+from .step import StateEnum
 from .workspace import (
     CreateWorkspaceData,
     WorkspaceStep,
@@ -12,10 +12,6 @@ from .workspace import (
 
 __all__ = [
     "StateEnum",
-    "StepEnum",
-    "StepMetrics",
-    "load_metrics",
-    "save_metrics",
     "CreateWorkspaceData",
     "WorkspaceStep",
     "create_workspace",

@@ -12,16 +12,17 @@
 
 ```text
 ecc-fe/
-├── fecompiler/                  # 核心库（对应 chipcompiler/）
+├── fecompiler/                  # 核心库
 │   ├── config.py                # 全局配置（DEFAULT_PROJECTS_ROOT）
-│   ├── allflow/                 # 流程步骤定义（对应 rtl2gds/）
-│   │   └── builder.py           # DEFAULT_FLOW_STEPS、build_allflow()
-│   ├── analysis/                # 步骤指标分析
-│   │   └── step.py              # StepMetricsBuilder
-│   ├── cli/                     # CLI 入口（对应 chipcompiler/cli/）
+│   ├── allflow/                 # 流程步骤定义
+│   │   ├── steps.py             # 步骤注册表（StepDefinition）
+│   │   ├── profile.py           # 各设计类型运行哪些步骤
+│   │   └── builder.py           # DEFAULT_FLOW_STEPS
+│   ├── analysis/                # QoR 分析
+│   ├── cli/                     # CLI 入口
 │   │   └── main.py
 │   ├── data/                    # 数据层
-│   │   ├── step.py              # StepEnum、StateEnum、StepMetrics
+│   │   ├── step.py              # StateEnum
 │   │   └── workspace.py         # WorkspaceStep、CreateWorkspaceData、create/load_workspace
 │   ├── engine/                  # 流程编排
 │   │   └── flow.py              # EngineFlow
@@ -29,7 +30,7 @@ ecc-fe/
 │   ├── tools/
 │   │   └── fe/                  # 步骤工作区构建器
 │   │       ├── builder.py       # build_step()、build_step_space()、build_step_config()
-│   │       ├── subflow.py       # EccSubFlowEnum、build_subflow()、init_subflow()
+│   │       ├── subflow.py       # init_subflow()、update_substep()
 │   │       ├── base.py          # BaseStep 接口
 │   │       └── copyfiles.py     # 示例步骤实现
 │   └── utility/                 # 公共工具（json、log、file、filelist）
@@ -94,7 +95,6 @@ demo1/
 │   ├── parameters.json     # 设计参数
 │   └── home.json
 ├── origin/
-│   ├── demo1.def           # 占位 DEF 文件
 │   ├── demo1.v             # 占位 Verilog 文件
 │   └── demo1.sdc           # 自动生成的时序约束
 ├── log/
@@ -146,7 +146,6 @@ bazel test //:test_engine_flow
 | 流程编排 | `fecompiler/engine/flow.py` |
 | workspace 创建/读取 | `fecompiler/data/workspace.py` |
 | 步骤路径结构 | `fecompiler/tools/fe/builder.py` |
-| 步骤资源查询 | `fecompiler/tools/fe/service.py` |
 | 子步骤定义 | `fecompiler/tools/fe/subflow.py` |
 | 步骤状态枚举 | `fecompiler/data/step.py` |
 | 步骤注册表 | `fecompiler/tools/fe/__init__.py` |
@@ -245,13 +244,7 @@ bazel test //:test_engine_flow
   - `sim_program_names=["max", "fib"]`
   - 或 `sim_program_sources=[".../max.c", ".../fib.c"]`
 
-### 7.4 步骤资源查询 API（`fecompiler.tools.fe.service`）
-
-- `get_step_info(workspace, step, id)`
-  - 预留接口，用于按资源 ID 查询 step 资源。
-  - 当前实现为 stub（默认返回 `{}`）。
-
-### 7.5 最小调用示例（库方式，不走 CLI）
+### 7.4 最小调用示例（库方式，不走 CLI）
 
 ```python
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace

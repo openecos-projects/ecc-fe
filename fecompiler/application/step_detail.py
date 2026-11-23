@@ -54,7 +54,6 @@ def _build_step_info(
             "qor_metrics",
             "qor_summary",
             "qor_hotspots",
-            "statis_csv",
         ):
             path = analysis.get(key, "")
             if path and os.path.exists(path):

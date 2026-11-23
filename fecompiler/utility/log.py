@@ -1,4 +1,4 @@
-"""Logging utilities — mirrors chipcompiler/utility/log.py."""
+"""Logging utilities."""
 
 from __future__ import annotations
 

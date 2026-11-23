@@ -1,4 +1,4 @@
-"""File system helpers — mirrors chipcompiler/utility/file.py."""
+"""File system helpers."""
 
 from __future__ import annotations
 

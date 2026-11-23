@@ -112,12 +112,8 @@ flowchart LR
 ```text
 <workspace>/<step>_<tool>/
 ├── config/
-│   └── flow_config.json
-├── input/
+├── data/
 ├── output/
-│   ├── <design>_<step>.def.gz
-│   ├── <design>_<step>.v
-│   ├── <design>_<step>.gds
 │   └── <design>_<step>.json
 ├── report/
 │   └── <step>.rpt

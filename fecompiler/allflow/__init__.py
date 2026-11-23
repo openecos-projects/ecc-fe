@@ -1,5 +1,5 @@
-"""AllFlow layer — generic flow builder for the ecc-fe backend."""
+"""Flow definition: the step registry, design profiles, and the default flow."""
 
-from .builder import DEFAULT_FLOW_STEPS, sanitize_step_token, build_allflow
+from .builder import DEFAULT_FLOW_STEPS
 
-__all__ = ["DEFAULT_FLOW_STEPS", "sanitize_step_token", "build_allflow"]
+__all__ = ["DEFAULT_FLOW_STEPS"]

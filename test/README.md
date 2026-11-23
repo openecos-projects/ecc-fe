@@ -120,8 +120,7 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 
 - `DEFAULT_FLOW_STEPS` 非空、首步为 `("prepare", "fe")`、每项为 `(name, tool)` 二元组。
 - 工具分配规则正确：默认流程固定为 `prepare -> fe`、`elab -> slang`、`lint/sim -> verilator`。
-- `sanitize_step_token` 的规范化规则（空格、特殊字符、空串等）。
-- `build_allflow()` 返回形状与默认步骤一致，初始状态全部 `Unstart`。
+- `generic_rtl` profile 不含 `sim`；缺省设计类型沿用 CPU 流程。
 
 ### 怎么测
 
@@ -130,8 +129,7 @@ bazel test //:all_tests --test_output=errors --test_env=PATH="$PATH"
 ### 用到的 API
 
 - `fecompiler.allflow.builder.DEFAULT_FLOW_STEPS`
-- `fecompiler.allflow.builder.sanitize_step_token`
-- `fecompiler.allflow.builder.build_allflow`
+- `fecompiler.allflow.profile.flow_steps_for`
 
 ---
 
