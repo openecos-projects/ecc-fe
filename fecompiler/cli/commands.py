@@ -56,6 +56,10 @@ from fecompiler.cli.workspace_access import (
     read_json_object,
     workspace_markers,
 )
+from fecompiler.data.workspace import (
+    UnsupportedWorkspaceSchemaError,
+    workspace_schema_version,
+)
 from fecompiler.resources import (
     activate_managed_resources,
     installed_tool_entries,
@@ -493,6 +497,19 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                         run=run_name,
                         workspace=run_dir,
                         reason="target is not an ECC-FE run directory",
+                    )
+                ]
+            )
+        try:
+            workspace_schema_version(run_dir)
+        except UnsupportedWorkspaceSchemaError as error:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "overwrite_refused",
+                        run=run_name,
+                        workspace=run_dir,
+                        reason=str(error),
                     )
                 ]
             )

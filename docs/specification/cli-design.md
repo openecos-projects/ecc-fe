@@ -109,6 +109,28 @@ Workspace and project state files (`home/*.json`, `ecc-fe.toml`, step
 `subflow.json` and `checklist.json`) are replaced atomically: an interrupted
 write leaves the previous complete file.
 
+## Workspace Schema Version
+
+A workspace records the version of its layout and of the state files under
+`home/` once, as `schema_version` in `home/home.json`. The current version is 1.
+A workspace without the field predates it and is version 1; it is not
+rewritten to add the field.
+
+An ecc-fe that finds a version it does not know (a larger number, or a value
+that is not a positive integer) refuses the workspace instead of guessing:
+
+- every command and JSON-RPC operation fails without reading further or
+  modifying anything, including `create` over the existing directory and
+  interrupted-step recovery;
+- the application result carries `error: "unsupported_workspace_schema"`,
+  `schema_version` (the value found), and `supported_schema_version`;
+- the message tells the user to update ecc-fe.
+
+The version is raised only when a change would make an older ecc-fe misread a
+workspace, for example a renamed state file or a changed meaning of an
+existing field. Adding an optional field does not raise it. `ecc-fe.toml` and
+the report artifacts keep their own `schema_version` fields.
+
 ## Workspace Queries
 
 A directory is a workspace only if it contains `home/parameters.json`. Every

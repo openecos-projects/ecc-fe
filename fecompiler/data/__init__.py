@@ -2,7 +2,9 @@
 
 from .step import StateEnum
 from .workspace import (
+    WORKSPACE_SCHEMA_VERSION,
     CreateWorkspaceData,
+    UnsupportedWorkspaceSchemaError,
     WorkspaceStep,
     create_workspace,
     load_workspace,
@@ -13,6 +15,8 @@ from .workspace import (
 __all__ = [
     "StateEnum",
     "CreateWorkspaceData",
+    "UnsupportedWorkspaceSchemaError",
+    "WORKSPACE_SCHEMA_VERSION",
     "WorkspaceStep",
     "create_workspace",
     "load_workspace",

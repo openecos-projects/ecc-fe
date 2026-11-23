@@ -108,6 +108,48 @@ _PARAMETER_OVERRIDE_FIELDS = (
 )
 
 
+# ── workspace schema version ─────────────────────────────────────────────────
+
+# Version of the workspace layout and of the state files under home/. It is
+# stored once, as "schema_version" in home/home.json. Raise it when a change
+# would make an older ecc-fe misread a workspace; a workspace without the field
+# predates it and is version 1.
+WORKSPACE_SCHEMA_VERSION = 1
+
+
+class UnsupportedWorkspaceSchemaError(ValueError):
+    """The workspace was written by a newer ecc-fe than this one."""
+
+    def __init__(self, directory: Path, found: object) -> None:
+        self.directory = directory
+        self.found = found
+        self.supported = WORKSPACE_SCHEMA_VERSION
+        super().__init__(
+            f"frontend workspace schema version {found!r} is not supported by "
+            f"this ecc-fe (supports up to {WORKSPACE_SCHEMA_VERSION}); "
+            f"update ecc-fe to use this workspace: {directory}"
+        )
+
+
+def workspace_schema_version(directory: str | Path) -> int:
+    """Return the schema version recorded for the workspace at *directory*.
+
+    Raises :class:`UnsupportedWorkspaceSchemaError` when the workspace is newer
+    than this ecc-fe understands, so it is never read or modified by guesswork.
+    """
+    project_dir = Path(directory).expanduser().resolve()
+    try:
+        home = _read_json(project_dir / "home" / "home.json")
+    except (OSError, ValueError):
+        home = {}
+    found = home.get("schema_version", 1) if isinstance(home, dict) else 1
+    if isinstance(found, bool) or not isinstance(found, int) or found < 1:
+        raise UnsupportedWorkspaceSchemaError(project_dir, found)
+    if found > WORKSPACE_SCHEMA_VERSION:
+        raise UnsupportedWorkspaceSchemaError(project_dir, found)
+    return found
+
+
 # ── single-step workspace paths ────────────────────────────────────────────────
 
 @dataclass(slots=True)
@@ -213,6 +255,8 @@ def create_workspace(spec: CreateWorkspaceData) -> dict[str, Any]:
             home.json
     """
     project_dir = spec.project_dir
+    # Re-creating in place must not downgrade a workspace from a newer ecc-fe.
+    workspace_schema_version(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     for d in ("origin", "log", "home"):
@@ -226,13 +270,19 @@ def create_workspace(spec: CreateWorkspaceData) -> dict[str, Any]:
 
 
 def load_workspace(directory: str) -> dict[str, Any] | None:
-    """Load an existing workspace from disk."""
+    """Load an existing workspace from disk.
+
+    Returns ``None`` when *directory* is not a workspace and raises
+    :class:`UnsupportedWorkspaceSchemaError` when it is one this ecc-fe is too
+    old to understand.
+    """
     project_dir = Path(directory).expanduser().resolve()
     params_path  = project_dir / "home" / "parameters.json"
     # parameters.json is what makes a directory a workspace. Without this
     # check any existing directory would load and be scaffolded as one.
     if not params_path.is_file():
         return None
+    workspace_schema_version(project_dir)
 
     flow_path    = project_dir / "home" / "flow.json"
     home_path    = project_dir / "home" / "home.json"
@@ -499,6 +549,7 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
 
     # home.json — index file pointing to the other two
     _write_json(home_path, {
+        "schema_version": WORKSPACE_SCHEMA_VERSION,
         "parameters": str(params_path),
         "flow":       str(flow_path),
         "layout":     "",

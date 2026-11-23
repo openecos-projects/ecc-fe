@@ -92,7 +92,8 @@ jobs:
             test/test_setup_script.py \
             test/test_step_registry.py \
             test/test_utility.py \
-            test/test_workspace_application.py
+            test/test_workspace_application.py \
+            test/test_workspace_schema.py
 
       - name: Package selected resources
         if: steps.select.outputs.any == 'true'
