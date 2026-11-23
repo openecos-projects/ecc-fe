@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import CPU_CORE, GENERIC_RTL, normalize_frontend_design_kind
+from fecompiler.allflow.steps import input_preparation_step
 from fecompiler.application.create_request import (
     _apply_catalog_defaults,
     _apply_core_sim_defaults_to,
@@ -44,11 +45,9 @@ from fecompiler.application.events import (
 )
 from fecompiler.application.result import CliResult, WorkspaceCliError, _command_to_cmd, _exit_code
 from fecompiler.application.sim_config import (
-    _apply_coremark_compile_options,
-    _apply_default_sim_smoke_suite,
     _apply_default_soc_runtime_options,
-    _apply_sim_test_suite,
     _apply_workspace_create_test_suite_defaults,
+    _prepare_step_run,
     _repair_workspace_sim_defaults,
 )
 from fecompiler.application.step_detail import (
@@ -709,7 +708,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         for workspace_step in selected_steps:
             _remove_frontend_step_detail(workspace_step)
     for workspace_step in selected_steps:
-        if not prepare_refreshed and workspace_step.name != "prepare":
+        if not prepare_refreshed and workspace_step.name != input_preparation_step().name:
             prepare_refreshed = _refresh_prepare_if_stale(
                 workspace,
                 engine,
@@ -717,8 +716,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
                 observer=observer,
             )
 
-        if workspace_step.name == "sim":
-            _apply_default_sim_smoke_suite(workspace)
+        _prepare_step_run(workspace, workspace_step.name)
 
         _emit_event(
             "rtl2gds",
@@ -808,22 +806,8 @@ def _run_step(args: argparse.Namespace) -> CliResult:
         directory=workspace["directory"],
         json_output=json_output,
     )
-    force_rerun = False
     _refresh_prepare_if_stale(workspace, engine, step, observer=observer)
-    if step == "sim":
-        suite_name = str(args.sim_test_suite or "").strip()
-        if suite_name and suite_name.lower() != "default":
-            if suite_name.lower() == "coremark":
-                _apply_coremark_compile_options(workspace, args)
-            _apply_sim_test_suite(
-                workspace,
-                suite_name,
-                args.sim_cpu_test_mode,
-                args.sim_cpu_test_case,
-            )
-            force_rerun = True
-        else:
-            _apply_default_sim_smoke_suite(workspace)
+    force_rerun = _prepare_step_run(workspace, step, args)
 
     _emit_event(
         "run_step",
@@ -869,14 +853,15 @@ def _refresh_prepare_if_stale(
     *,
     observer: Any | None = None,
 ) -> bool:
-    if target_step == "prepare" or prepared_inputs_current(workspace):
+    prepare_name = input_preparation_step().name
+    if target_step == prepare_name or prepared_inputs_current(workspace):
         return False
 
-    prepare_step = engine.get_workspace_step("prepare")
+    prepare_step = engine.get_workspace_step(prepare_name)
     if prepare_step is None:
         return False
 
-    state = engine.run_step("prepare", rerun=True, observer=observer)
+    state = engine.run_step(prepare_name, rerun=True, observer=observer)
     if state != StateEnum.Success:
         raise WorkspaceCliError(
             "run_step",

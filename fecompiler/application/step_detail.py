@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -188,64 +189,101 @@ def _build_frontend_step_detail(
         "provenance": dict((flow_step or {}).get("provenance", {}) or {}),
     }
 
-    if step_name == "sim":
-        sim = _build_frontend_sim_payload(step)
-        cases = sim["cases"]
-        detail["cases"] = cases
-        detail["sim"] = sim
-        passed = len([case for case in cases if case.get("ok") is True])
-        failed = len([case for case in cases if case.get("ok") is False])
-        detail["summary"].update(
-            {
-                "total_cases": len(cases),
-                "passed_cases": passed,
-                "failed_cases": failed,
-                "run_id": sim.get("run_id", ""),
-                "regression": sim.get("regression", {}),
-                "history_runs": len(sim.get("history", [])),
-                "test_suite": _sim_suite_label(workspace, cases),
-                "suite_id": _sim_suite_id(workspace, cases),
-                "cpu_test_mode": _sim_cpu_test_mode(workspace, cases),
-                "available_cpu_tests": _available_cpu_test_cases(workspace),
-                "default_cpu_tests": _default_cpu_test_cases(workspace),
-            }
-        )
-    elif step_name == "review":
-        review = _build_frontend_review_payload(step)
-        detail["review"] = review
-        if review:
-            detail["summary"].update({
-                "rtl_review": review.get("summary", {}),
-                "review_report": review.get("path", ""),
-            })
-    elif step_name == "elab":
-        elab = _build_frontend_elab_payload(step)
-        detail["elab"] = elab
-        if elab:
-            detail["summary"].update({
-                "elab": elab.get("summary", {}),
-                "elab_report": elab.get("path", ""),
-            })
-    elif step_name == "lint":
-        lint = _build_frontend_lint_payload(step)
-        detail["lint"] = lint
-        if lint:
-            detail["summary"].update({
-                "lint": lint.get("summary", {}),
-                "lint_report": lint.get("path", ""),
-            })
-    elif step_name == "prepare":
-        prepare = _build_frontend_prepare_payload(workspace, step)
-        detail["prepare"] = prepare
-        if prepare:
-            detail["summary"].update({
-                "readiness": prepare.get("readiness", {}),
-                "inputs": prepare.get("inputs", {}),
-                "contracts": prepare.get("contracts", []),
-                "runtime_plan": prepare.get("runtime", {}),
-            })
+    provider = _STEP_DETAILS.get(step_name)
+    if provider is not None:
+        fields, summary = provider(workspace, step)
+        detail.update(fields)
+        detail["summary"].update(summary)
 
     return detail
+
+
+# Each step contributes its own fields to the detail record and to its summary.
+# A provider returns (detail fields, summary fields).
+_StepDetail = tuple[dict[str, Any], dict[str, Any]]
+
+
+def _sim_step_detail(workspace: dict[str, Any], step: Any) -> _StepDetail:
+    sim = _build_frontend_sim_payload(step)
+    cases = sim["cases"]
+    passed = len([case for case in cases if case.get("ok") is True])
+    failed = len([case for case in cases if case.get("ok") is False])
+    return {"cases": cases, "sim": sim}, {
+        "total_cases": len(cases),
+        "passed_cases": passed,
+        "failed_cases": failed,
+        "run_id": sim.get("run_id", ""),
+        "regression": sim.get("regression", {}),
+        "history_runs": len(sim.get("history", [])),
+        "test_suite": _sim_suite_label(workspace, cases),
+        "suite_id": _sim_suite_id(workspace, cases),
+        "cpu_test_mode": _sim_cpu_test_mode(workspace, cases),
+        "available_cpu_tests": _available_cpu_test_cases(workspace),
+        "default_cpu_tests": _default_cpu_test_cases(workspace),
+    }
+
+
+def _review_step_detail(workspace: dict[str, Any], step: Any) -> _StepDetail:
+    review = _build_frontend_review_payload(step)
+    summary = (
+        {
+            "rtl_review": review.get("summary", {}),
+            "review_report": review.get("path", ""),
+        }
+        if review
+        else {}
+    )
+    return {"review": review}, summary
+
+
+def _elab_step_detail(workspace: dict[str, Any], step: Any) -> _StepDetail:
+    elab = _build_frontend_elab_payload(step)
+    summary = (
+        {
+            "elab": elab.get("summary", {}),
+            "elab_report": elab.get("path", ""),
+        }
+        if elab
+        else {}
+    )
+    return {"elab": elab}, summary
+
+
+def _lint_step_detail(workspace: dict[str, Any], step: Any) -> _StepDetail:
+    lint = _build_frontend_lint_payload(step)
+    summary = (
+        {
+            "lint": lint.get("summary", {}),
+            "lint_report": lint.get("path", ""),
+        }
+        if lint
+        else {}
+    )
+    return {"lint": lint}, summary
+
+
+def _prepare_step_detail(workspace: dict[str, Any], step: Any) -> _StepDetail:
+    prepare = _build_frontend_prepare_payload(workspace, step)
+    summary = (
+        {
+            "readiness": prepare.get("readiness", {}),
+            "inputs": prepare.get("inputs", {}),
+            "contracts": prepare.get("contracts", []),
+            "runtime_plan": prepare.get("runtime", {}),
+        }
+        if prepare
+        else {}
+    )
+    return {"prepare": prepare}, summary
+
+
+_STEP_DETAILS: dict[str, Callable[[dict[str, Any], Any], _StepDetail]] = {
+    "prepare": _prepare_step_detail,
+    "review": _review_step_detail,
+    "elab": _elab_step_detail,
+    "lint": _lint_step_detail,
+    "sim": _sim_step_detail,
+}
 
 
 def _build_frontend_step_qor(step: Any) -> dict[str, Any]:
@@ -361,34 +399,50 @@ def _build_frontend_step_artifacts(workspace: dict[str, Any], step: Any) -> list
     ):
         append_item(_existing_path_item(path, label))
 
-    if str(step.name).strip().lower() == "prepare":
-        for item in _build_prepare_cpu_source_artifacts(workspace):
+    provider = _STEP_ARTIFACTS.get(str(step.name).strip().lower())
+    if provider is not None:
+        for item in provider(workspace, step):
             append_item(item)
-
-    if str(step.name).strip().lower() == "review":
-        for item in _build_review_source_artifacts(step):
-            append_item(item)
-
-    if str(step.name).strip().lower() == "sim":
-        for case in _build_frontend_sim_cases(step):
-            case_name = str(case.get("name", "")).strip()
-            for key, suffix in (("wave", "wave"), ("image", "image"), ("log", "log"), ("run_log", "run log")):
-                path = str(case.get(key, "")).strip()
-                label = f"{case_name} {suffix}".strip()
-                append_item(_existing_path_item(path, label))
-            program = case.get("program", {})
-            if isinstance(program, dict):
-                for key, suffix in (
-                    ("source", "source"),
-                    ("elf", "ELF"),
-                    ("binary", "binary"),
-                    ("disassembly", "disassembly"),
-                ):
-                    path = str(program.get(key, "")).strip()
-                    label = f"{case_name} {suffix}".strip()
-                    append_item(_existing_path_item(path, label))
 
     return artifacts
+
+
+def _prepare_step_artifacts(workspace: dict[str, Any], step: Any) -> list[Any]:
+    return _build_prepare_cpu_source_artifacts(workspace)
+
+
+def _review_step_artifacts(workspace: dict[str, Any], step: Any) -> list[Any]:
+    return _build_review_source_artifacts(step)
+
+
+def _sim_step_artifacts(workspace: dict[str, Any], step: Any) -> list[Any]:
+    items: list[Any] = []
+    for case in _build_frontend_sim_cases(step):
+        case_name = str(case.get("name", "")).strip()
+        for key, suffix in (("wave", "wave"), ("image", "image"), ("log", "log"), ("run_log", "run log")):
+            path = str(case.get(key, "")).strip()
+            label = f"{case_name} {suffix}".strip()
+            items.append(_existing_path_item(path, label))
+        program = case.get("program", {})
+        if isinstance(program, dict):
+            for key, suffix in (
+                ("source", "source"),
+                ("elf", "ELF"),
+                ("binary", "binary"),
+                ("disassembly", "disassembly"),
+            ):
+                path = str(program.get(key, "")).strip()
+                label = f"{case_name} {suffix}".strip()
+                items.append(_existing_path_item(path, label))
+    return items
+
+
+# Steps that list files beyond the common logs and reports.
+_STEP_ARTIFACTS: dict[str, Callable[[dict[str, Any], Any], list[Any]]] = {
+    "prepare": _prepare_step_artifacts,
+    "review": _review_step_artifacts,
+    "sim": _sim_step_artifacts,
+}
 
 
 def _build_frontend_review_payload(step: Any) -> dict[str, Any]:

@@ -221,7 +221,17 @@ sequenceDiagram
 | `doctor_checks` | `ecc-fe doctor --step <name>` 检查的环境项 |
 
 流程 profile、引擎、溯源、CLI 的步骤校验和目录定位都从注册表读取，不再各自维护
-步骤名表。新增一个步骤需要：在注册表加一条定义，在 `allflow/profile.py` 把它列入
+步骤名表。应用层里和具体步骤相关的逻辑也各自成表，而不是散落的 `if step == ...`：
+
+| 表 | 位置 | 内容 |
+|---|---|---|
+| `_STEP_DETAILS` | `application/step_detail.py` | 每个步骤往详情和摘要里添加的字段 |
+| `_STEP_ARTIFACTS` | `application/step_detail.py` | 步骤额外列出的产物文件 |
+| `_STEP_RUN_SETUP` | `application/sim_config.py` | 步骤运行前要做的配置（目前只有 sim 选择测试集） |
+
+注册表里 `prepares_inputs` 标出产生"已准备输入"的那一步（prepare），其余步骤在输入
+过期时会先自动重跑它。
+新增一个步骤需要：在注册表加一条定义，在 `allflow/profile.py` 把它列入
 相应 profile，并在 `analysis/qor.py` 提供对应的 QoR 构建函数。
 
 ## 关键代码位置
