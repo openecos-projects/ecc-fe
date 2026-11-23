@@ -5,7 +5,7 @@ from typing import Any
 
 from fecompiler.analysis import clear_step_qor
 from fecompiler.data.step import StateEnum
-from fecompiler.data.workspace import load_workspace
+from fecompiler.data.workspace import UnsupportedWorkspaceSchemaError, load_workspace
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
 
@@ -28,7 +28,8 @@ def recover_interrupted_operations(
                 active_operation_ids=active_operation_ids,
                 operation_id=operation_id,
             )
-    except WorkspaceBusyError:
+    except (WorkspaceBusyError, UnsupportedWorkspaceSchemaError):
+        # Busy: its owner is alive. Newer schema: not ours to modify.
         return {"recovered": []}
 
 

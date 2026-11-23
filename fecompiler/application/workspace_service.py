@@ -70,7 +70,12 @@ from fecompiler.application.values import (
 from fecompiler.catalog import catalog_payload, check_catalog_contracts, validate_frontend_config
 from fecompiler.cli.workspace_typer import WorkspaceTyperHandlers, build_typer_app as build_workspace_typer_app
 from fecompiler.data.step import StateEnum
-from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
+from fecompiler.data.workspace import (
+    CreateWorkspaceData,
+    UnsupportedWorkspaceSchemaError,
+    create_workspace,
+    load_workspace,
+)
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.tools.common.rtl_inputs import prepared_inputs_current
 from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
@@ -596,7 +601,10 @@ def _create_locked_workspace(
         sim_coremark_use_difftest=_normalize_bool(normalized.get("sim_coremark_use_difftest", False)),
         rtl_list=_normalize_str_list(normalized.get("rtl_list", [])),
     )
-    workspace = create_workspace(spec)
+    try:
+        workspace = create_workspace(spec)
+    except UnsupportedWorkspaceSchemaError as error:
+        raise _unsupported_schema("create_workspace", directory, error) from error
     if workspace is None:
         raise WorkspaceCliError("create_workspace", "failed", f"create frontend workspace failed: {directory}")
     if design_kind == CPU_CORE:
@@ -942,7 +950,10 @@ def _load_runtime(
     create_step_workspaces: bool = True,
 ) -> tuple[dict[str, Any], EngineFlow]:
     workspace_dir = _resolve_path(directory, Path.cwd())
-    workspace = load_workspace(workspace_dir)
+    try:
+        workspace = load_workspace(workspace_dir)
+    except UnsupportedWorkspaceSchemaError as error:
+        raise _unsupported_schema(cmd, workspace_dir, error) from error
     if workspace is None:
         raise WorkspaceCliError(
             cmd,
@@ -956,6 +967,22 @@ def _load_runtime(
     else:
         engine.load()
     return workspace, engine
+
+
+def _unsupported_schema(
+    cmd: str, directory: str, error: UnsupportedWorkspaceSchemaError
+) -> WorkspaceCliError:
+    return WorkspaceCliError(
+        cmd,
+        "failed",
+        str(error),
+        data={
+            "directory": directory,
+            "error": "unsupported_workspace_schema",
+            "schema_version": error.found,
+            "supported_schema_version": error.supported,
+        },
+    )
 
 
 def _build_engine(workspace: dict[str, Any]) -> EngineFlow:
