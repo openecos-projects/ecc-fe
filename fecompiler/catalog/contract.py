@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from fecompiler.catalog.registry import catalog_payload
 from fecompiler.resources import frontend_repo_root, resolve_thirdparty_path
+from fecompiler.tools.common.filelist import Filelist, parse_filelist
 
 CPU_WRAPPER_CONTRACT = "ecos-cpu-wrapper-v1"
 CPU_SOCKET_CONTRACT = "ysyx-axi-cpu-socket-v1"
@@ -18,7 +18,6 @@ SOC_WRAPPER_CONTRACT = "ecos-sim-wrapper-v1"
 SOC_WRAPPER_TOP = "ecos_sim_top"
 ECOS_CPU_TOP = "cpu_top"
 
-_RTL_SUFFIXES = (".v", ".sv", ".vh", ".svh")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,10 +109,10 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
         issues.append(_issue("error", "cpu_filelist_not_found", f"CPU filelist not found: {filelist_path}", "cpu", entry_id, str(filelist_path)))
         return issues
 
-    parsed = _parse_filelist(filelist_path)
+    parsed = parse_filelist(filelist_path)
     issues.extend(_filelist_missing_issues(parsed, "cpu", entry_id))
     wrapper_top = str(entry.get("cpu_wrapper_top", "")).strip()
-    if wrapper_top and not _filelist_defines_module(parsed.files, wrapper_top):
+    if wrapper_top and not _filelist_defines_module(list(parsed.files), wrapper_top):
         issues.append(
             _issue(
                 "error",
@@ -124,7 +123,7 @@ def _check_cpu_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
                 str(filelist_path),
             )
         )
-    if not _filelist_defines_module(parsed.files, ECOS_CPU_TOP):
+    if not _filelist_defines_module(list(parsed.files), ECOS_CPU_TOP):
         issues.append(
             _issue(
                 "error",
@@ -178,10 +177,10 @@ def _check_soc_entry(root: Path, entry: dict[str, Any]) -> list[ContractIssue]:
 
     filelist_path = _resolve_manifest_path(directory, str(manifest.get("soc_filelist", "")).strip())
     if filelist_path is not None and filelist_path.is_file():
-        parsed = _parse_filelist(filelist_path)
+        parsed = parse_filelist(filelist_path)
         issues.extend(_filelist_missing_issues(parsed, "soc", entry_id))
         wrapper_top = str(entry.get("wrapper_top", "")).strip()
-        if wrapper_top and not _filelist_defines_module(parsed.files, wrapper_top):
+        if wrapper_top and not _filelist_defines_module(list(parsed.files), wrapper_top):
             issues.append(
                 _issue(
                     "error",
@@ -261,80 +260,7 @@ def _require_nonempty_list(
     return [_issue("error", f"missing_{field_name}", f"sim-ready {entry_type} requires {field_name}", entry_type, entry_id)]
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedFilelist:
-    path: Path
-    files: list[Path]
-    missing: list[Path]
-
-
-def _parse_filelist(path: Path, visited: set[Path] | None = None) -> ParsedFilelist:
-    resolved = path.expanduser().resolve()
-    if visited is None:
-        visited = set()
-    if resolved in visited:
-        return ParsedFilelist(path=resolved, files=[], missing=[])
-    visited.add(resolved)
-
-    files: list[Path] = []
-    missing: list[Path] = []
-    for raw_line in resolved.read_text(encoding="utf-8", errors="ignore").splitlines():
-        tokens = _filelist_tokens(raw_line)
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            nested = ""
-            if token == "-f" and index + 1 < len(tokens):
-                nested = tokens[index + 1]
-                index += 2
-            elif token.startswith("-f") and len(token) > 2:
-                nested = token[2:]
-                index += 1
-            else:
-                index += 1
-
-            if nested:
-                nested_path = _resolve_manifest_path(resolved.parent, nested)
-                if nested_path is not None:
-                    nested_path = resolve_thirdparty_path(nested_path)
-                if nested_path is not None and nested_path.is_file():
-                    nested_result = _parse_filelist(nested_path, visited)
-                    files.extend(nested_result.files)
-                    missing.extend(nested_result.missing)
-                elif nested_path is not None:
-                    missing.append(nested_path)
-                continue
-
-            if not _is_rtl_path_token(token):
-                continue
-            file_path = _resolve_manifest_path(resolved.parent, token)
-            if file_path is None:
-                continue
-            file_path = resolve_thirdparty_path(file_path)
-            if file_path.is_file():
-                files.append(file_path)
-            else:
-                missing.append(file_path)
-    return ParsedFilelist(path=resolved, files=files, missing=missing)
-
-
-def _filelist_tokens(raw_line: str) -> list[str]:
-    line = raw_line.strip()
-    if not line or line.startswith("#") or line.startswith("//"):
-        return []
-    try:
-        return shlex.split(line, comments=True, posix=True)
-    except ValueError:
-        return line.split()
-
-
-def _is_rtl_path_token(token: str) -> bool:
-    if token.startswith(("+", "-", "$")):
-        return False
-    return Path(token).suffix.lower() in _RTL_SUFFIXES
-
-
-def _filelist_missing_issues(parsed: ParsedFilelist, entry_type: str, entry_id: str) -> list[ContractIssue]:
+def _filelist_missing_issues(parsed: Filelist, entry_type: str, entry_id: str) -> list[ContractIssue]:
     return [
         _issue(
             "error",

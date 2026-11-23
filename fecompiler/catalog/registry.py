@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -19,6 +18,7 @@ from fecompiler.resources import (
     frontend_repo_root,
     resolve_thirdparty_path,
 )
+from fecompiler.tools.common.filelist import parse_filelist
 from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 from fecompiler.tools.common.sv_module import (
     is_simple_sv_identifier,
@@ -33,7 +33,6 @@ DEFAULT_TOOLCHAIN_ID = "riscv32-unknown-elf"
 DEFAULT_TEST_SUITE_ID = "cpu-tests"
 ECOS_CPU_TOP = "cpu_top"
 ECOS_DIFFTEST_DEFINE = "ECOS_DIFFTEST"
-_RTL_SUFFIXES = (".v", ".sv", ".vh", ".svh")
 
 _CATEGORY_FILES = {
     "cores": "cores.json",
@@ -470,7 +469,7 @@ def _validate_user_cpu_filelist_contract(
     if not required_top:
         return []
 
-    parsed = _parse_user_cpu_filelist(filelist_path)
+    parsed = parse_filelist(filelist_path)
     issues = [
         ValidationIssue(
             "error",
@@ -478,9 +477,9 @@ def _validate_user_cpu_filelist_contract(
             f"RTL file referenced by CPU filelist was not found: {path}",
             "cpu_filelist",
         )
-        for path in parsed["missing"]
+        for path in parsed.missing
     ]
-    top_count = _filelist_module_count(parsed["files"], required_top)
+    top_count = _filelist_module_count(list(parsed.files), required_top)
     if top_count != 1:
         code = "cpu_top_module_not_found" if top_count == 0 else "cpu_top_module_count_mismatch"
         issues.append(
@@ -495,7 +494,7 @@ def _validate_user_cpu_filelist_contract(
 
     required_ports = _required_user_cpu_top_ports(core)
     if required_ports:
-        found_contract = _filelist_module_port_contract(parsed["files"], required_top)
+        found_contract = _filelist_module_port_contract(list(parsed.files), required_top)
         found_ports = [str(port.get("name", "")) for port in found_contract]
         missing = [port for port in required_ports if port not in found_ports]
         extra = [port for port in found_ports if port not in required_ports]
@@ -588,105 +587,19 @@ def _required_user_cpu_top_port_contract(core: CatalogEntry | None) -> list[dict
     return ports
 
 
-def _parse_user_cpu_filelist(
-    filelist_path: Path,
-    visited: set[Path] | None = None,
-) -> dict[str, list[Any]]:
-    resolved = filelist_path.expanduser().resolve()
-    if visited is None:
-        visited = set()
-    if resolved in visited:
-        return {"files": [], "missing": [], "defines": []}
-    visited.add(resolved)
-
-    files: list[Path] = []
-    missing: list[Path] = []
-    defines: list[str] = []
-    try:
-        lines = resolved.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return {"files": [], "missing": [resolved], "defines": []}
-
-    for raw_line in lines:
-        tokens = _filelist_tokens(raw_line)
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            nested = ""
-            if token in {"-f", "-F"} and index + 1 < len(tokens):
-                nested = tokens[index + 1]
-                index += 2
-            elif token.startswith(("-f", "-F")) and len(token) > 2:
-                nested = token[2:]
-                index += 1
-            else:
-                index += 1
-
-            if nested:
-                nested_path = _resolve_filelist_token(resolved.parent, nested)
-                if nested_path.is_file():
-                    nested_result = _parse_user_cpu_filelist(nested_path, visited)
-                    files.extend(nested_result["files"])
-                    missing.extend(nested_result["missing"])
-                    defines.extend(nested_result["defines"])
-                else:
-                    missing.append(nested_path)
-                continue
-
-            if token.startswith("+define+"):
-                defines.extend(
-                    define.strip()
-                    for define in token.removeprefix("+define+").split("+")
-                    if define.strip()
-                )
-                continue
-
-            if not _is_rtl_path_token(token):
-                continue
-            path = _resolve_filelist_token(resolved.parent, token)
-            if path.is_file():
-                files.append(path)
-            else:
-                missing.append(path)
-    return {"files": files, "missing": missing, "defines": defines}
-
-
 def cpu_filelist_supports_difftest(filelist_path: str | Path) -> bool:
     """Return whether a CPU filelist explicitly provides the ECC DPI adapter."""
     path = Path(filelist_path).expanduser()
     if not path.is_file():
         return False
-    parsed = _parse_user_cpu_filelist(path)
+    parsed = parse_filelist(path)
     has_capability_define = any(
         str(define).partition("=")[0].strip() == ECOS_DIFFTEST_DEFINE
-        for define in parsed["defines"]
+        for define in parsed.defines
     )
     if not has_capability_define:
         return False
-    return rtl_sources_provide_difftest_adapter(parsed["files"])
-
-
-def _filelist_tokens(raw_line: str) -> list[str]:
-    line = raw_line.strip()
-    if not line or line.startswith(("#", "//", "`")):
-        return []
-    try:
-        return shlex.split(line, comments=True, posix=True)
-    except ValueError:
-        return line.split()
-
-
-def _is_rtl_path_token(token: str) -> bool:
-    if token.startswith(("+", "-", "$")):
-        return False
-    return Path(token).suffix.lower() in _RTL_SUFFIXES
-
-
-def _resolve_filelist_token(base: Path, token: str) -> Path:
-    path = Path(token.strip("\"'")).expanduser()
-    if path.is_absolute():
-        return resolve_thirdparty_path(path).resolve()
-    return resolve_thirdparty_path(base / path).resolve()
+    return rtl_sources_provide_difftest_adapter(list(parsed.files))
 
 
 def _filelist_module_count(files: list[Path], module_name: str) -> int:

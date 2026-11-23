@@ -231,3 +231,4 @@ sequenceDiagram
 | Slang elaboration | `fecompiler/tools/slang/runner.py` |
 | Verilator lint/sim | `fecompiler/tools/verilator/runner.py` |
 | RTL 输入共享解析 | `fecompiler/tools/common/rtl_inputs.py` |
+| filelist 解析（`-f/-F`、`+incdir+`、`+define+`、缺失文件报告） | `fecompiler/tools/common/filelist.py` |
