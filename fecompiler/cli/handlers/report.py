@@ -4,12 +4,13 @@ import json
 import shlex
 from pathlib import Path
 
+from fecompiler.allflow.steps import step_directory, step_names
 from fecompiler.cli.core.inputs import CommandInput, ReportFilesInput, ReportQorInput
 from fecompiler.cli.core.records import error_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
 
-_FLOW_STEPS = ("prepare", "review", "elab", "lint", "sim")
+_FLOW_STEPS = step_names()
 _QOR_ARTIFACTS = {
     "metrics": ("qor_metrics.json", 3),
     "summary": ("qor_summary.json", 4),
@@ -177,14 +178,7 @@ def _result_directories(workspace: Path, step: str) -> tuple[tuple[str, Path], .
 
 
 def _step_directory(workspace: Path, step: str) -> Path:
-    tool = {
-        "prepare": "fe",
-        "review": "fe",
-        "elab": "slang",
-        "lint": "verilator",
-        "sim": "verilator",
-    }[step]
-    return workspace / f"{step}_{tool}"
+    return step_directory(workspace, step)
 
 
 def _read_qor_artifacts(

@@ -200,12 +200,29 @@ sequenceDiagram
     Sim-->>WS: output/cases/case/log.txt, wave.vcd, cases.json
 ```
 
+## Step 注册表
+
+每个步骤在 `fecompiler/allflow/steps.py` 里有且只有一条 `StepDefinition`，记录：
+
+| 字段 | 含义 |
+|---|---|
+| `name` / `tool` | 步骤名与工具名，目录名固定为 `<name>_<tool>` |
+| `handler` | 执行该步骤的 `BaseStep` 子类（`模块:类名`，运行时才导入） |
+| `qor_report` | QoR 分析读取的 `report/` 下的文件 |
+| `config_fields` / `config_prefixes` | 变化后会让成功结果失效的 workspace 参数 |
+| `source_files` / `executables` | 计入溯源指纹的 runner 源码与外部工具 |
+| `doctor_checks` | `ecc-fe doctor --step <name>` 检查的环境项 |
+
+流程 profile、引擎、溯源、CLI 的步骤校验和目录定位都从注册表读取，不再各自维护
+步骤名表。新增一个步骤需要：在注册表加一条定义，在 `allflow/profile.py` 把它列入
+相应 profile，并在 `analysis/qor.py` 提供对应的 QoR 构建函数。
+
 ## 关键代码位置
 
 | 功能 | 文件 |
 |---|---|
-| 默认流程定义 | `fecompiler/allflow/builder.py` |
-| Step 注册表 | `fecompiler/tools/fe/__init__.py` |
+| Step 注册表（步骤的唯一定义处） | `fecompiler/allflow/steps.py` |
+| 各设计类型运行哪些步骤 | `fecompiler/allflow/profile.py` |
 | Workspace 创建/读取 | `fecompiler/data/workspace.py` |
 | Flow 编排与状态维护 | `fecompiler/engine/flow.py` |
 | Step 目录结构 | `fecompiler/tools/fe/builder.py` |

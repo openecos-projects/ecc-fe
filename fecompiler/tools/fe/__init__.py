@@ -19,17 +19,11 @@ def get_step_registry() -> dict[str, BaseStep]:
     """Return step handlers lazily to avoid runner import cycles."""
     global _STEP_REGISTRY
     if _STEP_REGISTRY is None:
-        from fecompiler.tools.prepare.runner import PrepareStep
-        from fecompiler.tools.review.runner import RtlReviewStep
-        from fecompiler.tools.slang.runner import SlangElabStep
-        from fecompiler.tools.verilator.runner import VerilatorLintStep, VerilatorSimStep
+        from fecompiler.allflow.steps import step_definitions
 
         _STEP_REGISTRY = {
-            "prepare": PrepareStep(),
-            "review": RtlReviewStep(),
-            "elab": SlangElabStep(),
-            "lint": VerilatorLintStep(),
-            "sim": VerilatorSimStep(),
+            definition.name: definition.create_handler()
+            for definition in step_definitions()
         }
     return _STEP_REGISTRY
 

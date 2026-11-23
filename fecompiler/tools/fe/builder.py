@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.steps import step_directory_name
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.utility.atomic_write import atomic_write_json
 
@@ -23,7 +24,7 @@ def build_step(
 ) -> WorkspaceStep:
     """Return a WorkspaceStep for *step_name* inside *workspace*."""
     design = workspace["design"]
-    step_dir = Path(workspace["directory"]) / f"{step_name}_{tool}"
+    step_dir = Path(workspace["directory"]) / step_directory_name(step_name, tool)
     sd = str(step_dir)
 
     if output_def is None:
