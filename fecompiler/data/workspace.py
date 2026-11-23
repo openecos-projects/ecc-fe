@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ from fecompiler.allflow.profile import (
     flow_steps_for,
     normalize_frontend_design_kind,
 )
+from fecompiler.tools.common.filelist import RTL_SOURCE_SUFFIXES, parse_filelist
 from fecompiler.tools.common.rtl_inputs import write_generated_rtl_filelist
 from fecompiler.utility.atomic_write import atomic_write_json
 
@@ -508,39 +510,34 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
 
 
 def _copy_filelist_sources(origin_dir: Path, filelist_path: str) -> None:
-    """Parse filelist, copy every .v/.sv to origin/, write new filelist with absolute paths."""
-    src_filelist = Path(filelist_path).expanduser().resolve()
-    base_dir     = src_filelist.parent
-    copied: list[str] = []
+    """Snapshot the RTL a filelist refers to into origin/ and rewrite the list.
 
-    for raw in src_filelist.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or line.startswith("//"):
-            continue
-        if not (line.endswith(".v") or line.endswith(".sv")):
-            continue
-        src = Path(line) if Path(line).is_absolute() else base_dir / line
-        src = src.resolve()
-        if not src.is_file():
-            continue
-        dst = origin_dir / src.name
-        try:
-            shutil.copy2(src, dst)
-            copied.append(str(dst))   # absolute path in origin/
-        except OSError:
-            pass
+    The rewritten ``origin/<filelist name>`` keeps the design's include
+    directories and defines and lists every RTL file by absolute path. Files
+    are copied flat; one whose name is already taken by a different file is
+    left where it is and listed in place, so nothing is silently replaced.
+    """
+    parsed = parse_filelist(filelist_path)
+    lines = [f"+define+{define}" for define in parsed.defines]
+    lines.append(f"+incdir+{shlex.quote(str(origin_dir))}")
+    lines.extend(f"+incdir+{shlex.quote(str(incdir))}" for incdir in parsed.incdirs)
 
-    # also copy the filelist itself
-    try:
-        shutil.copy2(src_filelist, origin_dir / src_filelist.name)
-    except OSError:
-        pass
+    taken: dict[str, Path] = {parsed.path.name: parsed.path}
+    for source in parsed.files:
+        owner = taken.setdefault(source.name, source)
+        listed = source
+        if owner == source:
+            try:
+                shutil.copy2(source, origin_dir / source.name)
+                listed = origin_dir / source.name
+            except OSError:
+                pass
+        if source.suffix.lower() in RTL_SOURCE_SUFFIXES:
+            lines.append(shlex.quote(str(listed)))
 
-    # write a clean filelist in origin/ with absolute paths
-    if copied:
-        (origin_dir / src_filelist.name).write_text(
-            "\n".join(copied) + "\n", encoding="utf-8"
-        )
+    (origin_dir / parsed.path.name).write_text(
+        "\n".join(dict.fromkeys(lines)) + "\n", encoding="utf-8"
+    )
 
 
 def _copy_rtl_list(origin_dir: Path, rtl_list: list[str]) -> list[str]:

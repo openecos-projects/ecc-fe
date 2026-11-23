@@ -17,7 +17,7 @@ from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
 from fecompiler.tools.common.process import run_tool
-from fecompiler.tools.prepare.runner import PrepareStep
+from fecompiler.tools.common.filelist import read_complete_filelist
 
 _STRUCTURAL_STAT = "yosys_precheck_stat.json"
 _STRUCTURAL_NETLIST = "yosys_precheck_netlist.json"
@@ -240,24 +240,19 @@ def _cpu_probe_inputs(workspace: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_filelist(filelist: str) -> dict[str, Any]:
     try:
-        parsed = PrepareStep._parse_sv_filelist(filelist)
+        parsed = read_complete_filelist(filelist)
     except Exception:
         return {"rtl_files": [], "incdirs": [], "defines": []}
 
-    rtl_files = [
-        str(path)
-        for path in _filter_review_rtl_files(
-            Path(path).expanduser().resolve() for path in parsed.get("rtl_files", [])
-        )
-    ]
+    rtl_files = [str(path) for path in _filter_review_rtl_files(parsed.sources)]
     incdirs = _unique_paths([
-        *(Path(path).expanduser().resolve() for path in parsed.get("incdirs", [])),
+        *parsed.incdirs,
         *(Path(path).parent for path in rtl_files),
     ])
     return _complete_missing_module_sources({
         "rtl_files": rtl_files,
         "incdirs": incdirs,
-        "defines": [str(define) for define in parsed.get("defines", [])],
+        "defines": list(parsed.defines),
         "auto_discovered_rtl_files": [],
     })
 
