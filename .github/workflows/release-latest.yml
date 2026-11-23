@@ -78,6 +78,7 @@ jobs:
             test/test_data_step.py \
             test/test_data_workspace.py \
             test/test_examples.py \
+            test/test_project_run_selectors.py \
             test/test_filelist_parser.py \
             test/test_frontend_detail_snapshot.py \
             test/test_no_backend_leftovers.py \

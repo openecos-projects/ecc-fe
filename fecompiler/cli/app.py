@@ -195,6 +195,10 @@ def build_app() -> typer.Typer:
             str | None,
             typer.Option("--from", help="Re-execute a step and its suffix"),
         ] = None,
+        to_step: Annotated[
+            str | None,
+            typer.Option("--to", help="Stop after this step"),
+        ] = None,
         only: Annotated[
             str | None, typer.Option("--only", help="Run exactly one step")
         ] = None,
@@ -227,6 +231,7 @@ def build_app() -> typer.Typer:
                 overwrite=overwrite,
                 resume=resume,
                 from_step=from_step,
+                to_step=to_step,
                 only=only,
                 force=force,
                 param_set=tuple(param_set or ()),

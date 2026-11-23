@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from fecompiler.allflow.steps import find_step_definition, step_directory, step_names
@@ -28,6 +29,7 @@ from fecompiler.cli.core.locking import with_workspace_lock
 from fecompiler.cli.core.records import disclosure_cmd, error_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import (
+    ProjectConfig,
     ProjectConfigError,
     apply_project_overrides,
     create_project_config,
@@ -286,43 +288,9 @@ def _run_workspace(
         return CommandResult.err(
             [error_record("set_requires_project")], exit_code=2
         )
-    if command_input.step and command_input.only:
-        return CommandResult.err(
-            [error_record("selector_conflict", selectors=["--step", "--only"])],
-            exit_code=2,
-        )
-    only = command_input.only or command_input.step
-    selectors = sum(
-        (
-            command_input.resume,
-            command_input.from_step is not None,
-            only is not None,
-        )
-    )
-    if selectors > 1:
-        return CommandResult.err(
-            [error_record("selector_conflict")], exit_code=2
-        )
-    if command_input.force and only is None:
-        return CommandResult.err(
-            [error_record("force_requires_only")], exit_code=2
-        )
-    if command_input.rerun and (
-        command_input.resume or command_input.from_step is not None
-    ):
-        return CommandResult.err(
-            [error_record("rerun_selector_conflict")], exit_code=2
-        )
-    for step in (only, command_input.from_step):
-        if step and step not in _FLOW_STEPS:
-            return CommandResult.err(
-                [
-                    error_record(
-                        "unknown_step", step=step, expected=list(_FLOW_STEPS)
-                    )
-                ],
-                exit_code=2,
-            )
+    selection = _run_selection(command_input)
+    if isinstance(selection, CommandResult):
+        return selection
     try:
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
@@ -376,29 +344,15 @@ def _run_workspace(
                 )
             ]
         )
-    command = "run-step" if only else "run-flow"
-    rerun = (
-        command_input.rerun
-        if only is None
-        else command_input.force or command_input.rerun
-    )
-    payload: dict[str, object] = {
-        "directory": context.workspace_dir,
-        "rerun": rerun,
-    }
-    if only:
-        payload["step"] = only
-    elif command_input.from_step:
-        payload["from_step"] = command_input.from_step
-    result = workspace_application.execute_payload(
-        command, payload, base_dir=Path.cwd()
-    )
+    only = selection.only
+    result = _execute_selection(selection, context.workspace_dir)
     record = {
         "kind": "run",
         "status": result.response,
         "workspace": context.workspace_dir,
         "step": only,
-        "from_step": command_input.from_step,
+        "from_step": selection.from_step,
+        "to_step": selection.to_step,
         "data": result.data,
         "messages": result.message,
         "config": str(project_config.path) if project_config else None,
@@ -420,20 +374,174 @@ def _run_workspace(
     )
 
 
-def _run_project(command_input: RunInput, context: CommandContext) -> CommandResult:
-    if any(
+@dataclass(frozen=True, slots=True)
+class _RunSelection:
+    """Which steps one `run` invocation executes."""
+
+    only: str | None = None
+    from_step: str | None = None
+    to_step: str | None = None
+    resume: bool = False
+    # Re-execute steps that already succeeded.
+    rerun: bool = False
+
+    @property
+    def in_place(self) -> bool:
+        """True when the selection continues an existing run instead of a new one."""
+        return bool(self.only or self.from_step or self.resume or self.rerun)
+
+
+def _run_selection(command_input: RunInput) -> _RunSelection | CommandResult:
+    def usage(error: str, **fields: object) -> CommandResult:
+        return CommandResult.err([error_record(error, **fields)], exit_code=2)
+
+    if command_input.step and command_input.only:
+        return usage("selector_conflict", selectors=["--step", "--only"])
+    only = command_input.only or command_input.step
+    selectors = sum(
         (
-            command_input.step,
-            command_input.rerun,
             command_input.resume,
-            command_input.from_step,
-            command_input.only,
-            command_input.force,
+            command_input.from_step is not None,
+            only is not None,
         )
+    )
+    if selectors > 1:
+        return usage("selector_conflict")
+    if only is not None and command_input.to_step is not None:
+        return usage("selector_conflict", selectors=["--only", "--to"])
+    if command_input.force and only is None:
+        return usage("force_requires_only")
+    if command_input.rerun and (
+        command_input.resume or command_input.from_step is not None
     ):
-        return CommandResult.err(
-            [error_record("selector_requires_workspace")], exit_code=2
+        return usage("rerun_selector_conflict")
+    for step in (only, command_input.from_step, command_input.to_step):
+        if step and step not in _FLOW_STEPS:
+            return usage("unknown_step", step=step, expected=list(_FLOW_STEPS))
+    if (
+        command_input.from_step
+        and command_input.to_step
+        and _FLOW_STEPS.index(command_input.to_step)
+        < _FLOW_STEPS.index(command_input.from_step)
+    ):
+        return usage(
+            "invalid_step_range",
+            from_step=command_input.from_step,
+            to_step=command_input.to_step,
+            expected=list(_FLOW_STEPS),
         )
+    return _RunSelection(
+        only=only,
+        from_step=command_input.from_step,
+        to_step=command_input.to_step,
+        resume=command_input.resume,
+        rerun=(
+            command_input.rerun
+            if only is None
+            else command_input.force or command_input.rerun
+        ),
+    )
+
+
+def _execute_selection(selection: _RunSelection, directory: str):
+    payload: dict[str, object] = {"directory": directory, "rerun": selection.rerun}
+    if selection.only:
+        payload["step"] = selection.only
+    else:
+        if selection.from_step:
+            payload["from_step"] = selection.from_step
+        if selection.to_step:
+            payload["to_step"] = selection.to_step
+    return workspace_application.execute_payload(
+        "run-step" if selection.only else "run-flow", payload, base_dir=Path.cwd()
+    )
+
+
+def _continue_project_run(
+    command_input: RunInput,
+    context: CommandContext,
+    selection: _RunSelection,
+    config: ProjectConfig,
+) -> CommandResult:
+    """Apply a selector to an existing project run, in place.
+
+    A run keeps the parameters it was created with: project defaults changed
+    since then are not applied, so its earlier results stay comparable.
+    """
+    run_dir = context.workspace_dir
+    run_name = context.run_id or "default"
+    if command_input.overwrite:
+        return CommandResult.err(
+            [error_record("overwrite_selector_conflict")], exit_code=2
+        )
+    if command_input.param_set:
+        return CommandResult.err(
+            [
+                error_record(
+                    "set_requires_new_run",
+                    reason="parameters are fixed when a run is created",
+                    new_run_cmd="ecc-fe run --run-id <new-run> --set key=value",
+                )
+            ],
+            exit_code=2,
+        )
+    if not os.path.lexists(run_dir):
+        return CommandResult.err(
+            [
+                error_record(
+                    "run_not_found",
+                    run=run_name,
+                    workspace=run_dir,
+                    create_cmd=_target_cmd("ecc-fe run", context),
+                )
+            ]
+        )
+    if not resolves_as_spelled(run_dir, context.project_dir):
+        return CommandResult.err(
+            [
+                error_record(
+                    "run_path_refused",
+                    run=run_name,
+                    workspace=run_dir,
+                    reason="run path is redirected by a symlink",
+                )
+            ]
+        )
+    try:
+        workspace = load_existing_workspace(run_dir)
+    except (OSError, TypeError, ValueError) as error:
+        return CommandResult.err([error_record(str(error), workspace=run_dir)])
+    if workspace is None:
+        return _workspace_not_found(context)
+    result = _execute_selection(selection, run_dir)
+    record = {
+        "kind": "run",
+        "run": run_name,
+        "status": result.response,
+        "workspace": run_dir,
+        "step": selection.only,
+        "from_step": selection.from_step,
+        "to_step": selection.to_step,
+        "data": result.data,
+        "messages": result.message,
+        "config": str(config.path),
+        "status_cmd": _target_cmd("ecc-fe status", context),
+        "log_cmd": _target_cmd(
+            f"ecc-fe log {selection.only}" if selection.only else "ecc-fe log",
+            context,
+        ),
+    }
+    return (
+        CommandResult.ok([record])
+        if result.response == "success"
+        else CommandResult.err([record])
+    )
+
+
+def _run_project(command_input: RunInput, context: CommandContext) -> CommandResult:
+    selection = _run_selection(command_input)
+    if isinstance(selection, CommandResult):
+        return selection
     try:
         config = load_project_config(context.config_dir)
     except (OSError, TypeError, ValueError) as error:
@@ -449,6 +557,8 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
+    if selection.in_place:
+        return _continue_project_run(command_input, context, selection, config)
     overrides, override_errors = parse_cli_overrides(command_input.param_set)
     if override_errors:
         return CommandResult.err(
@@ -483,6 +593,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                         "run_exists",
                         run=run_name,
                         workspace=run_dir,
+                        resume=_target_cmd("ecc-fe run --resume", context),
                         overwrite=_target_cmd("ecc-fe run --overwrite", context),
                     )
                 ]
@@ -582,16 +693,13 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
                 )
             ]
         )
-    result = workspace_application.execute_payload(
-        "run-flow",
-        {"directory": run_dir, "rerun": False},
-        base_dir=Path.cwd(),
-    )
+    result = _execute_selection(selection, run_dir)
     record = {
         "kind": "run",
         "run": run_name,
         "status": result.response,
         "workspace": run_dir,
+        "to_step": selection.to_step,
         "data": result.data,
         "messages": result.message,
         "config": str(config.path),

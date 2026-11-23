@@ -282,18 +282,37 @@ Project mode creates a fresh run and refuses an existing target unless
 or a real ECC-FE workspace. Project roots, the `runs/` container, the internal
 template, symlink targets, and redirected paths are never replacement targets.
 
-Existing workspaces use `--workspace` and support the ECC selectors:
+### Step Selectors
+
+`run` accepts the ECC selectors for a project run and for a direct workspace:
 
 ```bash
-ecc-fe run --workspace path --resume
-ecc-fe run --workspace path --from review
+ecc-fe run --to lint                   # new run, stop after lint
+ecc-fe run --resume                    # continue at the first unfinished step
+ecc-fe run --resume --to elab
+ecc-fe run --from review               # re-execute review and what follows
+ecc-fe run --from review --to lint
+ecc-fe run --only lint                 # exactly one step
+ecc-fe run --only lint --force         # even if it already succeeded
 ecc-fe run --workspace path --only lint
-ecc-fe run --workspace path --only lint --force
 ```
 
 `--resume`, `--from`, and `--only` are mutually exclusive. `--force` requires
-`--only`. The M3 `--step/--rerun` spelling remains an alias for
-`--only/--force`; full-flow `--rerun` remains supported for direct workspaces.
+`--only`. `--to` names the last step to execute and combines with `--resume`,
+`--from`, or no selector, but not with `--only`; a `--to` step before the
+`--from` step is `invalid_step_range`. The M3 `--step/--rerun` spelling remains
+an alias for `--only/--force`, and full-flow `--rerun` re-executes every step.
+Selector mistakes exit with status 2.
+
+In project mode `--resume`, `--from`, `--only`, and `--rerun` continue an
+existing run in place and fail with `run_not_found` when the run does not
+exist. A run keeps the parameters it was created with: project `[params]`
+changed afterwards are not applied to it, and `--set` and `--overwrite` cannot
+be combined with these selectors. Running without them still creates a new run
+and reports `run_exists`, now with the `--resume` command, when the run is
+already there.
+
+`ecc-fe workspace run-flow` accepts `--from` and `--to` with the same meaning.
 Project creation controls (`--run-id`, `--overwrite`, and `--set`) cannot be
 combined with `--workspace`.
 

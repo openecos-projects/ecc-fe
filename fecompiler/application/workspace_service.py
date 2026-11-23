@@ -215,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Re-execute a step and its suffix",
     )
+    run_flow.add_argument(
+        "--to",
+        dest="to_step",
+        default="",
+        help="Stop after this step",
+    )
 
     run_step = subparsers.add_parser("run-step", help="Run one frontend flow step")
     _add_json_flag(run_step)
@@ -688,6 +694,32 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
                 "valid_steps": step_names,
             },
         )
+    to_step = str(getattr(args, "to_step", "") or "").strip()
+    if to_step and to_step not in step_names:
+        raise WorkspaceCliError(
+            "rtl2gds",
+            "failed",
+            f"unknown frontend flow step: {to_step}",
+            data={
+                "directory": workspace["directory"],
+                "step": to_step,
+                "valid_steps": step_names,
+            },
+        )
+    start_index = step_names.index(from_step) if from_step else 0
+    end_index = step_names.index(to_step) + 1 if to_step else len(step_names)
+    if end_index <= start_index:
+        raise WorkspaceCliError(
+            "rtl2gds",
+            "failed",
+            f"frontend flow step {to_step} comes before {from_step}",
+            data={
+                "directory": workspace["directory"],
+                "from_step": from_step,
+                "to_step": to_step,
+                "valid_steps": step_names,
+            },
+        )
     if args.rerun:
         engine.clear_states()
         _clear_frontend_step_details(engine)
@@ -702,8 +734,7 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
     failed_step = ""
     failed_state = StateEnum.Incomplete
     prepare_refreshed = False
-    start_index = step_names.index(from_step) if from_step else 0
-    selected_steps = engine.workspace_steps[start_index:]
+    selected_steps = engine.workspace_steps[start_index:end_index]
     if from_step:
         for workspace_step in selected_steps:
             _remove_frontend_step_detail(workspace_step)
@@ -758,6 +789,8 @@ def _run_flow(args: argparse.Namespace) -> CliResult:
         "from_step": from_step or None,
         "reports": reports,
     }
+    if to_step:
+        data["to_step"] = to_step
     if failed_step:
         data["failed_step"] = failed_step
         failed_workspace_step = engine.get_workspace_step(failed_step)
@@ -1035,6 +1068,7 @@ def _dispatch_payload(
         "json": False,
         "rerun": False,
         "from_step": "",
+        "to_step": "",
         "recover_stale_ongoing": True,
         "sim_compile_extra_cflag": [],
         "sim_compile_mabi": "",

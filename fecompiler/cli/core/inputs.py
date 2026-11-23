@@ -43,6 +43,7 @@ class RunInput(CommandInput):
     overwrite: bool = False
     resume: bool = False
     from_step: str | None = None
+    to_step: str | None = None
     only: str | None = None
     force: bool = False
     param_set: tuple[str, ...] = ()
