@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from collections.abc import Callable
 from pathlib import Path
 
 from fecompiler.application.workspace_service import workspace_application
@@ -13,6 +14,7 @@ from fecompiler.cli.core.inputs import (
     ParamShowInput,
     ParamUnsetInput,
 )
+from fecompiler.cli.core.locking import with_workspace_lock
 from fecompiler.cli.core.records import disclosure_cmd, error_record
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import (
@@ -100,6 +102,27 @@ def show_parameter(
 def set_parameter(
     command_input: CommandInput, context: CommandContext
 ) -> CommandResult:
+    return _mutate(context, lambda: _set_parameter(command_input, context))
+
+
+def unset_parameter(
+    command_input: CommandInput, context: CommandContext
+) -> CommandResult:
+    return _mutate(context, lambda: _unset_parameter(command_input, context))
+
+
+def _mutate(
+    context: CommandContext, action: Callable[[], CommandResult]
+) -> CommandResult:
+    # Project mode edits only ecc-fe.toml; a direct workspace is rewritten.
+    if not context.workspace_mode:
+        return action()
+    return with_workspace_lock(context.workspace_dir, action)
+
+
+def _set_parameter(
+    command_input: CommandInput, context: CommandContext
+) -> CommandResult:
     assert isinstance(command_input, ParamSetInput)
     schema = lookup_parameter(command_input.key)
     if schema is None:
@@ -157,7 +180,7 @@ def set_parameter(
     )
 
 
-def unset_parameter(
+def _unset_parameter(
     command_input: CommandInput, context: CommandContext
 ) -> CommandResult:
     assert isinstance(command_input, ParamUnsetInput)

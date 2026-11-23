@@ -7,7 +7,6 @@ import shutil
 import stat
 import subprocess
 import tarfile
-import tempfile
 import urllib.request
 import uuid
 import zipfile
@@ -29,6 +28,7 @@ from fecompiler.resources import (
     tool_entry_health,
     xdg_cache_home,
 )
+from fecompiler.utility.atomic_write import atomic_write_json
 
 DEFAULT_REGISTRY_URL = "https://emin017.github.io/ecos-registry/tool-registry.json"
 ALL_PLATFORM = "all-platform"
@@ -516,7 +516,7 @@ class ResourceManager:
                     "Resource manifest installed field must be an object"
                 )
             installed[f"tool:{name}"] = entry
-            _atomic_write_json(self.manifest_path, manifest)
+            atomic_write_json(self.manifest_path, manifest)
 
     def _record_required_resources(self, resource_ids: tuple[str, ...]) -> None:
         with _manifest_lock(self.manifest_path):
@@ -532,7 +532,7 @@ class ResourceManager:
             manifest.setdefault("pdk_references", [])
             manifest.setdefault("installed", {})
             manifest["required_resources"] = list(dict.fromkeys(resource_ids))
-            _atomic_write_json(self.manifest_path, manifest)
+            atomic_write_json(self.manifest_path, manifest)
 
 
 def _normalize_resource_id(resource_id: str) -> str:
@@ -713,20 +713,3 @@ def _manifest_lock(path: Path) -> Iterator[None]:
         except ImportError:
             pass
         yield
-
-
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, path)
-    finally:
-        temp_path.unlink(missing_ok=True)

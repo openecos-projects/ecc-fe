@@ -73,6 +73,31 @@ object directly; its `--jsonl` and `--plain` forms remain record-oriented.
 | `2` | Invalid command-line usage. |
 | `130` | User cancellation. |
 
+## Workspace Locking
+
+Commands that modify a workspace hold an exclusive advisory lock for their
+whole duration: `run`, `param set`/`param unset` on a direct workspace,
+workspace creation, and the `run-flow`, `run-step`, `reset-flow`, and
+`refresh-config` operations shared with JSON-RPC. The lock is a `flock` on the
+hidden sibling file `<parent>/.<workspace-name>.lock`, so it also covers
+creating and replacing the workspace directory, and the kernel releases it
+when the owning process exits.
+
+A command never waits for the lock. When another live command owns the
+workspace it fails with exit status `1` and one record:
+
+```text
+kind=error error=workspace_busy workspace=<path> owner_pid=<pid>
+```
+
+Inspection commands (`status`, `log`, `config`, `report`) do not take the lock
+and remain usable while a flow is running. Steps left in the running state are
+reset by recovery only when no live command holds the lock.
+
+Workspace and project state files (`home/*.json`, `ecc-fe.toml`, step
+`subflow.json` and `checklist.json`) are replaced atomically: an interrupted
+write leaves the previous complete file.
+
 ## Resource Contract
 
 The CLI and Electron use the same state:

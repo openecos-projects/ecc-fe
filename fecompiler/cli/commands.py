@@ -23,6 +23,7 @@ from fecompiler.cli.core.inputs import (
     RunInput,
     StatusInput,
 )
+from fecompiler.cli.core.locking import with_workspace_lock
 from fecompiler.cli.core.records import disclosure_cmd, error_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import (
@@ -59,6 +60,7 @@ from fecompiler.resources import (
     resource_manifest_path,
     tool_entry_health,
 )
+from fecompiler.utility.atomic_write import atomic_write_json
 
 _FLOW_STEPS = ("prepare", "review", "elab", "lint", "sim")
 _LOG_TAIL_MAX_BYTES = 4 * 1024 * 1024
@@ -253,9 +255,10 @@ def _init_request(
 
 def run_flow(command_input: CommandInput, context: CommandContext) -> CommandResult:
     assert isinstance(command_input, RunInput)
-    if context.workspace_mode:
-        return _run_workspace(command_input, context)
-    return _run_project(command_input, context)
+    run = _run_workspace if context.workspace_mode else _run_project
+    return with_workspace_lock(
+        context.workspace_dir, lambda: run(command_input, context)
+    )
 
 
 def _run_workspace(
@@ -509,10 +512,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
         )
         if overrides:
             provenance = Path(run_dir) / "home" / "cli-param-overrides.json"
-            provenance.write_text(
-                json.dumps(overrides, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            atomic_write_json(provenance, overrides)
     except FileExistsError as error:
         if owns_run:
             shutil.rmtree(run_dir, ignore_errors=True)
