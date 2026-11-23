@@ -224,6 +224,11 @@ sequenceDiagram
 | Step 注册表（步骤的唯一定义处） | `fecompiler/allflow/steps.py` |
 | 各设计类型运行哪些步骤 | `fecompiler/allflow/profile.py` |
 | Workspace 创建/读取 | `fecompiler/data/workspace.py` |
+| 应用层操作（create/load/run-flow/run-step 等，CLI 与 RPC 共用） | `fecompiler/application/workspace_service.py` |
+| 创建请求的规范化与校验 | `fecompiler/application/create_request.py` |
+| 仿真配置（SoC 运行参数、测试集、CoreMark、difftest） | `fecompiler/application/sim_config.py` |
+| 各步骤的详情、报告与失败信息 | `fecompiler/application/step_detail.py` |
+| 应用层结果类型与进度事件 | `fecompiler/application/result.py`、`events.py` |
 | Flow 编排与状态维护 | `fecompiler/engine/flow.py` |
 | Step 目录结构 | `fecompiler/tools/fe/builder.py` |
 | Prepare 实现 | `fecompiler/tools/prepare/runner.py` |
