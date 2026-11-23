@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import uuid
 from pathlib import Path
 
 from fecompiler.cli.workspace_access import load_existing_workspace, workspace_markers
 
 TEMPLATE_RELATIVE = Path(".ecc-fe") / "template"
+_STAGING_MARK = ".staging-"
+_RETIRED_MARK = ".retired-"
 
 
 def resolve_run_dir(
@@ -37,21 +41,71 @@ def is_workspace(directory: str) -> bool:
 
 
 def clone_workspace_template(source: str, destination: str) -> None:
-    source_path = Path(source).expanduser().resolve()
     destination_path = Path(destination).expanduser().resolve()
+    _clone_template(source, destination_path, published_path=destination_path)
+
+
+def stage_workspace_replacement(source: str, destination: str) -> str:
+    """Build the replacement for an existing run beside it, leaving it intact.
+
+    The staged workspace already records *destination* as its own location, so
+    :func:`publish_workspace_replacement` only has to rename it into place.
+    """
+    destination_path = Path(destination).expanduser().resolve()
+    for leftover in _replacement_leftovers(destination_path):
+        shutil.rmtree(leftover, ignore_errors=True)
+    staging = destination_path.with_name(
+        f".{destination_path.name}{_STAGING_MARK}{uuid.uuid4().hex[:8]}"
+    )
+    _clone_template(source, staging, published_path=destination_path)
+    return str(staging)
+
+
+def publish_workspace_replacement(staging: str, destination: str) -> None:
+    """Swap a staged workspace in for the run it replaces.
+
+    The previous run is deleted only after the new one is in place, and is
+    restored if the swap fails.
+    """
+    destination_path = Path(destination).expanduser().resolve()
+    retired = destination_path.with_name(
+        f".{destination_path.name}{_RETIRED_MARK}{uuid.uuid4().hex[:8]}"
+    )
+    os.rename(destination_path, retired)
+    try:
+        os.rename(staging, destination_path)
+    except BaseException:
+        os.rename(retired, destination_path)
+        raise
+    shutil.rmtree(retired, ignore_errors=True)
+
+
+def _replacement_leftovers(destination: Path) -> list[Path]:
+    """Staging and retired directories abandoned by an interrupted overwrite."""
+    pattern = re.compile(
+        rf"\.{re.escape(destination.name)}"
+        rf"(?:{re.escape(_STAGING_MARK)}|{re.escape(_RETIRED_MARK)})[0-9a-f]{{8}}"
+    )
+    return [
+        path
+        for path in destination.parent.iterdir()
+        if pattern.fullmatch(path.name) and path.is_dir() and not path.is_symlink()
+    ]
+
+
+def _clone_template(source: str, destination: Path, *, published_path: Path) -> None:
+    source_path = Path(source).expanduser().resolve()
     if load_existing_workspace(str(source_path)) is None:
         raise ValueError(f"Project workspace template is invalid: {source_path}")
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    destination_path.mkdir()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.mkdir()
     try:
         for name in ("origin", "home"):
-            shutil.copytree(source_path / name, destination_path / name)
-        _rewrite_origin_paths(
-            destination_path / "origin", source_path, destination_path
-        )
-        _rewrite_home_paths(destination_path / "home", source_path, destination_path)
+            shutil.copytree(source_path / name, destination / name)
+        _rewrite_origin_paths(destination / "origin", source_path, published_path)
+        _rewrite_home_paths(destination / "home", source_path, published_path)
     except BaseException:
-        shutil.rmtree(destination_path, ignore_errors=True)
+        shutil.rmtree(destination, ignore_errors=True)
         raise
 
 
