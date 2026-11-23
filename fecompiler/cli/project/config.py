@@ -363,3 +363,26 @@ def _replace_params_table(text: str, overrides: dict[str, object]) -> str:
     if suffix and not replacement.endswith("\n\n"):
         replacement += "\n"
     return text[: match.start()] + replacement + suffix
+
+
+def load_run_parameter_overrides(run_dir: str) -> dict[str, object]:
+    """Return the ``run --set`` overrides recorded when a project run was created."""
+    path = Path(run_dir) / "home" / "cli-param-overrides.json"
+    if not path.is_file():
+        return {}
+    raw = read_json_object(path)
+    overrides: dict[str, object] = {}
+    for key, value in raw.items():
+        schema = lookup_parameter(key)
+        if schema is None:
+            raise ProjectConfigError(
+                f"Invalid CLI parameter provenance: unknown parameter {key}"
+            )
+        try:
+            overrides[schema.param] = normalize_stored_value(value, schema)
+        except (TypeError, ValueError) as error:
+            raise ProjectConfigError(
+                f"Invalid CLI parameter provenance for {schema.param}: {error}"
+            ) from error
+    return overrides
+

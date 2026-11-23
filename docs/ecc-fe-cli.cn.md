@@ -209,6 +209,17 @@ JSON 字符串数组。以 `-` 开头的值使用 `--value=<值>`，避免被命
 run 保持可复现。单次实验使用可重复的 `ecc-fe run --set key=value`，覆盖会写入
 该 run 的 `home/cli-param-overrides.json`，不会写回工程配置。
 
+查看某个 run 实际使用的参数（而不是工程当前的设置）：
+
+```bash
+ecc-fe param list --run-id faster-sim
+ecc-fe param diff --run-id faster-sim
+ecc-fe config --resolved --run-id faster-sim
+```
+
+带 `--run-id` 时显示该 run 创建时的值：来自 `run --set` 的标为 `cli`，其余与基线不同的
+标为 `run`。不带 `--run-id` 时显示的是下一个新 run 会用的值。
+
 参数只有一个来源，按模式区分：
 
 - **工程模式**：`ecc-fe.toml` 是唯一来源。新建 run 时用 `[defaults]` 加 `[params]`
