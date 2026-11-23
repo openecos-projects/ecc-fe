@@ -5,12 +5,12 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.tools.common.process import run_tool, tool_timeout
 from fecompiler.tools.common.rtl_inputs import (
     incdirs,
     rtl_files,
@@ -172,10 +172,18 @@ class SlangElabStep(BaseStep):
         ] + files
 
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        timeout = tool_timeout("elab")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = run_tool(
+                cmd,
+                log_path=log_path,
+                timeout=timeout,
+                session_dir=Path(step.log["dir"]),
+            )
             returncode = result.returncode
-            output = (result.stdout + result.stderr).strip() or "Build succeeded: 0 errors, 0 warnings"
+            output = result.output.strip() or "Build succeeded: 0 errors, 0 warnings"
+            if result.timed_out:
+                output += f"\nerror: slang did not finish within {timeout:g}s"
         except OSError as exc:
             returncode = 127
             output = f"error: failed to execute slang: {exc}"

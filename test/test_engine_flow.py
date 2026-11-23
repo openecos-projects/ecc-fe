@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+from tool_fakes import as_run_tool
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.cli import workspace as workspace_cli
@@ -1823,7 +1824,7 @@ def test_build_all_programs_skips_coremark_benchmark(tmp_path, monkeypatch):
         (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     images, ok = _prepare_sim_images(
         {
@@ -1866,7 +1867,7 @@ def test_coremark_build_env_uses_workspace_compile_options(tmp_path, monkeypatch
         (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     build_log = tmp_path / "build.log"
     images, ok = _prepare_sim_images(
@@ -1921,7 +1922,7 @@ def test_ibex_program_build_uses_entry_offset(tmp_path, monkeypatch):
         (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     build_log = tmp_path / "build.log"
     images, ok = _prepare_sim_images(
@@ -1958,7 +1959,7 @@ def test_program_build_failure_does_not_reuse_stale_images(tmp_path, monkeypatch
     def _fake_run(cmd, capture_output=True, text=True, env=None):
         return SimpleNamespace(returncode=1, stdout="", stderr="compile failed\n")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     build_log = tmp_path / "build.log"
     images, ok = _prepare_sim_images(
@@ -2430,7 +2431,7 @@ def test_sim_supports_extra_cpp_flags_and_runtime_args(tmp_path, monkeypatch):
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2489,7 +2490,7 @@ def test_sim_resolves_relative_include_flag_from_workspace_root(tmp_path, monkey
         return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path))
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2540,7 +2541,7 @@ def test_sim_runs_multiple_images_with_separate_logs(tmp_path, monkeypatch):
             image = cmd[cmd.index("--image") + 1]
         return SimpleNamespace(returncode=0, stdout=f"ok:{image}\nHIT GOOD TRAP\n", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2603,7 +2604,7 @@ def test_sim_single_image_args_still_writes_cases_structure(tmp_path, monkeypatc
             stderr="",
         )
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2671,7 +2672,7 @@ def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypat
         returncode, stdout = next(outputs)
         return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
     report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
@@ -2736,7 +2737,7 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
         run_calls.append(list(cmd))
         return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
     state = engine.run_step("sim", rerun=True)
 
     assert state == StateEnum.Success
@@ -2796,7 +2797,7 @@ def test_coremark_sim_log_includes_readable_result_summary(tmp_path, monkeypatch
             stderr="[soc-sim] finish after 64000 cycles\n",
         )
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2877,7 +2878,7 @@ def test_coremark_sim_log_explains_missing_score_when_cycles_absent(tmp_path, mo
             stderr="",
         )
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -2938,7 +2939,7 @@ def test_coremark_validation_errors_fail_sim_case(tmp_path, monkeypatch):
             stderr="[soc-sim] finish after 64000 cycles\n",
         )
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
@@ -3058,7 +3059,7 @@ def test_build_all_programs_emit_separate_case_images(tmp_path, monkeypatch):
         (out_dir / f"{name}.soc.bin").write_bytes(b"\x00")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.verilator.runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
 
     case_root = tmp_path / "ws" / "sim_verilator" / "output" / "cases"
     images, ok = _prepare_sim_images(
@@ -3141,7 +3142,7 @@ def test_elab_runs_full_slang_hierarchy_instead_of_lint_only(tmp_path, monkeypat
         captured["command"] = cmd
         return SimpleNamespace(returncode=0, stdout="Build succeeded: 0 errors, 0 warnings", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.slang.runner.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.slang.runner.run_tool", as_run_tool(fake_run))
 
     assert engine.run_step("prepare", rerun=True) == StateEnum.Success
     assert engine.run_step("elab", rerun=True) == StateEnum.Success

@@ -12,11 +12,11 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
+from fecompiler.tools.common.process import run_tool
 from fecompiler.tools.prepare.runner import PrepareStep
 
 _STRUCTURAL_STAT = "yosys_precheck_stat.json"
@@ -114,44 +114,15 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
 
     try:
         command = [yosys, "-s", str(script_path)]
-        result = subprocess.run(
+        result = run_tool(
             command,
+            log_path=log_path,
             cwd=str(script_dir),
-            capture_output=True,
-            text=True,
             env=_yosys_runtime_env(yosys),
             timeout=_TIMEOUT_SECONDS,
+            session_dir=script_dir,
         )
-        output = (result.stdout or "") + (result.stderr or "")
-        log_path.write_text(output, encoding="utf-8")
-    except subprocess.TimeoutExpired as exc:
-        output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + (
-            (exc.stderr or "") if isinstance(exc.stderr, str) else ""
-        )
-        log_path.write_text(output + f"\n[rtl-review] Yosys precheck timed out after {_TIMEOUT_SECONDS}s\n", encoding="utf-8")
-        return _write_probe(paths, {
-            "status": "timeout",
-            "mode": mode,
-            "scope": scope,
-            "tool": "yosys",
-            "frontend": frontend,
-            "title": "Yosys Precheck",
-            "reason": "Yosys precheck timed out",
-            "top_module": top_module,
-            "inputs": inputs,
-            "metrics": {},
-            "module_risks": [],
-            "quality": _quality("timeout"),
-            "diagnostics": _diagnostics_from_log(output),
-            "issues": [_issue(
-                "warning",
-                "tooling",
-                "Yosys precheck timed out",
-                f"The {subject} Yosys precheck did not finish within the bounded review timeout.",
-                recommendation="Run elaboration/lint for detailed diagnostics, then retry Review after reducing unsupported constructs.",
-            )],
-            "artifacts": paths,
-        })
+        output = result.output
     except OSError as exc:
         log_path.write_text(f"[rtl-review] failed to launch yosys: {exc}\n", encoding="utf-8")
         return _write_probe(paths, {
@@ -174,6 +145,31 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
                 "Yosys precheck could not start",
                 "Yosys was found but could not be launched by the Review step.",
                 recommendation="Check Yosys permissions and runtime dependencies.",
+            )],
+            "artifacts": paths,
+        })
+    if result.timed_out:
+        log_path.write_text(output + f"\n[rtl-review] Yosys precheck timed out after {_TIMEOUT_SECONDS}s\n", encoding="utf-8")
+        return _write_probe(paths, {
+            "status": "timeout",
+            "mode": mode,
+            "scope": scope,
+            "tool": "yosys",
+            "frontend": frontend,
+            "title": "Yosys Precheck",
+            "reason": "Yosys precheck timed out",
+            "top_module": top_module,
+            "inputs": inputs,
+            "metrics": {},
+            "module_risks": [],
+            "quality": _quality("timeout"),
+            "diagnostics": _diagnostics_from_log(output),
+            "issues": [_issue(
+                "warning",
+                "tooling",
+                "Yosys precheck timed out",
+                f"The {subject} Yosys precheck did not finish within the bounded review timeout.",
+                recommendation="Run elaboration/lint for detailed diagnostics, then retry Review after reducing unsupported constructs.",
             )],
             "artifacts": paths,
         })

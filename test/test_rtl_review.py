@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from tool_fakes import as_run_tool
 from fecompiler.allflow.profile import GENERIC_RTL
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
@@ -241,7 +242,7 @@ def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp
         netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_cpu_wrapper_outside_filelist"),
@@ -291,7 +292,7 @@ def test_yosys_precheck_autodiscovers_same_name_local_helper_sources(tmp_path: P
         netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_autodiscover_helper"),
@@ -417,7 +418,7 @@ def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
         }), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout=f"Warning: {rtl}:12:7: demo warning\n", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_yosys_precheck"),
@@ -481,7 +482,7 @@ def test_yosys_precheck_error_blocks_review_step(tmp_path: Path, monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_yosys_error"),
@@ -530,7 +531,7 @@ def test_yosys_precheck_tool_limit_does_not_block_review_step(tmp_path: Path, mo
             stderr="",
         )
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_yosys_tool_limit"),
@@ -574,7 +575,7 @@ def test_yosys_precheck_script_stays_frontend_only(tmp_path: Path, monkeypatch):
         stat_path.write_text(json.dumps({"modules": {}, "design": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_probe_script"),
@@ -624,7 +625,7 @@ def test_yosys_precheck_prefers_slang_frontend_when_available(tmp_path: Path, mo
         netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_yosys_slang"),
@@ -685,7 +686,7 @@ endmodule
         _netlist_path_from_script(script_text).write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
 
     spec = CreateWorkspaceData(
         directory=str(tmp_path / "ws_yosys_dpi_blackbox"),
@@ -736,4 +737,4 @@ def _mock_successful_yosys_precheck(monkeypatch):
         _netlist_path_from_script(script_text).write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.subprocess.run", fake_run)
+    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
