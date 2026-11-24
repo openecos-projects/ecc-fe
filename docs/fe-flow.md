@@ -194,9 +194,18 @@ RTL 工程的 `sim_verilator` 只有 `obj_dir/`、`output/<testbench top>_sim`�
    - 先编译程序再运行：`sim_build_all_programs`、`sim_program_names`、
      `sim_program_sources`、`sim_programs_dir`。
 
-   已有的仿真程序只有在它的构建记录（`<design>_sim.build.json`：构建命令，以及构建时
-   读过的每个文件的哈希，包括被 include 的头文件）与当前输入一致时才会被复用，否则
-   重新编译，并在编译日志的第一行说明原因。
+   仿真程序带有一份构建记录（`<design>_sim.build.json`：构建命令，以及构建时读过的
+   每个文件的哈希，包括被 include 的头文件）：
+
+   - 构建命令和上次相同时，在原有的 `obj_dir` 上增量构建，只重编变了的部分；命令变了
+     （编译参数、源文件列表、top）就从空目录重新构建。并行数（`sim.build_jobs`）不算
+     构建命令的一部分。
+   - 要求复用已有程序时（`sim_reuse_binary`，只能由直接调用引擎的代码设置），只有记录
+     与当前输入完全一致才复用，否则重新构建，并在编译日志的第一行说明原因。
+
+   测试程序各自独立编译，`sim.build_jobs` 个同时进行；用例默认一个一个跑，
+   `sim.case_jobs` 可以让多个用例同时跑。`report/runs/` 只保留最近
+   `sim.history_limit` 次运行。
 
 ## CPU 工程的仿真链路
 

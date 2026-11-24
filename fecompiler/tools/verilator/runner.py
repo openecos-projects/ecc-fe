@@ -7,13 +7,15 @@ import os
 import re
 import shutil
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
-from fecompiler.tools.common.process import run_tool, tool_timeout
+from fecompiler.tools.common.process import run_tool, stop_session, tool_timeout
+from fecompiler.tools.common.tool_config import tool_config
 from fecompiler.tools.common.rtl_inputs import (
     rtl_files,
     verilator_define_args,
@@ -22,7 +24,12 @@ from fecompiler.tools.common.rtl_inputs import (
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 
-from fecompiler.tools.verilator.build_stamp import record_build, stale_reason, stamp_path
+from fecompiler.tools.verilator.build_stamp import (
+    record_build,
+    same_command,
+    stale_reason,
+    stamp_path,
+)
 from fecompiler.tools.verilator.command import verilator_cmd as _verilator_cmd
 # The lint step lives in its own module; these names are re-exported for the
 # code that still imports them from here.
@@ -1074,10 +1081,50 @@ def _apply_wave_arg(args: list[str], default_wave: Path) -> tuple[list[str], str
     return [*args, "--wave", wave], wave
 
 
-def _apply_case_wave_arg(case_name: str, image: str, args: list[str], default_wave: Path) -> tuple[list[str], str]:
-    if _is_coremark_case(case_name, image) and not _wave_from_run_args(args):
+def _apply_case_wave_arg(
+    case_name: str, image: str, args: list[str], default_wave: Path, *, dump: bool = True
+) -> tuple[list[str], str]:
+    """Add the waveform argument of a case; one named in *args* always wins."""
+    wanted = dump and not _is_coremark_case(case_name, image)
+    if not wanted and not _wave_from_run_args(args):
         return list(args), ""
     return _apply_wave_arg(args, default_wave)
+
+
+def _setting_int(workspace: dict[str, Any], key: str, default: int, *, minimum: int) -> int:
+    try:
+        value = int(tool_config(workspace).get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= minimum else default
+
+
+def _map_in_order(items: list[Any], function: Any, jobs: int, session_of: Any) -> list[Any]:
+    """Apply *function* to every item, *jobs* at a time; results keep the order.
+
+    *session_of* names the tool session directory of an item, so that tools
+    still running can be stopped when the work is interrupted.
+    """
+    if jobs <= 1:
+        return [function(item) for item in items]
+    with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="ecc-fe-sim") as pool:
+        futures = [pool.submit(function, item) for item in items]
+        try:
+            return [future.result() for future in futures]
+        except BaseException:
+            # Interrupted or failed: do not leave tools running behind us.
+            for future in futures:
+                future.cancel()
+            for item in items:
+                stop_session(session_of(item))
+            raise
+
+
+def _prune_run_history(runs_root: Path, limit: int) -> None:
+    """Keep the newest *limit* runs; run directories are named by their time."""
+    runs = sorted(path for path in runs_root.iterdir() if path.is_dir())
+    for stale in runs[: max(len(runs) - limit, 0)]:
+        shutil.rmtree(stale, ignore_errors=True)
 
 
 def _run_tag() -> str:
@@ -1224,10 +1271,22 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
     if link_base:
         env["SOC_PROGRAM_LINK_BASE"] = link_base
         lines.append(f"[build_program] program link base={link_base}")
-    for src in sources:
+    jobs = _setting_int(workspace, "sim_build_jobs", 0, minimum=0) or os.cpu_count() or 1
+    jobs = min(jobs, len(sources))
+
+    def out_dir_of(src: Path) -> Path:
+        case_name = _safe_case_name(f"{src.stem}.soc")
+        return flat_out_dir if flat_out_dir is not None else case_output_root / case_name
+
+    def session_of(src: Path) -> Path:
+        # Programs built side by side may share an output directory; each
+        # still needs a session of its own.
+        out_dir = out_dir_of(src)
+        return out_dir / f".session_{src.stem}" if jobs > 1 else out_dir
+
+    def build(src: Path) -> tuple[list[str], Path, bool]:
         name = src.stem
-        case_name = _safe_case_name(f"{name}.soc")
-        out_dir = flat_out_dir if flat_out_dir is not None else case_output_root / case_name
+        out_dir = out_dir_of(src)
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = _build_program_command(build_script, src, name, out_dir)
         try:
@@ -1235,25 +1294,39 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
                 cmd,
                 env=env,
                 timeout=tool_timeout("program_build"),
-                session_dir=out_dir,
+                session_dir=session_of(src),
             )
             output = result.output.strip()
             rc = result.returncode
         except OSError as exc:
             output = str(exc)
             rc = 1
-        lines.append(f"[build_program] name={name} rc={rc} src={src}")
+        if jobs > 1:
+            # The per-program session directory is empty once the build is over.
+            try:
+                session_of(src).rmdir()
+            except OSError:
+                pass
+        report = [f"[build_program] name={name} rc={rc} src={src}"]
         if output:
-            lines.append(output)
+            report.append(output)
         img = out_dir / f"{name}.soc.bin"
-        if rc == 0 and img.exists():
-            canonical = str(img.resolve())
-            if canonical not in seen:
-                seen.add(canonical)
-                images.append(canonical)
-        else:
+        built = rc == 0 and img.exists()
+        if not built:
+            report.append(f"[build_program] missing image: {img}")
+        return report, img, built
+
+    # Each build writes only files named after its program, so they can run
+    # side by side; the log keeps the order of the sources.
+    for report, img, built in _map_in_order(sources, build, jobs, session_of):
+        lines.extend(report)
+        if not built:
             ok = False
-            lines.append(f"[build_program] missing image: {img}")
+            continue
+        canonical = str(img.resolve())
+        if canonical not in seen:
+            seen.add(canonical)
+            images.append(canonical)
 
     if build_log_path is not None:
         build_log_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
@@ -1384,8 +1457,10 @@ class VerilatorSimStep(BaseStep):
         top     = workspace.get("top_module", "top")
         obj_dir = Path(step.directory) / "obj_dir"
 
+        # The number of jobs is not part of what gets built.
+        jobs = ["-j", str(_setting_int(workspace, "sim_build_jobs", 0, minimum=0))]
         cmd = [
-            _verilator_cmd(), "--cc", "--exe", "--build", "-j", "8",
+            _verilator_cmd(), "--cc", "--exe", "--build",
             "-Wno-fatal",
             "--timing",
             "--trace",
@@ -1418,12 +1493,16 @@ class VerilatorSimStep(BaseStep):
                 return True
             rebuild_note = f"not reusing {sim_bin}: {reason}; rebuilding\n"
 
-        if obj_dir.exists():
+        # Objects in the build directory were made with the recorded command.
+        # With the same command make rebuilds only what changed; with another
+        # one (flags, sources, top) nothing in there can be trusted.
+        incremental = obj_dir.is_dir() and same_command(sim_bin, cmd)
+        if obj_dir.exists() and not incremental:
             shutil.rmtree(obj_dir)
         stamp_path(sim_bin).unlink(missing_ok=True)
         log_path = Path(step.log["dir"]) / "log.txt"
         result = run_tool(
-            cmd,
+            [cmd[0], *cmd[1:4], *jobs, *cmd[4:]],
             log_path=log_path,
             timeout=tool_timeout("sim_compile"),
             session_dir=Path(step.log["dir"]),
@@ -1434,12 +1513,10 @@ class VerilatorSimStep(BaseStep):
         if rebuild_note:
             previous = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
             log_path.write_text(rebuild_note + previous, encoding="utf-8")
-        update_substep_ok(
-            step,
-            SimSubFlowEnum.compile.value,
-            ok,
-            info={"rebuilt": rebuild_note.strip()} if rebuild_note else None,
-        )
+        info: dict[str, Any] = {"build": "incremental" if incremental else "clean"}
+        if rebuild_note:
+            info["rebuilt"] = rebuild_note.strip()
+        update_substep_ok(step, SimSubFlowEnum.compile.value, ok, info=info)
         return ok
 
     @staticmethod
@@ -1542,7 +1619,11 @@ class VerilatorSimStep(BaseStep):
         summary_lines: list[str] = []
         cases_report: list[dict[str, Any]] = []
 
-        for case in cases:
+        settings = tool_config(workspace)
+        dump_waveform = _bool_workspace_value(settings.get("sim_dump_waveform"), True)
+        case_jobs = min(_setting_int(workspace, "sim_case_jobs", 1, minimum=1), max(len(cases), 1))
+
+        def run_case(case: dict[str, Any]) -> tuple[dict[str, Any], str]:
             case_name = str(case["name"])
             image = str(case["image"])
             logs = _case_logs(case_root, run_case_root, output_cases_root, case_name)
@@ -1551,6 +1632,7 @@ class VerilatorSimStep(BaseStep):
                 image,
                 list(case["args"]),
                 logs["output_dir"] / "wave.vcd",
+                dump=dump_waveform,
             )
 
             if image and not Path(image).exists():
@@ -1560,7 +1642,8 @@ class VerilatorSimStep(BaseStep):
                 rc, output = _run_sim_process(
                     [str(sim_bin), *run_args],
                     log_path=logs["output_log"],
-                    session_dir=Path(step.log["dir"]),
+                    # Side by side, each case needs a session of its own.
+                    session_dir=logs["output_dir"] if case_jobs > 1 else Path(step.log["dir"]),
                 )
 
             case_ok, validation = _case_output_ok(case_name, image, rc, output)
@@ -1586,9 +1669,6 @@ class VerilatorSimStep(BaseStep):
             )
             for log_path in (logs["latest_log"], logs["run_log"], logs["output_log"]):
                 log_path.write_text(terminal_output, encoding="utf-8")
-            if not case_ok:
-                all_ok = False
-                failed_cases.append(case_name)
 
             case_report = {
                 "name": case_name,
@@ -1617,10 +1697,21 @@ class VerilatorSimStep(BaseStep):
                     metrics=metrics,
                     wave=wave,
                 )
-            cases_report.append(case_report)
-            summary_lines.append(
+            return case_report, (
                 f"[{case_name}] status={'PASS' if case_ok else 'FAIL'} rc={rc} suite={suite} image={image or '-'} log={logs['output_log']} wave={wave} run_log={logs['run_log']}"
             )
+
+        for case_report, summary_line in _map_in_order(
+            cases,
+            run_case,
+            case_jobs,
+            lambda case: output_cases_root / str(case["name"]),
+        ):
+            cases_report.append(case_report)
+            summary_lines.append(summary_line)
+            if not case_report["ok"]:
+                all_ok = False
+                failed_cases.append(str(case_report["name"]))
 
         summary_text = "\n".join(summary_lines) + "\n"
         sim_log.write_text(summary_text, encoding="utf-8")
@@ -1636,6 +1727,7 @@ class VerilatorSimStep(BaseStep):
         }
         json_write(str(cases_json), cases_payload)
         json_write(str(run_root / "cases.json"), cases_payload)
+        _prune_run_history(runs_root, _setting_int(workspace, "sim_history_limit", 20, minimum=1))
         json_write(str(history_json), _simulation_history(runs_root, run_id))
         update_substep_ok(
             step,

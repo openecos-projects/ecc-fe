@@ -121,6 +121,7 @@ def _step_configuration(
                     key
                     for key in merged
                     if str(key).startswith(definition.config_prefixes)
+                    and key not in definition.config_untracked
                 )
             )
     configuration = {
