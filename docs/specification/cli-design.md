@@ -27,7 +27,8 @@ ecc-fe config
 ecc-fe resource list|status|install|update|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
-ecc-fe report qor|files
+ecc-fe report qor|files|compare
+ecc-fe runs list|delete
 ecc-fe workspace ...
 ecc-fe rpc ...
 ```
@@ -476,6 +477,55 @@ as JSON.
 step `report/` and `analysis/` directories. Each record includes its section,
 absolute path, workspace-relative path, byte size, format, and a shell-safe
 inspection command.
+
+`report compare <base> <run>` compares two runs of one project. It writes a
+`qor_compare` summary, one `qor_step` record per step, and one `qor_metric`
+record per metric whose value differs (`--all` includes the unchanged ones).
+
+- A metric is `improved` or `regressed` according to its `direction`
+  (`higher_is_better`, `lower_is_better`); a `trend_only` metric or a
+  non-numeric value is only ever `changed`.
+- A step whose state is worse than in the base run counts as a regression.
+- `same_inputs` on a step is `false` when the two results were produced from
+  different inputs or settings, so their numbers measure different things.
+- `parameter_changes` in the summary lists every stored parameter that
+  differs, as `[base, run]`.
+- The summary `status` is `regressed` if anything regressed, otherwise
+  `improved`, `changed`, or `same`.
+
+The command exits `0` when the comparison was made. With
+`--fail-on-regression` it exits `1` when `regressed` is not zero. A run that
+does not exist is `run_not_found`.
+
+## Run Management
+
+`runs list` writes a `run_list` summary (`project`, `count`, `selected`) and
+one `run` record per directory under `runs/` whose name is a valid run id:
+`state` (as in `status`), `failed_step`, `steps_done`, `steps_total`,
+`modified` (UTC time the flow state last changed), `overrides` (the `run
+--set` values the run was created with), and `selected` for the run that
+commands use when `--run-id` is omitted. A run whose state files cannot be
+read is listed with `state=unreadable`; the command does not fail.
+
+`runs delete <run-id>...` removes runs. Each id yields a `run_deleted` record
+or an error record, and the command exits `1` if any id failed:
+
+| Error | When |
+| --- | --- |
+| `invalid_run_id` | Not a plain run name; exit status `2`, nothing is deleted. |
+| `run_not_found` | No such run. |
+| `workspace_busy` | A command is using the run. |
+| `run_path_refused` | The entry is a symlink or is not a run directory. |
+
+A run is renamed out of `runs/` before its files are removed, so an
+interrupted delete never leaves a partial run under its name. The project
+template and `ecc-fe.toml` are never touched.
+
+Both commands need a project; elsewhere they fail with `project_not_found`.
+
+Lock files: a run's `.<run-id>.lock` is removed with the run. A command aimed
+at a run or workspace that does not exist removes the lock file it created,
+and `runs delete` sweeps lock files whose run is gone.
 
 ## Compatibility Rules
 

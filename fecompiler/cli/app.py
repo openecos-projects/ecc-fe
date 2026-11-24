@@ -21,12 +21,14 @@ from fecompiler.cli.core.inputs import (
     ParamSetInput,
     ParamShowInput,
     ParamUnsetInput,
+    ReportCompareInput,
     ReportFilesInput,
     ReportQorInput,
     ResourceEnvInput,
     ResourceInstallInput,
     ResourceListInput,
     RunInput,
+    RunsDeleteInput,
     StatusInput,
     output_mode,
 )
@@ -47,6 +49,7 @@ from fecompiler.cli.core.version_info import (
 from fecompiler.cli.handlers import catalog as catalog_handlers
 from fecompiler.cli.handlers import param as param_handlers
 from fecompiler.cli.handlers import report as report_handlers
+from fecompiler.cli.handlers import runs as runs_handlers
 
 
 def _version_callback(value: bool) -> None:
@@ -80,6 +83,11 @@ def build_app() -> typer.Typer:
         help="Inspect and validate frontend catalog entries.",
         no_args_is_help=True,
         add_completion=False,
+    )
+    runs_app = typer.Typer(
+        add_completion=False,
+        help="List and delete the runs of a project.",
+        no_args_is_help=True,
     )
     report_app = typer.Typer(
         name="report",
@@ -791,6 +799,82 @@ def build_app() -> typer.Typer:
             report_handlers.files,
         )
 
+    @report_app.command(
+        "compare", help="Compare the QoR of two runs of a project."
+    )
+    def report_compare_command(
+        base: Annotated[str, typer.Argument(help="Run id to compare against")],
+        candidate: Annotated[str, typer.Argument(help="Run id being judged")],
+        project: ProjectOption = None,
+        all_metrics: Annotated[
+            bool, typer.Option("--all", help="Include metrics that did not change")
+        ] = False,
+        fail_on_regression: Annotated[
+            bool,
+            typer.Option(
+                "--fail-on-regression", help="Exit 1 when the second run is worse"
+            ),
+        ] = False,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "report.compare",
+            ReportCompareInput(
+                workspace=None,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                base=base,
+                candidate=candidate,
+                all_metrics=all_metrics,
+                fail_on_regression=fail_on_regression,
+            ),
+            report_handlers.compare,
+        )
+
+    @runs_app.command("list", help="List the runs of a project with their state.")
+    def runs_list_command(
+        project: ProjectOption = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "runs.list",
+            CommandInput(
+                workspace=None,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+            ),
+            runs_handlers.list_runs,
+        )
+
+    @runs_app.command("delete", help="Delete one or more runs of a project.")
+    def runs_delete_command(
+        run_ids: Annotated[list[str], typer.Argument(help="Run ids to delete")],
+        project: ProjectOption = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "runs.delete",
+            RunsDeleteInput(
+                workspace=None,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_ids=tuple(run_ids),
+            ),
+            runs_handlers.delete_runs,
+        )
+
     @app.command(
         "workspace",
         context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -811,6 +895,7 @@ def build_app() -> typer.Typer:
     app.add_typer(param_app, name="param")
     app.add_typer(catalog_app, name="catalog")
     app.add_typer(report_app, name="report")
+    app.add_typer(runs_app, name="runs")
     return app
 
 

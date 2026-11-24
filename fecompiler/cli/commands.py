@@ -30,9 +30,11 @@ from fecompiler.cli.core.inputs import (
 )
 from fecompiler.cli.core.locking import with_workspace_lock
 from fecompiler.cli.core.records import (
+    FAILED_STATES,
     disclosure_cmd,
     error_record,
     failure_record,
+    flow_state,
     normalize_state,
 )
 from fecompiler.cli.core.types import CommandContext, CommandResult, OutputMode
@@ -984,34 +986,18 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         summary["stale_steps"] = list(stale)
         summary.setdefault("resume_cmd", _target_cmd("ecc-fe run --resume", context))
     states = [str(record.get("state")) for record in records[1:]]
-    summary["state"] = _flow_state(states, running=owner is not None)
+    summary["state"] = flow_state(states, running=owner is not None)
     summary["failed_step"] = next(
         (
             record["step"]
             for record in records[1:]
-            if record.get("state") in _FAILED_STATES
+            if record.get("state") in FAILED_STATES
         ),
         None,
     )
     # Reading the state succeeded, so the command did: a failed or interrupted
     # flow is reported in the records, not through the exit status.
     return CommandResult.ok(records)
-
-
-_FAILED_STATES = frozenset({"incomplete", "invalid"})
-
-
-def _flow_state(states: list[str], *, running: bool) -> str:
-    """Summarise step states as one of running/interrupted/failed/success/pending."""
-    if running:
-        return "running"
-    if "interrupted" in states:
-        return "interrupted"
-    if any(state in _FAILED_STATES for state in states):
-        return "failed"
-    if states and all(state == "success" for state in states):
-        return "success"
-    return "pending"
 
 
 def _stale_step_reasons(

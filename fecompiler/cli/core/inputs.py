@@ -142,6 +142,19 @@ class ReportFilesInput(CommandInput):
     step: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ReportCompareInput(CommandInput):
+    base: str = ""
+    candidate: str = ""
+    all_metrics: bool = False
+    fail_on_regression: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RunsDeleteInput(CommandInput):
+    run_ids: tuple[str, ...] = ()
+
+
 def output_mode(*, json_output: bool, jsonl: bool, plain: bool) -> OutputMode:
     if jsonl:
         return OutputMode.JSONL

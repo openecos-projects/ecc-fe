@@ -48,6 +48,11 @@ def _render_text(
         print(str(records[0]["content"]), file=target)
     elif command == "report.qor" and records:
         _render_qor_text(records[0], target)
+    elif command in _COMPACT_TEXT and records:
+        print(f"[{command}]", file=target)
+        _render_fields(records[0], target)
+        for record in records[1:]:
+            print(f"  {_COMPACT_TEXT[command](record)}", file=target)
     elif records:
         print(f"[{command}]", file=target)
         for index, record in enumerate(records):
@@ -60,6 +65,58 @@ def _render_text(
             {key: value for key, value in record.items() if key not in {"kind", "error"}},
             error_target,
         )
+
+
+def _run_line(record: dict[str, object]) -> str:
+    parts = [
+        f"{record.get('run')}:",
+        str(record.get("state")),
+        f"{record.get('steps_done', 0)}/{record.get('steps_total', 0)} steps",
+    ]
+    if record.get("failed_step"):
+        parts.append(f"failed in {record['failed_step']}")
+    if record.get("modified"):
+        parts.append(str(record["modified"]))
+    overrides = record.get("overrides")
+    if isinstance(overrides, dict) and overrides:
+        parts.append(" ".join(f"{key}={value}" for key, value in overrides.items()))
+    if record.get("selected"):
+        parts.append("(selected)")
+    if record.get("message"):
+        parts.append(str(record["message"]))
+    return "  ".join(parts)
+
+
+def _arrow(base: object, run: object) -> str:
+    def show(value: object) -> str:
+        return "-" if value is None else _scalar(value)
+
+    return show(base) if base == run else f"{show(base)} -> {show(run)}"
+
+
+def _compare_line(record: dict[str, object]) -> str:
+    if record.get("kind") == "qor_metric":
+        delta = record.get("delta")
+        change = f" ({delta:+g})" if isinstance(delta, (int, float)) else ""
+        return (
+            f"{record.get('step')}.{record.get('metric')}: "
+            f"{_arrow(record.get('base'), record.get('run'))}{change}"
+            f"  {record.get('verdict')}"
+        )
+    if record.get("kind") != "qor_step":
+        return " ".join(f"{key}={value}" for key, value in record.items())
+    parts = [
+        f"{record.get('step')}:",
+        _arrow(record.get("base_state"), record.get("run_state")),
+        f"quality {_arrow(record.get('base_quality'), record.get('run_quality'))}",
+        f"score {_arrow(record.get('base_score'), record.get('run_score'))}",
+    ]
+    if record.get("same_inputs") is False:
+        parts.append("(inputs or settings differ)")
+    return "  ".join(parts)
+
+
+_COMPACT_TEXT = {"runs.list": _run_line, "report.compare": _compare_line}
 
 
 def _render_fields(record: dict[str, object], target: TextIO) -> None:

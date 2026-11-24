@@ -79,6 +79,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         "param",
         "catalog",
         "report",
+        "runs",
     }
     if _is_removed_direct_form(raw_argv, root_commands):
         print(_REMOVED_DIRECT_FORM, file=sys.stderr, end="")
