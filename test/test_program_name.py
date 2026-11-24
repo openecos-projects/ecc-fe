@@ -15,6 +15,7 @@ from fecompiler.cli.core.records import disclosure_cmd
 from fecompiler.utility.program import PROGRAM_ENV, invoked, program_name
 
 _COMMAND_WORD = re.compile(r"(?<![\w./-])ecc-fe(?![\w./-])")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 @pytest.fixture(autouse=True)
@@ -35,14 +36,9 @@ def _records(capsys) -> list[dict]:
     return json.loads(capsys.readouterr().out)["records"]
 
 
-def _strings(value) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [text for item in value.values() for text in _strings(item)]
-    if isinstance(value, list):
-        return [text for item in value for text in _strings(item)]
-    return []
+def _plain(text: str) -> str:
+    """Help is styled when the terminal allows it; compare the words only."""
+    return " ".join(_ANSI.sub("", text).split())
 
 
 def test_default_name_is_unchanged() -> None:
@@ -124,10 +120,10 @@ def test_text_messages_use_the_name(as_ecc_fe, tmp_path, capsys) -> None:
 
 def test_usage_and_help_use_the_name(as_ecc_fe, capsys) -> None:
     assert cli_main.run(["run", "--help"]) == 0
-    assert "Usage: ecc fe run" in capsys.readouterr().out
+    assert "Usage: ecc fe run" in _plain(capsys.readouterr().out)
 
     assert cli_main.run(["workspace", "--help"]) == 0
-    assert "ecc fe workspace" in capsys.readouterr().out
+    assert "ecc fe workspace" in _plain(capsys.readouterr().out)
 
     assert cli_main.run(["--design", "x", "--top", "y"]) == 2
     error = capsys.readouterr().err
