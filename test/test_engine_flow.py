@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tool_fakes import as_run_tool
+import pytest
+
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import CreateWorkspaceData, create_workspace, load_workspace
 from fecompiler.cli import workspace as workspace_cli
@@ -2706,9 +2708,14 @@ def test_sim_history_tracks_failures_fixes_and_cycle_changes(tmp_path, monkeypat
     assert [run["ok"] for run in history["runs"][:3]] == [True, False, True]
 
 
-def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
+def _reusable_sim_workspace(tmp_path, monkeypatch):
+    """A sim workspace whose "Verilator" writes the program and its dependency file."""
     rtl = tmp_path / "chip_top.v"
-    rtl.write_text("module chip_top(); endmodule\n", encoding="utf-8")
+    header = tmp_path / "defs.vh"
+    tb = tmp_path / "tb_main.cpp"
+    rtl.write_text('`include "defs.vh"\nmodule chip_top(); endmodule\n', encoding="utf-8")
+    header.write_text("`define WIDTH 8\n", encoding="utf-8")
+    tb.write_text("int main(int argc, char** argv){ return 0; }\n", encoding="utf-8")
     img = tmp_path / "tests" / "out" / "min2.soc.bin"
     img.parent.mkdir(parents=True, exist_ok=True)
     img.write_bytes(b"\x00")
@@ -2717,31 +2724,85 @@ def test_sim_can_reuse_existing_binary_without_recompile(tmp_path, monkeypatch):
         directory=str(tmp_path / "ws_sim_reuse"),
         parameters={"Design": "chip", "Top module": "chip_top"},
         origin_verilog=str(rtl),
+        testbench=str(tb),
         sim_run_args=["--image", str(img), "--max-cycles", "100"],
     )
     create_workspace(spec)
     ws = load_workspace(str(tmp_path / "ws_sim_reuse"))
-
     engine = EngineFlow(workspace=ws)
     engine.create_step_workspaces()
-
-    sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "chip_sim"
-    sim_bin.parent.mkdir(parents=True, exist_ok=True)
-    sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    sim_bin.chmod(0o755)
     ws["sim_reuse_binary"] = True
 
     run_calls: list[list[str]] = []
 
     def _fake_run(cmd, capture_output=True, text=True):
         run_calls.append(list(cmd))
+        if _is_verilator_compile_cmd(cmd):
+            program = Path(cmd[cmd.index("-o") + 1])
+            build_dir = Path(cmd[cmd.index("--Mdir") + 1])
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            program.chmod(0o755)
+            build_dir.mkdir(parents=True, exist_ok=True)
+            # Verilator names every file it read, the included header among them.
+            (build_dir / "Vchip_top__ver.d").write_text(
+                f"{build_dir}/Vchip_top.cpp : {rtl} {header}\n", encoding="utf-8"
+            )
         return SimpleNamespace(returncode=0, stdout="HIT GOOD TRAP\n", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", as_run_tool(_fake_run))
-    state = engine.run_step("sim", rerun=True)
 
-    assert state == StateEnum.Success
-    assert all(not _is_verilator_compile_cmd(call) for call in run_calls)
+    def compiles() -> int:
+        count = sum(_is_verilator_compile_cmd(call) for call in run_calls)
+        run_calls.clear()
+        return count
+
+    return engine, ws, rtl, header, tb, compiles
+
+
+def test_sim_reuses_a_binary_that_matches_its_inputs(tmp_path, monkeypatch):
+    engine, _ws, _rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 1
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 0
+
+
+@pytest.mark.parametrize("edited", ["rtl", "included_header", "testbench"])
+def test_sim_rebuilds_a_reused_binary_when_an_input_changed(tmp_path, monkeypatch, edited):
+    engine, ws, rtl, header, tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    compiles()
+
+    target = {"rtl": rtl, "included_header": header, "testbench": tb}[edited]
+    target.write_text(target.read_text(encoding="utf-8") + "// edited\n", encoding="utf-8")
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 1
+    log = (Path(ws["directory"]) / "sim_verilator" / "log" / "log.txt").read_text(encoding="utf-8")
+    assert f"{target} changed since it was built; rebuilding" in log
+
+
+def test_sim_rebuilds_when_the_build_options_changed(tmp_path, monkeypatch):
+    engine, ws, _rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    compiles()
+
+    ws["sim_cflags"] = [*(ws.get("sim_cflags") or []), "-DEXTRA=1"]
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 1
+
+
+def test_sim_does_not_trust_a_binary_without_a_build_record(tmp_path, monkeypatch):
+    engine, ws, _rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "chip_sim"
+    sim_bin.parent.mkdir(parents=True, exist_ok=True)
+    sim_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 1
 
 
 def test_coremark_sim_log_includes_readable_result_summary(tmp_path, monkeypatch):
