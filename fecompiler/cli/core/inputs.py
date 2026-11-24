@@ -28,7 +28,10 @@ class InitInput(CommandInput):
     name: str | None = None
     design: str = ""
     top: str = "top"
-    rtl: str | None = None
+    # "cpu", "rtl", or None to infer it from the other options.
+    kind: str | None = None
+    rtl: tuple[str, ...] = ()
+    filelist: str | None = None
     cpu_filelist: str | None = None
     cpu_top_module: str | None = None
     soc_filelist: str | None = None

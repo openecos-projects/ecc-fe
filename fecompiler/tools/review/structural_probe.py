@@ -182,6 +182,8 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
     module_risks = _module_risks_from_stat(stat, metrics)
     quality = _quality_from_run(result.returncode, diagnostics, metrics)
     issues = _issues_from_probe(output, diagnostics, metrics, result.returncode)
+    if scope == "design":
+        issues = [_design_wording(issue) for issue in issues]
     if result.returncode == 0:
         status = "success"
     elif _only_tool_limit_errors(diagnostics):
@@ -661,6 +663,26 @@ def _cpu_top(workspace: dict[str, Any], inputs: dict[str, Any] | None = None) ->
     if top and top != "ecos_sim_top" and _top_is_declared_or_unscanned(top, inputs):
         return top
     return _infer_top_from_inputs(inputs)
+
+
+_DESIGN_WORDING = (
+    ("selected CPU wrapper/top exists in the CPU filelist", "selected top module exists in the design sources"),
+    ("the CPU top hierarchy", "the top hierarchy"),
+    ("The CPU RTL", "The design RTL"),
+    ("the CPU RTL", "the design RTL"),
+    ("A CPU net", "A net"),
+)
+
+
+def _design_wording(issue: dict[str, Any]) -> dict[str, Any]:
+    """Reword an issue written for a CPU so it reads right for any RTL design."""
+    reworded = dict(issue)
+    for key, value in issue.items():
+        if isinstance(value, str):
+            for cpu_text, design_text in _DESIGN_WORDING:
+                value = value.replace(cpu_text, design_text)
+            reworded[key] = value
+    return reworded
 
 
 def _probe_scope(workspace: dict[str, Any]) -> str:

@@ -344,8 +344,16 @@ def _issues(
             "error",
             "input",
             "No RTL source files found",
-            "Provide a valid CPU filelist so RTL Review can inspect the user CPU code.",
-            recommendation="Check cpu_filelist. SoC filelist and prepared merged filelist are intentionally ignored by RTL Review.",
+            (
+                "Provide RTL sources so RTL Review can inspect the design."
+                if user_rtl_ownership(workspace) == "design"
+                else "Provide a valid CPU filelist so RTL Review can inspect the user CPU code."
+            ),
+            recommendation=(
+                "Check the filelist or RTL files the design was created with."
+                if user_rtl_ownership(workspace) == "design"
+                else "Check cpu_filelist. SoC filelist and prepared merged filelist are intentionally ignored by RTL Review."
+            ),
         ))
         return issues
 

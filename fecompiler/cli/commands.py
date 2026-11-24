@@ -56,6 +56,7 @@ from fecompiler.cli.project.layout import (
     stage_workspace_replacement,
     template_dir,
 )
+from fecompiler.cli.project.relocate import record_project_location
 from fecompiler.cli.project.params import (
     parameter_records,
     parse_cli_overrides,
@@ -63,6 +64,8 @@ from fecompiler.cli.project.params import (
 )
 from fecompiler.cli.rendering.progress import RunProgress
 from fecompiler.cli.resource_manager import ResourceManager, ResourceManagerError
+from fecompiler.tools.common.filelist import parse_filelist
+from fecompiler.tools.common.sv_module import macro_names, module_definitions
 from fecompiler.cli.workspace_access import (
     load_existing_workspace,
     read_json_object,
@@ -131,6 +134,8 @@ def _init_workspace(
         context.workspace_dir,
         default_design=Path(context.workspace_dir).name,
     )
+    if isinstance(request, CommandResult):
+        return request
     created = _missing_ancestors(Path(context.workspace_dir))
     result = workspace_application.execute_payload(
         "create", request, base_dir=Path.cwd()
@@ -196,16 +201,18 @@ def _init_project(command_input: InitInput) -> CommandResult:
         return CommandResult.err(
             [error_record("project_already_exists", project=str(project_dir))]
         )
-    # Everything this command creates is removed again if it fails, so a
-    # failed init can simply be repeated.
-    created = _missing_ancestors(project_dir / "runs")
-    scratch = [project_dir / "runs", seed_dir, seed_dir.parent]
-    (project_dir / "runs").mkdir(parents=True, exist_ok=True)
     request = _init_request(
         command_input,
         str(seed_dir),
         default_design=project_dir.name,
     )
+    if isinstance(request, CommandResult):
+        return request
+    # Everything this command creates is removed again if it fails, so a
+    # failed init can simply be repeated.
+    created = _missing_ancestors(project_dir / "runs")
+    scratch = [project_dir / "runs", seed_dir, seed_dir.parent]
+    (project_dir / "runs").mkdir(parents=True, exist_ok=True)
     try:
         result = workspace_application.execute_payload(
             "create", request, base_dir=Path.cwd()
@@ -215,7 +222,15 @@ def _init_project(command_input: InitInput) -> CommandResult:
         raise
     if result.response != "success":
         _remove_created(created, scratch)
-        return _init_failure(result, project=str(project_dir))
+        return _init_failure(
+            result,
+            project=str(project_dir),
+            hint=(
+                "for a design that is not a CPU, add --kind rtl"
+                if command_input.rtl and command_input.kind is None
+                else None
+            ),
+        )
     try:
         workspace = load_existing_workspace(str(seed_dir))
         if workspace is None:
@@ -235,6 +250,7 @@ def _init_project(command_input: InitInput) -> CommandResult:
                 )
             ]
         )
+    record_project_location(str(project_dir))
     project_arg = name
     return CommandResult.ok(
         [
@@ -242,6 +258,7 @@ def _init_project(command_input: InitInput) -> CommandResult:
                 "kind": "project_init",
                 "status": "created",
                 "project": str(project_dir),
+                "design_kind": _init_kind(command_input),
                 "config": str(config.path),
                 "run_dir": "runs/default",
                 "check_cmd": disclosure_cmd("ecc-fe check", project=project_arg),
@@ -288,8 +305,9 @@ def _init_failure(result: object, **target: object) -> CommandResult:
     records: list[dict[str, object]] = [
         error_record(
             "init_failed",
-            **target,
+            **{key: value for key, value in target.items() if key != "hint"},
             message=" ".join(messages) or None,
+            hint=target.get("hint"),
             error_code=data.get("error") if isinstance(data, dict) else None,
             fields=data.get("unsupported_fields") if isinstance(data, dict) else None,
         )
@@ -300,10 +318,59 @@ def _init_failure(result: object, **target: object) -> CommandResult:
     return CommandResult.err(records)
 
 
+_INIT_KINDS = ("cpu", "rtl")
+_CPU_ONLY_INIT_OPTIONS = (
+    ("--cpu-filelist", "cpu_filelist"),
+    ("--cpu-top-module", "cpu_top_module"),
+    ("--soc-filelist", "soc_filelist"),
+    ("--core-id", "core_id"),
+    ("--soc-harness-id", "soc_harness_id"),
+)
+
+
+def _init_kind(command_input: InitInput) -> str:
+    """Return "cpu" or "rtl"; a filelist of a plain design implies "rtl"."""
+    if command_input.kind:
+        return command_input.kind.strip().lower()
+    return "rtl" if command_input.filelist else "cpu"
+
+
 def _init_request(
     command_input: InitInput, destination: str, *, default_design: str
-) -> dict[str, object]:
-    custom_cpu_input = command_input.cpu_filelist or command_input.rtl
+) -> dict[str, object] | CommandResult:
+    """Build the workspace create request, or the usage error that prevents it."""
+    kind = _init_kind(command_input)
+    if kind not in _INIT_KINDS:
+        return CommandResult.err(
+            [error_record("invalid_kind", kind=kind, expected=list(_INIT_KINDS))],
+            exit_code=2,
+        )
+    if kind == "rtl":
+        return _generic_init_request(command_input, destination, default_design)
+    if command_input.filelist:
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_option_conflict",
+                    options=["--filelist"],
+                    reason="--filelist describes an RTL design; a CPU takes --cpu-filelist",
+                )
+            ],
+            exit_code=2,
+        )
+    if len(command_input.rtl) > 1:
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_option_conflict",
+                    options=["--rtl"],
+                    reason="a custom CPU takes one --rtl file; list more in --cpu-filelist",
+                )
+            ],
+            exit_code=2,
+        )
+    rtl = command_input.rtl[0] if command_input.rtl else None
+    custom_cpu_input = command_input.cpu_filelist or rtl
     core_id = command_input.core_id or (
         "custom-filelist" if custom_cpu_input else "picorv32"
     )
@@ -315,8 +382,8 @@ def _init_request(
             "Top module": command_input.top,
         },
     }
-    if command_input.rtl:
-        request["cpu_rtl_files"] = [command_input.rtl]
+    if rtl:
+        request["cpu_rtl_files"] = [rtl]
         request["cpu_top_module"] = command_input.top
     if command_input.cpu_top_module:
         request["cpu_top_module"] = command_input.cpu_top_module
@@ -328,6 +395,118 @@ def _init_request(
         if value:
             request[key] = value
     return request
+
+
+def _generic_init_request(
+    command_input: InitInput, destination: str, default_design: str
+) -> dict[str, object] | CommandResult:
+    cpu_options = [
+        option
+        for option, field in _CPU_ONLY_INIT_OPTIONS
+        if getattr(command_input, field)
+    ]
+    if cpu_options:
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_option_conflict",
+                    options=cpu_options,
+                    reason="these options describe a CPU; drop them or use --kind cpu",
+                )
+            ],
+            exit_code=2,
+        )
+    if bool(command_input.rtl) == bool(command_input.filelist):
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_input_required",
+                    reason="an RTL design needs either --rtl <file>... or --filelist <file>",
+                )
+            ],
+            exit_code=2,
+        )
+    request: dict[str, object] = {
+        "directory": destination,
+        "frontend_design_kind": "generic_rtl",
+        "top_module": command_input.top,
+        "parameters": {
+            "Design": command_input.design or default_design,
+            "Top module": command_input.top,
+        },
+    }
+    # Sources are referenced where they are, not copied: the next run sees
+    # every edit, and include paths keep working.
+    if command_input.filelist:
+        request["filelist"] = command_input.filelist
+    else:
+        request["rtl_list"] = list(command_input.rtl)
+    issues = _generic_init_issues(command_input)
+    if issues:
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_failed",
+                    message="The RTL design cannot be used as given.",
+                ),
+                *({"kind": "init_issue", **issue} for issue in issues),
+            ]
+        )
+    return request
+
+
+def _generic_init_issues(command_input: InitInput) -> list[dict[str, object]]:
+    """Check the inputs of an RTL design before anything is created."""
+
+    def issue(code: str, message: str, field: str) -> dict[str, object]:
+        return {"severity": "error", "code": code, "message": message, "field": field}
+
+    top = command_input.top
+    defines: tuple[str, ...] = ()
+    if command_input.filelist:
+        parsed = parse_filelist(command_input.filelist)
+        if not parsed.filelists:
+            return [issue("filelist_not_found", f"Filelist not found: {parsed.path}", "filelist")]
+        if parsed.missing:
+            return [
+                issue("rtl_file_not_found", f"Listed file not found: {path}", "filelist")
+                for path in parsed.missing
+            ]
+        sources = [str(path) for path in parsed.sources]
+        defines = parsed.defines
+        field = "filelist"
+    else:
+        missing = [path for path in command_input.rtl if not Path(path).is_file()]
+        if missing:
+            return [
+                issue("rtl_file_not_found", f"RTL file not found: {path}", "rtl")
+                for path in missing
+            ]
+        sources = list(command_input.rtl)
+        field = "rtl"
+    if not sources:
+        return [issue("no_rtl_sources", "No .v or .sv source file is listed.", field)]
+    found = module_definitions(
+        sources, top, defined_macros=macro_names(defines)
+    ) or module_definitions(sources, top)
+    if not found:
+        return [
+            issue(
+                "top_module_not_found",
+                f"Top module {top} is not defined in the given RTL; name it with --top.",
+                "top",
+            )
+        ]
+    if len(found) > 1:
+        return [
+            issue(
+                "top_module_count_mismatch",
+                f"Top module {top} is defined in {len(found)} files: "
+                + ", ".join(str(path) for path in found),
+                "top",
+            )
+        ]
+    return []
 
 
 def run_flow(command_input: CommandInput, context: CommandContext) -> CommandResult:
@@ -356,6 +535,9 @@ def _run_workspace(
     selection = _run_selection(command_input)
     if isinstance(selection, CommandResult):
         return selection
+    outside = _step_outside_flow(selection, context)
+    if outside is not None:
+        return outside
     try:
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
@@ -602,6 +784,9 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
     selection = _run_selection(command_input)
     if isinstance(selection, CommandResult):
         return selection
+    outside = _step_outside_flow(selection, context)
+    if outside is not None:
+        return outside
     try:
         config = load_project_config(context.config_dir)
     except (OSError, TypeError, ValueError) as error:
@@ -839,7 +1024,7 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
         )
 
     records: list[dict[str, object]] = []
-    relevant = _doctor_requirements(command_input.step)
+    relevant = _doctor_requirements(command_input.step, _flow_step_names(context))
     for check_id, label, candidates, required in relevant:
         path = _find_executable(candidates)
         version = _tool_version(path) if path else None
@@ -1581,8 +1766,53 @@ def _workspace_not_found(context: CommandContext) -> CommandResult:
     )
 
 
+def _flow_step_names(context: CommandContext) -> tuple[str, ...]:
+    """Return the steps of the selected flow: an RTL design has no `sim`.
+
+    Reads the run, or the project template when the run does not exist yet;
+    with neither, every known step.
+    """
+    for directory in (context.workspace_dir, context.template_dir):
+        if not directory:
+            continue
+        try:
+            flow = read_json_object(Path(directory) / "home" / "flow.json")
+        except (OSError, TypeError, ValueError):
+            continue
+        names = tuple(
+            str(step.get("name"))
+            for step in flow.get("steps", [])
+            if isinstance(step, dict) and step.get("name") in _FLOW_STEPS
+        )
+        if names:
+            return names
+    return tuple(_FLOW_STEPS)
+
+
+def _step_outside_flow(
+    selection: "_RunSelection", context: CommandContext
+) -> CommandResult | None:
+    """Refuse a selector that names a step this design's flow does not have."""
+    flow_steps = _flow_step_names(context)
+    for step in (selection.only, selection.from_step, selection.to_step):
+        if step and step not in flow_steps:
+            return CommandResult.err(
+                [
+                    error_record(
+                        "step_not_in_flow",
+                        step=step,
+                        expected=list(flow_steps),
+                        reason="this design's flow does not include the step",
+                    )
+                ],
+                exit_code=2,
+            )
+    return None
+
+
 def _doctor_requirements(
     step: str | None,
+    flow_steps: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, str, tuple[str, ...], bool], ...]:
     checks = {
         "slang": (
@@ -1621,7 +1851,21 @@ def _doctor_requirements(
     if definition is not None:
         names: tuple[str, ...] = definition.doctor_checks
     else:
-        names = ("slang", "verilator", "cxx", "make", "riscv", "yosys")
+        # Only what the steps of this flow need; Yosys is always optional.
+        selected = [
+            find_step_definition(name) for name in (flow_steps or tuple(_FLOW_STEPS))
+        ]
+        needed = {
+            check
+            for item in selected
+            if item is not None
+            for check in item.doctor_checks
+        }
+        names = tuple(
+            name
+            for name in ("slang", "verilator", "cxx", "make", "riscv")
+            if name in needed
+        ) + ("yosys",)
     return tuple(checks[name] for name in names)
 
 

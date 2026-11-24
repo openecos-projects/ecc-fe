@@ -19,6 +19,7 @@ from fecompiler.cli.project.layout import (
     resolve_run_dir,
     template_dir,
 )
+from fecompiler.cli.project.relocate import relocate_project
 from fecompiler.cli.rendering.render import render_result
 
 DEBUG_ENV = "ECC_FE_DEBUG"
@@ -99,6 +100,13 @@ def execute_command(
                 project_dir, selected_run_id
             )
             selected_template = template_dir(project_dir)
+            moved = relocate_project(project_dir)
+            if moved is not None:
+                print(
+                    f"ecc-fe: project moved from {moved['from']}; "
+                    f"updated its paths in {len(moved['workspaces'])} workspace(s)",
+                    file=sys.stderr,
+                )
         else:
             workspace_dir = project_dir
             workspace_mode = True

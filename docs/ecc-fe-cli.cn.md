@@ -134,6 +134,32 @@ ecc-fe init ./my-cpu \
 
 `--cpu-top-module` 省略时，filelist 形式默认顶层模块名为 `cpu_top`。
 
+### 不是 CPU 的 RTL 设计
+
+任意 RTL 设计也可以建工程，流程是 prepare、review、elab、lint，没有仿真：
+
+```bash
+ecc-fe init ./counter --top counter --filelist ./rtl/design.f
+ecc-fe init ./counter --kind rtl --top counter --rtl ./rtl/counter.sv --rtl ./rtl/fifo.sv
+cd counter && ecc-fe run
+```
+
+- 给了 `--filelist` 就按 RTL 设计处理；只给 `--rtl` 时默认仍当作自定义 CPU，要加
+  `--kind rtl`。
+- 源文件原地引用、不复制，改完 RTL 直接 `ecc-fe run --resume` 就会重跑受影响的步骤。
+- `init` 会先检查 filelist 和文件是否存在、top 模块是否恰好定义一次，不满足时不会
+  创建任何东西。
+- 这类工程的 `check` 不要求 C++ 编译器、Make 和 RISC-V 工具链；`param list` 不显示
+  仿真参数；`run --only sim` 之类会直接报 `step_not_in_flow`。
+
+工程类型记录在 `ecc-fe.toml` 的 `[design].kind`（`cpu` 或 `rtl`），创建后不能改。
+
+### 移动工程目录
+
+工程目录可以整体移动或复制。下一条命令会发现位置变了，把工程内部的路径（包括放在
+工程目录里的 RTL 和 filelist）改写成新位置，并在 stderr 提示一行。放在工程目录之外的
+输入仍按原来的绝对路径引用。移动后已有 run 的结果会被判为过期，下次运行会重跑。
+
 ## 工作区版本
 
 每个工作区在 `home/home.json` 里记录一个 `schema_version`（当前为 1），表示工作区目录
