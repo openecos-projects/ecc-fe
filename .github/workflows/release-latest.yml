@@ -91,6 +91,7 @@ jobs:
             test/test_output_contract.py \
             test/test_run_management.py \
             test/test_cli_loose_ends.py \
+            test/test_prepare_inputs.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \
             test/test_runtime_transport.py \

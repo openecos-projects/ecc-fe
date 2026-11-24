@@ -39,9 +39,35 @@ def is_simple_sv_identifier(value: str) -> bool:
     )
 
 
-def module_definitions(files: list[str | Path], module_name: str) -> list[Path]:
-    """Return source files that actually define *module_name*."""
-    pattern = re.compile(rf"\bmodule\s+{re.escape(module_name)}\b")
+def _module_pattern(module_name: str) -> re.Pattern[str]:
+    # `module top`, `macromodule top`, `module automatic top`, `module static top`.
+    return re.compile(
+        rf"\b(?:macro)?module\s+(?:(?:automatic|static)\s+)?{re.escape(module_name)}\b"
+    )
+
+
+def macro_names(defines: Any) -> frozenset[str]:
+    """Return the macro names of ``NAME`` / ``NAME=value`` define entries."""
+    return frozenset(
+        name
+        for name in (str(item).split("=", 1)[0].strip() for item in defines or ())
+        if name
+    )
+
+
+def module_definitions(
+    files: list[str | Path],
+    module_name: str,
+    *,
+    defined_macros: set[str] | frozenset[str] | None = None,
+) -> list[Path]:
+    """Return source files that actually define *module_name*.
+
+    With *defined_macros*, only the `` `ifdef `` branches those macros select
+    are searched, so a module defined once per branch counts once. Without
+    it every branch is searched.
+    """
+    pattern = _module_pattern(module_name)
     matches: list[Path] = []
     for raw_path in files:
         path = Path(raw_path)
@@ -49,7 +75,10 @@ def module_definitions(files: list[str | Path], module_name: str) -> list[Path]:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if pattern.search(strip_sv_comments(text)):
+        text = strip_sv_comments(text)
+        if defined_macros is not None:
+            text = _apply_sv_conditional_directives(text, defined_macros)
+        if pattern.search(text):
             matches.append(path)
     return matches
 
@@ -60,7 +89,7 @@ def module_port_contract_from_files(
     *,
     defined_macros: set[str] | frozenset[str] | None = None,
 ) -> tuple[Path | None, list[dict[str, Any]]]:
-    for path in module_definitions(files, module_name):
+    for path in module_definitions(files, module_name, defined_macros=defined_macros):
         try:
             contract = module_port_contract(
                 path.read_text(encoding="utf-8", errors="ignore"),
@@ -80,10 +109,11 @@ def module_port_contract(
     defined_macros: set[str] | frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse an ANSI or legacy-style module port contract."""
-    stripped = strip_sv_comments(_apply_sv_conditional_directives(text, defined_macros))
+    stripped = _apply_sv_conditional_directives(strip_sv_comments(text), defined_macros)
     header = _module_port_header(stripped, module_name)
     if header is None:
         return []
+    constants = _module_constants(stripped, module_name)
 
     ports: list[dict[str, Any]] = []
     direction = ""
@@ -92,13 +122,13 @@ def module_port_contract(
         direction_match = re.search(r"\b(input|output|inout)\b", raw_port)
         if direction_match:
             direction = direction_match.group(1)
-            width = _packed_width(raw_port)
+            width = _packed_width(raw_port, constants)
         name = _port_decl_name(raw_port)
         if name:
             ports.append({"name": name, "direction": direction, "width": width})
 
     if any(not str(port["direction"]) for port in ports):
-        declarations = _legacy_port_declarations(stripped, module_name)
+        declarations = _legacy_port_declarations(stripped, module_name, constants)
         ports = [declarations.get(str(port["name"]), port) for port in ports]
     return ports
 
@@ -115,9 +145,15 @@ def compare_port_contracts(
     for name in expected_by_name.keys() & actual_by_name.keys():
         expected_port = expected_by_name[name]
         actual_port = actual_by_name[name]
+        actual_width = int(actual_port.get("width", 0) or 0)
         if (
             str(expected_port.get("direction", "")) != str(actual_port.get("direction", ""))
-            or int(expected_port.get("width", 0) or 0) != int(actual_port.get("width", 0) or 0)
+            # Width 0 means the range could not be evaluated here; elaboration
+            # checks it, so it is not reported as a mismatch.
+            or (
+                actual_width != 0
+                and int(expected_port.get("width", 0) or 0) != actual_width
+            )
         ):
             mismatches.append({
                 "name": name,
@@ -132,8 +168,35 @@ def compare_port_contracts(
 
 
 def strip_sv_comments(text: str) -> str:
-    without_block = re.sub(r"/\*[\s\S]*?\*/", "", text)
-    return re.sub(r"//.*", "", without_block)
+    """Remove ``//`` and ``/* */`` comments, leaving string literals alone.
+
+    Scans once from the start, so ``// see /*`` is a line comment and does
+    not open a block comment. Line breaks are kept.
+    """
+    output: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        pair = text[index : index + 2]
+        if pair == "//":
+            end = text.find("\n", index)
+            index = length if end < 0 else end
+        elif pair == "/*":
+            end = text.find("*/", index + 2)
+            block = text[index : length if end < 0 else end + 2]
+            output.append("\n" * block.count("\n") or " ")
+            index += len(block)
+        elif char == '"':
+            end = index + 1
+            while end < length and text[end] != '"':
+                end += 2 if text[end] == "\\" else 1
+            output.append(text[index : end + 1])
+            index = end + 1
+        else:
+            output.append(char)
+            index += 1
+    return "".join(output)
 
 
 def _apply_sv_conditional_directives(
@@ -190,7 +253,7 @@ def _apply_sv_conditional_directives(
 
 
 def _module_port_header(text: str, module_name: str) -> str | None:
-    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
+    match = _module_pattern(module_name).search(text)
     if match is None:
         return None
     index = match.end()
@@ -215,20 +278,22 @@ def _module_port_header(text: str, module_name: str) -> str | None:
 
 
 def _module_body(text: str, module_name: str) -> str:
-    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", text)
+    match = _module_pattern(module_name).search(text)
     if match is None:
         return ""
     end = re.search(r"\bendmodule\b", text[match.end():])
     return text[match.end():match.end() + end.start()] if end is not None else text[match.end():]
 
 
-def _legacy_port_declarations(text: str, module_name: str) -> dict[str, dict[str, Any]]:
+def _legacy_port_declarations(
+    text: str, module_name: str, constants: dict[str, int] | None = None
+) -> dict[str, dict[str, Any]]:
     declarations: dict[str, dict[str, Any]] = {}
     body = _module_body(text, module_name)
     for match in re.finditer(r"\b(?P<direction>input|output|inout)\b(?P<body>[^;]*);", body):
         direction = match.group("direction")
         declaration = match.group("body")
-        width = _packed_width(declaration)
+        width = _packed_width(declaration, constants)
         for raw_name in _split_top_level_sv_list(declaration):
             name = _port_decl_name(raw_name)
             if name:
@@ -267,17 +332,143 @@ def _split_top_level_sv_list(text: str) -> list[str]:
     return parts
 
 
-def _packed_width(port_declaration: str) -> int:
+def _packed_width(port_declaration: str, constants: dict[str, int] | None = None) -> int:
+    """Return the packed width of a port, or 0 when it cannot be evaluated."""
     raw_ranges = re.findall(r"\[([^\]]+)\]", port_declaration)
     if not raw_ranges:
         return 1
     width = 1
     for raw_range in raw_ranges:
-        match = re.fullmatch(r"\s*([0-9]+)\s*:\s*([0-9]+)\s*", raw_range)
-        if match is None:
+        left, separator, right = raw_range.partition(":")
+        high = _constant_value(left, constants or {})
+        low = _constant_value(right, constants or {}) if separator else None
+        if high is None or low is None:
             return 0
-        width *= abs(int(match.group(1)) - int(match.group(2))) + 1
+        width *= abs(high - low) + 1
     return width
+
+
+_PARAMETER_ASSIGNMENT = re.compile(
+    r"\b(?:parameter|localparam)\b[^=;,()]*?\b([A-Za-z_][A-Za-z0-9_$]*)\s*=\s*([^;,]+)"
+)
+_SIZED_LITERAL = re.compile(r"(?:\d+\s*)?'\s*s?([bodhBODH])\s*([0-9a-fA-F_xXzZ?]+)")
+_CONSTANT_TOKEN = re.compile(r"\s*(\$clog2|[A-Za-z_][A-Za-z0-9_$]*|\d[\d_]*|\*\*|[-+*/%()])")
+
+
+def _module_constants(text: str, module_name: str) -> dict[str, int]:
+    """Return the integer parameters of a module at their default values."""
+    match = _module_pattern(module_name).search(text)
+    if match is None:
+        return {}
+    end = re.search(r"\bendmodule\b", text[match.end():])
+    scope = text[match.end() : match.end() + end.start()] if end else text[match.end():]
+    constants: dict[str, int] = {}
+    for name, expression in _PARAMETER_ASSIGNMENT.findall(scope):
+        # A default may itself end at the `)` that closes the parameter list.
+        value = _constant_value(_balanced_prefix(expression), constants)
+        if value is not None:
+            constants.setdefault(name, value)
+    return constants
+
+
+def _balanced_prefix(expression: str) -> str:
+    depth = 0
+    for index, char in enumerate(expression):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                return expression[:index]
+            depth -= 1
+    return expression
+
+
+def _constant_value(expression: str, constants: dict[str, int]) -> int | None:
+    """Evaluate an integer constant expression: literals, parameters,
+    ``+ - * / % **``, parentheses, and ``$clog2``. ``None`` if anything else."""
+    text = _SIZED_LITERAL.sub(_sized_literal_value, expression).strip()
+    if not text or "?" in text:
+        return None
+    tokens: list[str] = []
+    position = 0
+    while position < len(text):
+        match = _CONSTANT_TOKEN.match(text, position)
+        if match is None:
+            return None
+        tokens.append(match.group(1))
+        position = match.end()
+        while position < len(text) and text[position].isspace():
+            position += 1
+    try:
+        value, rest = _parse_sum(tokens, constants)
+    except (ValueError, ZeroDivisionError, IndexError, OverflowError):
+        return None
+    return value if not rest else None
+
+
+def _sized_literal_value(match: re.Match[str]) -> str:
+    base = {"b": 2, "o": 8, "d": 10, "h": 16}[match.group(1).lower()]
+    try:
+        return str(int(match.group(2).replace("_", ""), base))
+    except ValueError:
+        return "?"
+
+
+def _parse_sum(tokens: list[str], constants: dict[str, int]) -> tuple[int, list[str]]:
+    value, tokens = _parse_product(tokens, constants)
+    while tokens and tokens[0] in "+-":
+        operator = tokens[0]
+        right, tokens = _parse_product(tokens[1:], constants)
+        value = value + right if operator == "+" else value - right
+    return value, tokens
+
+
+def _parse_product(tokens: list[str], constants: dict[str, int]) -> tuple[int, list[str]]:
+    value, tokens = _parse_power(tokens, constants)
+    while tokens and tokens[0] in ("*", "/", "%"):
+        operator = tokens[0]
+        right, tokens = _parse_power(tokens[1:], constants)
+        if operator == "*":
+            value *= right
+        elif operator == "/":
+            value = int(value / right)  # Verilog integer division truncates
+        else:
+            value = value - right * int(value / right)
+    return value, tokens
+
+
+def _parse_power(tokens: list[str], constants: dict[str, int]) -> tuple[int, list[str]]:
+    value, tokens = _parse_atom(tokens, constants)
+    if tokens and tokens[0] == "**":
+        exponent, tokens = _parse_power(tokens[1:], constants)
+        if exponent < 0 or exponent > 64:
+            raise ValueError("exponent out of range")
+        value **= exponent
+    return value, tokens
+
+
+def _parse_atom(tokens: list[str], constants: dict[str, int]) -> tuple[int, list[str]]:
+    token = tokens[0]
+    if token in "+-" and len(token) == 1:
+        value, rest = _parse_atom(tokens[1:], constants)
+        return (value if token == "+" else -value), rest
+    if token == "(":
+        value, rest = _parse_sum(tokens[1:], constants)
+        if rest[0] != ")":
+            raise ValueError("unbalanced parenthesis")
+        return value, rest[1:]
+    if token == "$clog2":
+        if tokens[1] != "(":
+            raise ValueError("$clog2 needs an argument")
+        value, rest = _parse_sum(tokens[2:], constants)
+        if rest[0] != ")" or value < 0:
+            raise ValueError("bad $clog2 argument")
+        return max(value - 1, 0).bit_length(), rest[1:]
+    if token[0].isdigit():
+        return int(token.replace("_", "")), tokens[1:]
+    if token in constants:
+        return constants[token], tokens[1:]
+    raise ValueError(f"unknown name {token}")
 
 
 def _port_decl_name(raw_port: str) -> str:

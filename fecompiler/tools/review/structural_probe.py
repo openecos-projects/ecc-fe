@@ -247,6 +247,9 @@ def _parse_filelist(filelist: str) -> dict[str, Any]:
     rtl_files = [str(path) for path in _filter_review_rtl_files(parsed.sources)]
     incdirs = _unique_paths([
         *parsed.incdirs,
+        # A listed header is included, not compiled; its directory has to be
+        # searchable for the `include that names it.
+        *(path.parent for path in parsed.headers),
         *(Path(path).parent for path in rtl_files),
     ])
     return _complete_missing_module_sources({

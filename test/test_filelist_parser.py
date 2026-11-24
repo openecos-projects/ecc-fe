@@ -60,7 +60,13 @@ def test_entries_options_and_comments(tmp_path) -> None:
     assert parsed.filelists == (filelist,)
     assert parsed.files == (top, core, header, spaced)
     assert parsed.sources == (top, core, spaced)
-    assert parsed.missing == (tmp_path / "rtl" / "lib.v",)
+    # A library file that is absent and a path with an undefined variable
+    # are both reported, not skipped.
+    assert parsed.missing == (
+        tmp_path / "rtl" / "lib.v",
+        Path("$ENV_PATH/skipped.sv"),
+    )
+    assert parsed.unsupported == ("-y libdir", "+libext+.v", "notes.txt")
     assert parsed.incdirs == (tmp_path / "rtl" / "include", tmp_path / "shared")
     assert parsed.defines == ("SYNTHESIS", "WIDTH=32")
 

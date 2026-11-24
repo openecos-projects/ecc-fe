@@ -168,9 +168,9 @@ def rtl_files(workspace: dict[str, Any]) -> list[str]:
     if _uses_explicit_frontend_inputs(workspace):
         return []
 
-    filelist = workspace.get("input_filelist", "")
-    if filelist and Path(filelist).exists():
-        return [str(path) for path in parse_filelist(filelist).sources]
+    fallback = _unprepared_filelist(workspace)
+    if fallback is not None:
+        return [str(path) for path in fallback.sources]
 
     verilog = workspace.get("origin_verilog", "")
     if verilog and Path(verilog).exists():
@@ -184,7 +184,15 @@ def incdirs(workspace: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
 
-    for inc in prepared.get("incdirs", []) if prepared else []:
+    listed = prepared.get("incdirs", []) if prepared else []
+    if not prepared:
+        fallback = _unprepared_filelist(workspace)
+        if fallback is not None:
+            listed = [
+                *fallback.incdirs,
+                *(header.parent for header in fallback.headers),
+            ]
+    for inc in listed:
         text = str(inc).strip()
         if text and text not in seen:
             seen.add(text)
@@ -201,7 +209,26 @@ def incdirs(workspace: dict[str, Any]) -> list[str]:
 def defines(workspace: dict[str, Any]) -> list[str]:
     """Return ordered defines from prepare manifest."""
     prepared = prepared_inputs(workspace)
-    return [str(define) for define in prepared.get("defines", [])] if prepared else []
+    if prepared:
+        return [str(define) for define in prepared.get("defines", [])]
+    fallback = _unprepared_filelist(workspace)
+    return list(fallback.defines) if fallback is not None else []
+
+
+def _unprepared_filelist(workspace: dict[str, Any]):
+    """Parse the input filelist of a workspace that has no current prepare result.
+
+    Used only for the single-filelist form; it yields the same files, include
+    directories, and defines prepare would, so a tool run without a fresh
+    prepare still sees the whole filelist. A workspace with CPU/SoC filelists
+    gets nothing here and must be prepared first.
+    """
+    if _uses_explicit_frontend_inputs(workspace):
+        return None
+    filelist = workspace.get("input_filelist", "")
+    if filelist and Path(filelist).exists():
+        return parse_filelist(filelist)
+    return None
 
 
 def _merge_defines(*groups: list[str] | tuple[str, ...]) -> list[str]:

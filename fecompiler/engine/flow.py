@@ -288,9 +288,10 @@ class EngineFlow:
             self.save()
             self._flow_logger.warning("[FAILED]  %-20s  elapsed=%s", step_name, runtime)
             return StateEnum.Incomplete
-        except Exception:
+        except Exception as error:
             runtime = _format_runtime(time.time() - start)
             logger.exception("step %r failed unexpectedly", step_name)
+            _append_step_log(ws_step, f"[ERROR] {type(error).__name__}: {error}")
             if step_qor_source_revision(ws_step) == initial_qor_source_revision:
                 clear_step_qor(ws_step.directory)
             else:
@@ -502,6 +503,15 @@ def _provenance_change_reason(previous: dict[str, Any], current: dict[str, Any])
         if str(previous.get(key, "")) != str(current.get(key, "")):
             changed.append(label)
     return f"step {'/'.join(changed) if changed else 'provenance'} changed"
+
+
+def _append_step_log(step: WorkspaceStep, line: str) -> None:
+    """Record why a step stopped in its own log, where users look first."""
+    try:
+        with Path(step.log["file"]).open("a", encoding="utf-8") as stream:
+            stream.write(line.rstrip("\n") + "\n")
+    except (OSError, KeyError, TypeError):
+        pass
 
 
 def _utc_now() -> str:

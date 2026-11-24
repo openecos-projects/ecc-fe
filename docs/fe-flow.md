@@ -201,11 +201,38 @@ sequenceDiagram
 所有读取 filelist 的地方（prepare、review、目录校验、源码指纹、工作区创建）都使用
 `fecompiler/tools/common/filelist.py` 这一个解析器，规则只有一份：
 
-- 一行可以写多个条目，支持引号和 `#` 注释；以 `#`、`//`、反引号开头的整行是注释。
-- 嵌套 filelist：`-f X`、`-F X`、`-fX`、`-FX`，相对路径以写出它的那个 filelist 所在目录为基准。
-- `+incdir+a+b`、`+define+A+B=1`。
-- 按后缀识别 RTL：编译单元 `.v`/`.sv`，头文件 `.vh`/`.svh`；其余选项忽略。
-- 校验类命令把找不到的文件列为问题；prepare 等实际编译前的读取遇到缺失文件直接失败。
+| 写法 | 含义 |
+| --- | --- |
+| `a.v b.sv` | 一行可以写多个文件；后缀不分大小写（`.V`、`.SV` 也认） |
+| `-f X`、`-F X`、`-fX`、`-FX` | 嵌套 filelist，相对路径以写出它的那个 filelist 所在目录为基准 |
+| `+incdir+a+b`、`-I a`、`-Ia`、`-incdir a` | include 目录 |
+| `+define+A+B=1`、`-D A`、`-DA=1` | 宏定义 |
+| `-v lib.v` | 库文件，当作普通 RTL 文件读入 |
+| `x.vh`、`x.svh` | 头文件：不单独编译，它所在的目录会自动加入 include 目录 |
+| `$VAR`、`${VAR}`、`$(VAR)` | 环境变量，出现在任何路径里都会展开 |
+| `#`、`//` 开头，或行内 `#`、`//` 之后 | 注释 |
+
+不会有东西被静默丢掉：
+
+- 文件不存在，或路径里用了未定义的环境变量：prepare 失败，错误里写明是哪一项。
+- include 目录不存在：仍然传给工具，同时记到 `prepare.rpt` 的 `input_notes`
+  （`kind=missing_incdir`）。
+- 解析器不处理的条目（`-y dir`、`+libext+`、其他后缀的文件、工具自己的选项）：
+  记到 `input_notes`（`kind=unsupported_entry`）。这些目前不会传给任何工具。
+
+### top 模块的识别
+
+prepare 要求 top 模块恰好定义一次。识别时：
+
+- 认 `module top`、`macromodule top`、`module automatic top`、`module static top`。
+- 注释先去掉；`// see /*` 是行注释，不会吞掉后面的代码；字符串里的 `//` 不算注释。
+- 先按 filelist 里的宏定义选择 `` `ifdef `` 分支，所以"每个分支各写一次 top"算一次定义。
+  如果这样一个也选不出来（宏可能来自被 include 的头文件，解析器不跟进 include），
+  退回到不看分支的统计。
+
+CPU 模式下的端口契约检查同样带上 filelist 里的宏定义。端口位宽里的参数按模块
+参数的默认值求值（支持 `+ - * / % **`、括号和 `$clog2`）；求不出来的位宽不判为
+不匹配，留给 elab 检查。
 
 ## Step 注册表
 
