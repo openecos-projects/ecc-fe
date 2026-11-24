@@ -23,6 +23,8 @@ from fecompiler.resources import resolve_difftest_reference_model
 from fecompiler.soc import soc_runtime_options
 from fecompiler.utility.atomic_write import atomic_write_json
 from fecompiler.utility.json import json_read_strict
+from fecompiler.allflow.profile import has_testbench
+from fecompiler.tools.common.tool_config import tool_config
 
 
 DEFAULT_FRONTEND_SMOKE_TEST_CASES = ["add"]
@@ -689,6 +691,9 @@ def _configure_sim_run(workspace: dict[str, Any], args: argparse.Namespace | Non
     A named suite in *args* is applied and always re-executed. Otherwise the
     default smoke suite is selected and an existing result may be reused.
     """
+    if has_testbench(tool_config(workspace)):
+        # The design brings its own testbench: there is no CPU suite to select.
+        return False
     suite_name = str(getattr(args, "sim_test_suite", "") or "").strip()
     if suite_name and suite_name.lower() != "default":
         if suite_name.lower() == "coremark":

@@ -1435,6 +1435,13 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 reason,
             )
         )
+    if report.get("kind") == "testbench":
+        # One run of the user's testbench: gated, not scored.
+        result.comparison = {
+            "input_fingerprint": _prepared_input_fingerprint(step),
+            "testbench": str(cases[0].get("name") or "") if cases else "",
+        }
+        return result
     result.score = _simulation_score(report, cases)
     sim_cflags = effective_sim_cflags(workspace)
     sim_build_directory = Path(step.directory) / "obj_dir"

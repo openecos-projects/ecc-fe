@@ -349,6 +349,18 @@ def _init_request(
         )
     if kind == "rtl":
         return _generic_init_request(command_input, destination, default_design)
+    if command_input.testbench or command_input.testbench_top:
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_option_conflict",
+                    options=["--testbench", "--testbench-top"],
+                    reason="a testbench belongs to an RTL design; "
+                    "a CPU is simulated on its SoC harness",
+                )
+            ],
+            exit_code=2,
+        )
     if command_input.filelist:
         return CommandResult.err(
             [
@@ -428,14 +440,32 @@ def _generic_init_request(
             ],
             exit_code=2,
         )
+    if bool(command_input.testbench) != bool(command_input.testbench_top):
+        return CommandResult.err(
+            [
+                error_record(
+                    "init_input_required",
+                    reason="a testbench needs both --testbench <file>... "
+                    "and --testbench-top <module>",
+                )
+            ],
+            exit_code=2,
+        )
+    parameters: dict[str, object] = {
+        "Design": command_input.design or default_design,
+        "Top module": command_input.top,
+    }
+    if command_input.testbench_top:
+        # Kept where they are, like the design sources.
+        parameters["testbench_top"] = command_input.testbench_top
+        parameters["testbench_files"] = [
+            str(Path(path).expanduser().resolve()) for path in command_input.testbench
+        ]
     request: dict[str, object] = {
         "directory": destination,
         "frontend_design_kind": "generic_rtl",
         "top_module": command_input.top,
-        "parameters": {
-            "Design": command_input.design or default_design,
-            "Top module": command_input.top,
-        },
+        "parameters": parameters,
     }
     # Sources are referenced where they are, not copied: the next run sees
     # every edit, and include paths keep working.
@@ -443,7 +473,7 @@ def _generic_init_request(
         request["filelist"] = command_input.filelist
     else:
         request["rtl_list"] = list(command_input.rtl)
-    issues = _generic_init_issues(command_input)
+    issues = _generic_init_issues(command_input) or _testbench_init_issues(command_input)
     if issues:
         return CommandResult.err(
             [
@@ -455,6 +485,31 @@ def _generic_init_request(
             ]
         )
     return request
+
+
+def _testbench_init_issues(command_input: InitInput) -> list[dict[str, object]]:
+    """Check the testbench of an RTL design before anything is created."""
+
+    def issue(code: str, message: str, field: str) -> dict[str, object]:
+        return {"severity": "error", "code": code, "message": message, "field": field}
+
+    missing = [path for path in command_input.testbench if not Path(path).is_file()]
+    if missing:
+        return [
+            issue("testbench_file_not_found", f"Testbench file not found: {path}", "testbench")
+            for path in missing
+        ]
+    top = command_input.testbench_top
+    if top and not module_definitions(list(command_input.testbench), top):
+        return [
+            issue(
+                "testbench_top_not_found",
+                f"Module {top} is not defined in the testbench files; "
+                "name it with --testbench-top.",
+                "testbench_top",
+            )
+        ]
+    return []
 
 
 def _generic_init_issues(command_input: InitInput) -> list[dict[str, object]]:
@@ -1027,6 +1082,9 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
 
     records: list[dict[str, object]] = []
     relevant = _doctor_requirements(command_input.step, _flow_step_names(context))
+    if _is_rtl_design(context):
+        # Only a CPU compiles programs to run on it.
+        relevant = tuple(item for item in relevant if item[0] != "riscv")
     for check_id, label, candidates, required in relevant:
         path = _find_executable(candidates)
         version = _tool_version(path) if path else None
@@ -1782,7 +1840,7 @@ def _workspace_not_found(context: CommandContext) -> CommandResult:
 
 
 def _flow_step_names(context: CommandContext) -> tuple[str, ...]:
-    """Return the steps of the selected flow: an RTL design has no `sim`.
+    """Return the steps of the selected flow: `sim` needs a CPU or a testbench.
 
     Reads the run, or the project template when the run does not exist yet;
     with neither, every known step.
@@ -1802,6 +1860,18 @@ def _flow_step_names(context: CommandContext) -> tuple[str, ...]:
         if names:
             return names
     return tuple(_FLOW_STEPS)
+
+
+def _is_rtl_design(context: CommandContext) -> bool:
+    for directory in (context.workspace_dir, context.template_dir):
+        if not directory:
+            continue
+        try:
+            parameters = read_json_object(Path(directory) / "home" / "parameters.json")
+        except (OSError, TypeError, ValueError):
+            continue
+        return str(parameters.get("frontend_design_kind", "")).strip() == "generic_rtl"
+    return False
 
 
 def _step_outside_flow(

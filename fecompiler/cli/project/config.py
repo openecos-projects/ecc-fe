@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fecompiler.allflow.profile import frontend_flow_profile
-from fecompiler.allflow.steps import step_names
+from fecompiler.allflow.profile import parameter_groups_outside
 from fecompiler.cli.project.params import (
     PARAMETERS,
     effective_default,
@@ -128,17 +127,11 @@ def create_project_config(
     path = project_config_path(directory)
     if path.exists() and not overwrite:
         raise ProjectConfigError(f"Project config already exists: {path}")
-    # Parameters of steps this design's flow does not have are left out.
+    # Parameters that do not apply to this design are left out.
     try:
-        flow_steps = {
-            name
-            for name, _ in frontend_flow_profile(
-                parameters.get("frontend_design_kind")
-            ).steps
-        }
+        absent = parameter_groups_outside(parameters)
     except ValueError:
-        flow_steps = set(step_names())
-    absent = set(step_names()) - flow_steps
+        absent = frozenset()
     defaults = {
         schema.param: effective_default(parameters, schema)
         for schema in PARAMETERS

@@ -11,7 +11,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fecompiler.allflow.profile import flow_steps_for
+from fecompiler.allflow.profile import flow_steps
+from fecompiler.tools.common.tool_config import tool_config
 from fecompiler.allflow.steps import step_directory_name
 from fecompiler.analysis import (
     clear_step_qor,
@@ -52,7 +53,7 @@ class EngineFlow:
         synced: list[dict[str, Any]] = []
         changed = False
 
-        expected_steps = flow_steps_for(self.workspace.get("frontend_design_kind"))
+        expected_steps = flow_steps(tool_config(self.workspace))
         for name, tool in expected_steps:
             matched = index.pop((name, tool), None)
             if matched is None:
@@ -77,7 +78,7 @@ class EngineFlow:
     def init_default_steps(self) -> None:
         self.flow["steps"] = [
             _new_flow_step(name, tool)
-            for name, tool in flow_steps_for(self.workspace.get("frontend_design_kind"))
+            for name, tool in flow_steps(tool_config(self.workspace))
         ]
         self.save()
 

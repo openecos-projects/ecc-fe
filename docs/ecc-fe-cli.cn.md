@@ -136,7 +136,7 @@ ecc-fe init ./my-cpu \
 
 ### 不是 CPU 的 RTL 设计
 
-任意 RTL 设计也可以建工程，流程是 prepare、review、elab、lint，没有仿真：
+任意 RTL 设计也可以建工程，流程是 prepare、review、elab、lint；给了 testbench 时再加上 sim（见下一小节）：
 
 ```bash
 ecc-fe init ./counter --top counter --filelist ./rtl/design.f
@@ -149,10 +149,52 @@ cd counter && ecc-fe run
 - 源文件原地引用、不复制，改完 RTL 直接 `ecc-fe run --resume` 就会重跑受影响的步骤。
 - `init` 会先检查 filelist 和文件是否存在、top 模块是否恰好定义一次，不满足时不会
   创建任何东西。
-- 这类工程的 `check` 不要求 C++ 编译器、Make 和 RISC-V 工具链；`param list` 不显示
-  仿真参数；`run --only sim` 之类会直接报 `step_not_in_flow`。
+- 这类工程的 `check` 不要求 RISC-V 工具链；没有 testbench 时也不要求 C++ 编译器和
+  Make，并且 `run --only sim` 之类会直接报 `step_not_in_flow`。`param list` 不显示
+  CPU 的 `sim.*` 参数。
 
 工程类型记录在 `ecc-fe.toml` 的 `[design].kind`（`cpu` 或 `rtl`），创建后不能改。
+
+### 用自己的 testbench 仿真 RTL 设计
+
+RTL 设计用它自带的 SystemVerilog testbench 仿真。建工程时给出 testbench 文件和它的
+顶层模块，流程里就多出 `sim` 步骤：
+
+```bash
+ecc-fe init ./counter --kind rtl --top counter --rtl ./rtl/counter.sv \
+  --testbench ./tb/tb_counter.sv --testbench-top tb_counter
+ecc-fe run --project ./counter
+ecc-fe log sim --project ./counter
+```
+
+- `--testbench` 可以重复给多个文件，必须和 `--testbench-top` 一起给。
+- testbench 不属于设计：不参与 review 和 lint，也不会进入交接清单。
+- 已经建好的工程也可以后加：设置 `testbench.top` 和 `testbench.files`，
+  之后新建的 run 就带 `sim` 步骤。
+
+判定通过的规则（三条都满足才算通过）：
+
+1. 仿真程序在时限内以退出码 0 结束。`$fatal` 和断言失败会让退出码非 0；
+   testbench 一直不调用 `$finish` 会超时（时限由 `ECOS_FE_TIMEOUT_SIM_CASE` 控制）。
+2. 设置了 `testbench.fail_pattern` 时，输出不能匹配它。
+3. 设置了 `testbench.pass_pattern` 时，输出必须匹配它。
+
+两个正则默认都不设置。这意味着 testbench 打印了 `FAIL` 再 `$finish` 时仍会被判为
+通过，所以建议至少设一个：
+
+```bash
+ecc-fe param set testbench.pass_pattern 'TEST PASSED'
+ecc-fe param set testbench.fail_pattern 'FAIL|ERROR'
+```
+
+没有设置任何正则而通过时，日志最后一行会说明这次只按退出码判定。失败时最后一行是
+失败原因。其余参数：`testbench.plusargs`（传给仿真的 `+arg`）和
+`testbench.extra_args`（额外的 Verilator 编译参数）。
+
+目前的限制：一个流程只跑一个 testbench、一次仿真，没有用例列表；`design.parameters`
+不作用于仿真（设计由 testbench 例化）；testbench `include` 的头文件不被跟踪，只改
+这类头文件不会让结果过期。`sim.*` 参数是 CPU 工程用来配置测试程序的，对 RTL 设计
+无效；反过来 `testbench.*` 对 CPU 工程无效。
 
 ### 移动工程目录
 

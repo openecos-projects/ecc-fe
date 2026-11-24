@@ -32,6 +32,8 @@ class InitInput(CommandInput):
     kind: str | None = None
     rtl: tuple[str, ...] = ()
     filelist: str | None = None
+    testbench: tuple[str, ...] = ()
+    testbench_top: str | None = None
     cpu_filelist: str | None = None
     cpu_top_module: str | None = None
     soc_filelist: str | None = None

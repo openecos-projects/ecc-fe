@@ -173,6 +173,18 @@ def build_app() -> typer.Typer:
             str | None,
             typer.Option("--filelist", help="Filelist of an RTL design (--kind rtl)"),
         ] = None,
+        testbench: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--testbench",
+                help="Testbench source file of an RTL design; repeatable. "
+                "Adds the sim step",
+            ),
+        ] = None,
+        testbench_top: Annotated[
+            str | None,
+            typer.Option("--testbench-top", help="Top module of the testbench"),
+        ] = None,
         cpu_filelist: Annotated[
             str | None,
             typer.Option("--cpu-filelist", help="Filelist of a custom CPU (--kind cpu)"),
@@ -208,6 +220,8 @@ def build_app() -> typer.Typer:
                 kind=kind,
                 rtl=tuple(rtl or ()),
                 filelist=filelist,
+                testbench=tuple(testbench or ()),
+                testbench_top=testbench_top,
                 cpu_filelist=cpu_filelist,
                 cpu_top_module=cpu_top_module,
                 soc_filelist=soc_filelist,

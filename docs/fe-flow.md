@@ -154,6 +154,13 @@ sim_verilator/
 | `lint_verilator` | Resource Manager/PATH 中的 `verilator`，或 `ECOS_VERILATOR` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/lint.rpt` | `lint`, `report` |
 | `sim_verilator` | `verilator --binary`; 可选 SoC `scripts/build_test.sh`; 可选 difftest ref so | RTL, `testbench`, `sim_cpp_sources`, `sim_cflags`, `sim_ldflags`, `sim_run_args`, cases 配置 | `output/<design>_sim`, `output/cases/<case>/`, `report/cases.json`, `report/runs/<run_id>/` | `compile`, `simulate`, `report` |
 
+RTL 设计（不是 CPU）的 `sim_verilator` 走另一条路径：用工程指定的 SystemVerilog testbench
+（`testbench.top`、`testbench.files`），`verilator --binary --timing --trace` 把设计和
+testbench 编成一个程序并运行一次，输出 `output/<testbench top>_sim`、`report/log.txt`、
+`report/cases.json`（`kind` 为 `testbench`，只有一个 case）。实现在
+`fecompiler/tools/verilator/testbench.py`；`fecompiler/tools/verilator/sim.py` 按设计类型
+在它和 CPU 的 SoC 仿真（`runner.py`）之间选择。没有指定 testbench 的 RTL 设计没有这个步骤。
+
 ## 数据如何流动
 
 1. 用户创建 workspace 时传入 CPU、SoC、testbench、仿真参数等。

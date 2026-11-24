@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from fecompiler.allflow.steps import step_definition
+from fecompiler.allflow.steps import step_definition, step_names
 
 
 CPU_CORE: Final = "cpu_core"
@@ -49,6 +50,13 @@ _GENERIC_RTL_PROFILE = FrontendFlowProfile(
     capabilities=frozenset({"source", "qor"}),
 )
 
+# An RTL design whose project names a testbench is simulated with it.
+_GENERIC_RTL_TESTBENCH_PROFILE = FrontendFlowProfile(
+    design_kind=GENERIC_RTL,
+    steps=_steps("prepare", "review", "elab", "lint", "sim"),
+    capabilities=frozenset({"source", "qor", "simulation"}),
+)
+
 _PROFILES: Final = {
     CPU_CORE: _CPU_CORE_PROFILE,
     GENERIC_RTL: _GENERIC_RTL_PROFILE,
@@ -71,3 +79,37 @@ def frontend_flow_profile(value: object) -> FrontendFlowProfile:
 
 def flow_steps_for(value: object) -> list[tuple[str, str]]:
     return list(frontend_flow_profile(value).steps)
+
+
+def has_testbench(parameters: Mapping[str, object]) -> bool:
+    """Whether the parameters of an RTL design name a testbench to simulate."""
+    return bool(str(parameters.get("testbench_top") or "").strip())
+
+
+def flow_profile(parameters: Mapping[str, object]) -> FrontendFlowProfile:
+    """Return the profile of the design *parameters* describe.
+
+    The design kind chooses it; an RTL design gains the ``sim`` step by
+    naming a testbench (``testbench_top``).
+    """
+    profile = frontend_flow_profile(parameters.get("frontend_design_kind"))
+    if profile.design_kind == GENERIC_RTL and has_testbench(parameters):
+        return _GENERIC_RTL_TESTBENCH_PROFILE
+    return profile
+
+
+def flow_steps(parameters: Mapping[str, object]) -> list[tuple[str, str]]:
+    return list(flow_profile(parameters).steps)
+
+
+def parameter_groups_outside(parameters: Mapping[str, object]) -> frozenset[str]:
+    """Return the parameter groups that do not apply to this design.
+
+    These are the groups of steps its flow does not have, ``sim`` (how CPU
+    programs are built and run) for an RTL design, and ``testbench`` for a
+    CPU, which is simulated on its SoC harness.
+    """
+    profile = flow_profile(parameters)
+    outside = set(step_names()) - {name for name, _ in profile.steps}
+    outside.add("sim" if profile.design_kind == GENERIC_RTL else "testbench")
+    return frozenset(outside)

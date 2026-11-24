@@ -349,7 +349,7 @@ A project is one of two kinds, fixed when it is created and recorded as
 | Kind | Created with | Flow |
 | --- | --- | --- |
 | `cpu` | `init <name>` (a catalog CPU), `--rtl <file>` or `--cpu-filelist <file>` (a custom CPU) | prepare, review, elab, lint, sim on the SoC harness |
-| `rtl` | `init <name> --top <module> --filelist <file>`, or `--kind rtl --rtl <file>...` | prepare, review, elab, lint |
+| `rtl` | `init <name> --top <module> --filelist <file>`, or `--kind rtl --rtl <file>...` | prepare, review, elab, lint; plus sim when the project names a testbench |
 
 `--kind` defaults to `rtl` when `--filelist` is given and to `cpu` otherwise.
 `--rtl` is repeatable for an RTL design. The sources of an RTL design are
@@ -368,12 +368,66 @@ records (`filelist_not_found`, `rtl_file_not_found`, `no_rtl_sources`,
 Commands follow the flow of the design:
 
 - `check` and `doctor` ask only for the tools the flow's steps use. An RTL
-  design needs no C++ compiler, Make, or RISC-V toolchain.
+  design needs no RISC-V toolchain, and no C++ compiler or Make unless it has
+  a testbench.
 - `param list` and `param diff` leave out parameters of steps the flow does
   not have, `ecc-fe.toml` does not record defaults for them, and `param show`
   and `param set` refuse them with `parameter_not_applicable` (exit status 2).
 - `run --only/--from/--to <step>` with a step the flow does not have fails
   with `step_not_in_flow` (exit status 2) and lists the steps it has.
+
+### Simulating An RTL Design
+
+An RTL design is simulated with a SystemVerilog testbench of its own. The
+`testbench.*` parameters describe it:
+
+| Parameter | Meaning |
+| --- | --- |
+| `testbench.top` | Top module of the testbench. Setting it adds `sim` to the flow. |
+| `testbench.files` | The testbench sources. They are compiled after the design and are not part of it: they are not reviewed, linted, or handed off. |
+| `testbench.pass_pattern` | Regular expression the output must match for the run to pass. |
+| `testbench.fail_pattern` | Regular expression that fails the run when the output matches. |
+| `testbench.plusargs` | Arguments for the simulation, such as `+seed=1`. |
+| `testbench.extra_args` | Additional Verilator arguments for the build. |
+
+`init --kind rtl ... --testbench <file>... --testbench-top <module>` sets the
+first two; both options are required together (`init_input_required`), the
+files must exist and define the module (`init_issue` records
+`testbench_file_not_found`, `testbench_top_not_found`), and a CPU project
+refuses them (`init_option_conflict`). A project created without a testbench
+gains the step when `testbench.top` is set later; like every parameter of a
+project, that applies to runs created afterwards.
+
+The step builds the design and the testbench into one program with
+`verilator --binary --timing --trace`, with the testbench top as the top
+module, and runs it once in the step's `output/` directory. The run passes
+when all of these hold:
+
+1. the program exits with status 0 before the simulation time limit
+   (`ECOS_FE_TIMEOUT_SIM_CASE`); `$fatal` and a failed assertion make
+   Verilator exit non-zero, a testbench that never calls `$finish` runs into
+   the limit;
+2. the output does not match `testbench.fail_pattern`, when one is set;
+3. the output matches `testbench.pass_pattern`, when one is set.
+
+Patterns are Python regular expressions searched in the whole output, with
+`^` and `$` matching at line boundaries. Neither has a default: a testbench
+that prints `FAIL` and then calls `$finish` passes unless a pattern says
+otherwise, and the log then ends with a line saying that the run was judged
+by its exit status alone.
+
+`report/cases.json` records the run as one case (`kind` `testbench`) with
+`ok`, `returncode`, `judged_by` and, on failure, `failure.kind`
+(`settings`, `compile`, `timeout`, `exit_status`, `fail_pattern`,
+`pass_pattern_missing`) and `failure.message`. The verdict is also the last
+line of the step log. The result is gated but not scored.
+
+Limits of this first form: one testbench and one run per flow, no test
+lists; `design.parameters` are not applied, because the testbench
+instantiates the design; a header the testbench includes is not tracked, so
+editing only such a header does not make the result stale. The `sim.*`
+parameters configure the programs a CPU runs and do not apply to an RTL
+design, as `testbench.*` do not apply to a CPU.
 
 ### Moving A Project
 
