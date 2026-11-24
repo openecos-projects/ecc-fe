@@ -99,6 +99,7 @@ jobs:
             test/test_program_name.py \
             test/test_testbench_sim.py \
             test/test_scoring_rules.py \
+            test/test_flow_document.py \
             test/test_packaging_handlers.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \

@@ -1,108 +1,103 @@
 # FE 流程图与依赖
 
-本文档描述 `ecc-fe` 当前默认前端流程，以及每一步依赖的工具、输入和输出。
+本文档描述 `ecc-fe` 的前端流程：有哪些步骤、每一步用什么工具、读什么、写什么。
 
-默认步骤来自 `fecompiler/allflow/builder.py`：
+流程由设计类型决定（`fecompiler/allflow/profile.py`）：
 
-```text
-prepare -> elab -> lint -> sim
-```
+| 设计类型 | 步骤 |
+| --- | --- |
+| CPU（`cpu`） | prepare → review → elab → lint → sim（在 SoC 外壳上跑程序） |
+| RTL（`rtl`），没有 testbench | prepare → review → elab → lint |
+| RTL（`rtl`），工程指定了 testbench | prepare → review → elab → lint → sim（跑这个 testbench） |
+
+步骤本身只在 `fecompiler/allflow/steps.py` 定义一次，见文末的"Step 注册表"。
 
 ## 总览图
 
 ```mermaid
 flowchart TD
-    U[用户输入 / API 参数] --> WS[create_workspace]
-
-    U --> CPU[CPU filelist.f]
-    U --> SOC[SoC filelist.soc.f]
-    U --> TB[C++ testbench]
-    U --> SIMOPT[仿真参数 / cases 选择]
-
-    CPU --> WS
-    SOC --> WS
-    TB --> WS
-    SIMOPT --> WS
-
+    U[ecc-fe init / 创建请求] --> WS[create_workspace]
     WS --> HOME[home/parameters.json<br/>home/flow.json<br/>home/home.json]
-    WS --> ORIGIN[origin/<br/>原始 RTL / filelist / SDC]
     WS --> ENGINE[EngineFlow]
 
-    ENGINE --> STEPWS[create_step_workspaces<br/>生成 step 工作区]
-    STEPWS --> PREP[prepare_fe]
-    PREP --> ELAB[elab_slang]
+    ENGINE --> PREP[prepare_fe]
+    PREP --> REVIEW[review_fe]
+    REVIEW --> ELAB[elab_slang]
     ELAB --> LINT[lint_verilator]
-    LINT --> SIM[sim_verilator]
+    LINT --> SIM[sim_verilator<br/>CPU，或有 testbench 的 RTL 设计]
 
     PREP --> PREP_OUT[merged_rtl.f<br/>prepared_inputs.json]
+    PREP_OUT --> REVIEW
     PREP_OUT --> ELAB
     PREP_OUT --> LINT
     PREP_OUT --> SIM
 
-    ELAB --> ELAB_OUT[Slang elaboration report]
-    LINT --> LINT_OUT[Verilator lint report]
-    SIM --> SIM_OUT[sim binary<br/>cases logs<br/>wave.vcd<br/>cases.json]
+    REVIEW --> REVIEW_OUT[rtl_review.json]
+    ELAB --> ELAB_OUT[elab_summary.json]
+    LINT --> LINT_OUT[lint_summary.json]
+    SIM --> SIM_OUT[仿真程序<br/>cases.json]
+
+    REVIEW_OUT --> QOR[analysis/qor_*.json<br/>门禁与分数]
+    ELAB_OUT --> QOR
+    LINT_OUT --> QOR
+    SIM_OUT --> QOR
 ```
+
+RTL 源文件不复制进工作区：`parameters.json` 记录的是它们的路径，每次运行读到的都是
+当前内容。
 
 ## 依赖关系图
 
 ```mermaid
 flowchart LR
     subgraph Inputs[输入]
-        CPU[CPU filelist.f]
-        SOC[SoC filelist.soc.f]
-        RTL[单独 RTL / legacy filelist]
-        TB[C++ testbench]
-        CPP[额外 C++ sources<br/>dpi_mem.cpp / difftest.cpp 等]
-        CASES[sim_images / sim_all_tests<br/>sim_program_names]
-        FLAGS[sim_cflags / sim_ldflags / sim_run_args]
+        CPU[CPU filelist 或单个 RTL 文件]
+        SOC[SoC 外壳 filelist<br/>仅 CPU 工程]
+        RTL[RTL 设计的 filelist 或文件]
+        TB[testbench<br/>CPU：C++ 外壳；RTL：SystemVerilog]
+        PARAMS[参数<br/>lint.* / elab.* / sim.* / testbench.*]
     end
 
-    subgraph Prepare[prepare_fe<br/>工具: fecompiler prepare parser]
-        P1[collect inputs]
-        P2[merge filelist]
-        P3[persist state]
-        P4[report]
+    subgraph Prepare[prepare_fe<br/>fecompiler 自带的 filelist 解析器]
+        P1[collect inputs] --> P2[merge filelist] --> P3[persist state] --> P4[report]
+    end
+
+    subgraph Review[review_fe<br/>源码检查 + 可选的 Yosys]
+        R1[collect sources] --> R2[scan rtl] --> R3[analyze quality] --> R4[report]
     end
 
     subgraph Slang[elab_slang<br/>工具: slang]
-        S1[slang --lint-only<br/>semantic/elaboration check]
+        S1[slang --top ...<br/>完整 elaboration]
     end
 
     subgraph Lint[lint_verilator<br/>工具: verilator]
         V1[verilator --lint-only]
     end
 
-    subgraph Sim[sim_verilator<br/>工具: verilator + SoC build_test.sh]
-        C1[verilator --binary]
-        C2[build test programs]
-        C3[run cases]
+    subgraph Sim[sim_verilator<br/>工具: verilator + C++ 编译器 + make]
+        C1[compile]
+        C2[simulate]
     end
 
     CPU --> P1
     SOC --> P1
     RTL --> P1
-    P1 --> P2 --> P3 --> P4
-    P4 --> MANIFEST[prepared_inputs.json<br/>rtl_files / incdirs / defines]
+    P4 --> MANIFEST[prepared_inputs.json<br/>RTL 文件及归属 / incdirs / defines / 库目录]
 
+    MANIFEST --> R1
     MANIFEST --> S1
     MANIFEST --> V1
     MANIFEST --> C1
-
     TB --> C1
-    CPP --> C1
-    FLAGS --> C1
-    CASES --> C2
-    CASES --> C3
-    FLAGS --> C3
+    PARAMS --> V1
+    PARAMS --> S1
+    PARAMS --> C1
+    C1 --> C2
 
-    S1 --> SR[report/log.txt<br/>report/elab.rpt]
-    V1 --> LR[report/log.txt<br/>report/lint.rpt]
-    C1 --> BIN["output/&lt;design&gt;_sim<br/>log/log.txt"]
-    C2 --> IMAGES["output/cases/&lt;case&gt;/&lt;case&gt;.soc.bin"]
-    BIN --> C3
-    IMAGES --> C3
-    C3 --> RUNS["output/cases/&lt;case&gt;/log.txt<br/>output/cases/&lt;case&gt;/wave.vcd<br/>report/cases.json<br/>report/runs/&lt;run_id&gt;/"]
+    R4 --> RR[report/rtl_review.json<br/>report/rtl_review_summary.md]
+    S1 --> SR[report/log.txt<br/>report/elab_summary.json]
+    V1 --> LR[report/log.txt<br/>report/lint_summary.json]
+    C2 --> CR[report/log.txt<br/>report/cases.json]
 ```
 
 ## Step 目录结构
@@ -116,91 +111,121 @@ flowchart LR
 ├── output/
 │   └── <design>_<step>.json
 ├── report/
-│   └── <step>.rpt
+│   └── <step>.rpt          # 该步骤的结果摘要（JSON 内容）
 ├── log/
 │   └── log.txt
 ├── script/
 ├── analysis/
-├── subflow.json
+│   ├── qor_metrics.json    # 指标
+│   ├── qor_summary.json    # 门禁、质量结论、分数
+│   └── qor_hotspots.json   # 需要关注的位置
+├── subflow.json            # 子步骤状态
 └── checklist.json
 ```
 
-`sim_verilator` 会额外产生：
+各步骤在 `report/` 下的主要文件：
+
+| 步骤目录 | 文件 |
+| --- | --- |
+| `prepare_fe` | `prepare.rpt`；另有 `output/merged_rtl.f`、`output/prepared_inputs.json` |
+| `review_fe` | `rtl_review.json`、`rtl_review_summary.md` |
+| `elab_slang` | `log.txt`、`elab_summary.json` |
+| `lint_verilator` | `log.txt`、`lint_summary.json` |
+| `sim_verilator` | `log.txt`、`cases.json`，见下 |
+
+CPU 工程的 `sim_verilator`：
 
 ```text
 sim_verilator/
+├── obj_dir/                      # Verilator 的构建目录
 ├── output/
-│   ├── <design>_sim
-│   └── cases/
-│       └── <case>/
-│           ├── <case>.soc.bin
-│           ├── log.txt
-│           └── wave.vcd
+│   ├── <design>_sim              # 仿真程序
+│   ├── <design>_sim.build.json   # 这个程序是用什么构建的
+│   └── cases/<case>/
+│       ├── <case>.soc.bin
+│       ├── log.txt
+│       └── wave.vcd
 ├── report/
 │   ├── log.txt
 │   ├── build_programs.log.txt
 │   ├── cases.json
 │   ├── cases/<case>/log.txt
+│   ├── history.json
 │   └── runs/<run_id>/
-└── log/log.txt
+└── log/log.txt                   # 仿真程序的编译日志
 ```
+
+RTL 工程的 `sim_verilator` 只有 `obj_dir/`、`output/<testbench top>_sim`、`report/log.txt`、
+`report/cases.json` 和 `log/log.txt`；仿真在 `output/` 目录里运行，testbench 自己写出的
+波形文件也在那里。
 
 ## 各步骤明细
 
-| Step | Tool | 主要输入 | 主要输出 | 子步骤 |
+| 步骤 | 工具 | 主要输入 | 主要输出 | 子步骤 |
 |---|---|---|---|---|
-| `prepare_fe` | Python parser | `cpu_filelist`, `soc_filelist`; 或 legacy `input_filelist`; 或 `origin_verilog` | `output/merged_rtl.f`, `output/prepared_inputs.json`, `report/prepare.rpt` | `collect inputs`, `merge filelist`, `persist state`, `report` |
-| `elab_slang` | Resource Manager/PATH 中的 `slang`，或 `ECOS_SLANG` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/elab.rpt` | `elaborate`, `report` |
-| `lint_verilator` | Resource Manager/PATH 中的 `verilator`，或 `ECOS_VERILATOR` | `prepared_inputs.json` 中的 RTL / incdirs / defines, `top_module` | `report/log.txt`, `report/lint.rpt` | `lint`, `report` |
-| `sim_verilator` | `verilator --binary`; 可选 SoC `scripts/build_test.sh`; 可选 difftest ref so | RTL, `testbench`, `sim_cpp_sources`, `sim_cflags`, `sim_ldflags`, `sim_run_args`, cases 配置 | `output/<design>_sim`, `output/cases/<case>/`, `report/cases.json`, `report/runs/<run_id>/` | `compile`, `simulate`, `report` |
+| `prepare_fe` | fecompiler 自带的 filelist 解析器 | CPU 工程：`cpu_filelist`（或单个 RTL 文件）和 `soc_filelist`；RTL 工程：`input_filelist` 或 RTL 文件列表 | `output/merged_rtl.f`、`output/prepared_inputs.json`、`report/prepare.rpt` | `collect inputs`、`merge filelist`、`persist state`、`report` |
+| `review_fe` | 源码检查（Python）；Yosys 做结构预检查，没装时这部分不评估 | prepare 结果里用户自己的 RTL | `report/rtl_review.json`、`report/rtl_review_summary.md` | `collect sources`、`scan rtl`、`analyze quality`、`report` |
+| `elab_slang` | `slang`（Resource Manager、`PATH` 或 `ECOS_SLANG`） | prepare 结果、`top_module`、`design.parameters`、`elab.extra_args` | `report/log.txt`、`report/elab_summary.json` | `elaborate`、`report` |
+| `lint_verilator` | `verilator --lint-only`（Resource Manager、`PATH` 或 `ECOS_VERILATOR`） | prepare 结果、`top_module`、`lint.*` 参数（规则集、waiver、baseline） | `report/log.txt`、`report/lint_summary.json` | `lint`、`report` |
+| `sim_verilator`（CPU） | `verilator --cc --exe --build`；SoC 的 `scripts/build_test.sh` 编译测试程序；可选 difftest 参考模型 | prepare 结果、C++ 外壳（`testbench`、`sim_cpp_sources`）、`sim_cflags`、`sim_ldflags`、`sim_run_args`、用例选择 | `output/<design>_sim`、`output/cases/<case>/`、`report/cases.json`、`report/runs/<run_id>/` | `compile`、`simulate`、`report` |
+| `sim_verilator`（RTL） | `verilator --binary --timing --trace` | prepare 结果、`testbench.top`、`testbench.files` 及其余 `testbench.*` 参数 | `output/<testbench top>_sim`、`report/log.txt`、`report/cases.json`（`kind` 为 `testbench`，一个 case） | `compile`、`simulate`、`report` |
 
-RTL 设计（不是 CPU）的 `sim_verilator` 走另一条路径：用工程指定的 SystemVerilog testbench
-（`testbench.top`、`testbench.files`），`verilator --binary --timing --trace` 把设计和
-testbench 编成一个程序并运行一次，输出 `output/<testbench top>_sim`、`report/log.txt`、
-`report/cases.json`（`kind` 为 `testbench`，只有一个 case）。实现在
-`fecompiler/tools/verilator/testbench.py`；`fecompiler/tools/verilator/sim.py` 按设计类型
-在它和 CPU 的 SoC 仿真（`runner.py`）之间选择。没有指定 testbench 的 RTL 设计没有这个步骤。
+两种仿真的实现分别在 `fecompiler/tools/verilator/runner.py`（CPU）和
+`fecompiler/tools/verilator/testbench.py`（RTL），`fecompiler/tools/verilator/sim.py`
+按设计选择其中一个。
+
+工具约定上的差别：lint 和 elab 定义宏 `SYNTHESIS`，仿真不定义；所以 `` `ifdef SYNTHESIS ``
+里的代码，被检查的和被仿真的不是同一份。
 
 ## 数据如何流动
 
-1. 用户创建 workspace 时传入 CPU、SoC、testbench、仿真参数等。
-2. `home/parameters.json` 持久化这些参数，`home/flow.json` 保存全流程状态。
-3. `prepare_fe` 解析 filelist：
-   - 支持 `-f` / `-F` 嵌套 filelist。
-   - 收集 `.v` / `.sv`。
-   - 收集 `+incdir+...` 和 `+define+...`。
-   - 写出标准化 `prepared_inputs.json`。
-4. `elab_slang`、`lint_verilator`、`sim_verilator` 优先从 `prepared_inputs.json` 读取 RTL 输入。
-5. `sim_verilator` 先编译仿真器，再按 cases 运行：
+1. `ecc-fe init` 创建工作区（工程模式下是 `.ecc-fe/template`，每个 run 从它复制而来）。
+2. `home/parameters.json` 保存参数和 RTL 的路径，`home/flow.json` 保存每一步的状态。
+3. `prepare_fe` 解析 filelist（格式见下一节），写出 `prepared_inputs.json`：RTL 文件及其
+   归属（用户的、SoC 外壳的、第三方的）、include 目录、宏定义、库目录。
+4. 之后的步骤都从 `prepared_inputs.json` 读取输入。输入变了，prepare 会先自动重跑。
+5. 每一步结束后，`analysis/` 下生成门禁、质量结论和分数
+   （规则见 `docs/specification/quality-scoring.md`）。
+6. 每一步的结果带有签名：执行代码、参数、输入内容、工具任何一项变了，结果就标为过期，
+   `ecc-fe run --resume` 会重跑它。
+7. CPU 的 `sim_verilator` 先编译仿真程序，再按用例运行：
    - 显式镜像：`sim_images`。
-   - 扫描镜像：`sim_all_tests + sim_tests_dir`。
-   - 先编译程序再运行：`sim_build_all_programs`, `sim_program_names`, `sim_program_sources`, `sim_programs_dir`。
+   - 扫描镜像：`sim_all_tests` + `sim_tests_dir`。
+   - 先编译程序再运行：`sim_build_all_programs`、`sim_program_names`、
+     `sim_program_sources`、`sim_programs_dir`。
 
-## 常见 SoC + CPU 仿真链路
+   已有的仿真程序只有在它的构建记录（`<design>_sim.build.json`：构建命令，以及构建时
+   读过的每个文件的哈希，包括被 include 的头文件）与当前输入一致时才会被复用，否则
+   重新编译，并在编译日志的第一行说明原因。
+
+## CPU 工程的仿真链路
 
 ```mermaid
 sequenceDiagram
     participant User as User/API
     participant WS as Workspace
     participant Prep as prepare_fe
+    participant Review as review_fe
     participant Slang as elab_slang
     participant Lint as lint_verilator
     participant Sim as sim_verilator
-    participant SoC as SoC tests/build_test.sh
+    participant SoC as SoC scripts/build_test.sh
 
-    User->>WS: CPU filelist + SoC filelist + testbench + sim options
-    WS->>Prep: origin/home metadata
-    Prep->>Prep: parse CPU/SoC filelists
+    User->>WS: CPU filelist + SoC 外壳 + 仿真参数
+    WS->>Prep: 参数与输入路径
+    Prep->>Prep: 解析 CPU 和 SoC 的 filelist
     Prep-->>WS: merged_rtl.f + prepared_inputs.json
-    WS->>Slang: prepared RTL + top_module
-    Slang-->>WS: elaboration log/report
-    WS->>Lint: prepared RTL + top_module
-    Lint-->>WS: lint log/report
-    WS->>Sim: RTL + C++ testbench + sim args
-    Sim->>SoC: build selected programs/cases if requested
+    WS->>Review: CPU 自己的 RTL
+    Review-->>WS: rtl_review.json
+    WS->>Slang: 全部 RTL + top_module
+    Slang-->>WS: elab_summary.json
+    WS->>Lint: 全部 RTL + top_module
+    Lint-->>WS: lint_summary.json
+    WS->>Sim: 全部 RTL + C++ 外壳 + 仿真参数
+    Sim->>SoC: 按需编译选中的测试程序
     SoC-->>Sim: *.soc.bin
-    Sim->>Sim: run design_sim per case
-    Sim-->>WS: output/cases/case/log.txt, wave.vcd, cases.json
+    Sim->>Sim: 每个用例运行一次仿真程序
+    Sim-->>WS: output/cases/<case>/log.txt、wave.vcd、cases.json
 ```
 
 ## filelist 格式
@@ -289,6 +314,7 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | `handler` | 执行该步骤的 `BaseStep` 子类（`模块:类名`，运行时才导入） |
 | `qor_report` | QoR 分析读取的 `report/` 下的文件 |
 | `config_fields` / `config_prefixes` | 变化后会让成功结果失效的 workspace 参数 |
+| `config_files` | 值是文件路径的参数：文件内容变了，结果同样失效（lint 的 waiver 和 baseline、testbench 文件） |
 | `source_files` / `executables` | 计入溯源指纹的 runner 源码与外部工具 |
 | `doctor_checks` | `ecc-fe doctor --step <name>` 检查的环境项 |
 
@@ -304,7 +330,9 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 注册表里 `prepares_inputs` 标出产生"已准备输入"的那一步（prepare），其余步骤在输入
 过期时会先自动重跑它。
 新增一个步骤需要：在注册表加一条定义，在 `allflow/profile.py` 把它列入
-相应 profile，并在 `analysis/qor.py` 提供对应的 QoR 构建函数。
+相应 profile，在 `analysis/qor.py` 提供对应的 QoR 构建函数，并把它的处理模块写进
+`ecc-fe.spec` 的 `HIDDENIMPORTS`（处理模块按名字导入，打包时不会被自动发现；
+`test/test_packaging_handlers.py` 会检查这一点）。
 
 ## 关键代码位置
 
@@ -323,7 +351,14 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | Prepare 实现 | `fecompiler/tools/prepare/runner.py` |
 | Slang elaboration | `fecompiler/tools/slang/runner.py` |
 | Verilator lint（设置、诊断解析、baseline 门禁） | `fecompiler/tools/verilator/lint.py` |
-| Verilator sim | `fecompiler/tools/verilator/runner.py` |
+| sim 步骤的入口（按设计选择下面两种之一） | `fecompiler/tools/verilator/sim.py` |
+| CPU 仿真（SoC 外壳、测试程序、用例、回归记录） | `fecompiler/tools/verilator/runner.py` |
+| 仿真程序的构建记录与复用判断 | `fecompiler/tools/verilator/build_stamp.py` |
+| RTL 设计用自己的 testbench 仿真 | `fecompiler/tools/verilator/testbench.py` |
+| review（步骤入口、源码检查、Yosys 结构预检查） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
+| 门禁、质量结论、分数 | `fecompiler/analysis/qor.py`、`scoring.py`、`scoring_policy.json` |
+| 结果签名与过期判断 | `fecompiler/engine/provenance.py` |
+| 交接清单 | `fecompiler/cli/handlers/handoff.py` |
 | 各工具的设置读取 | `fecompiler/tools/common/tool_config.py` |
 | RTL 输入共享解析 | `fecompiler/tools/common/rtl_inputs.py` |
 | filelist 解析（`-f/-F`、`+incdir+`、`+define+`、缺失文件报告） | `fecompiler/tools/common/filelist.py` |
