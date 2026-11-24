@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.tools.common.filelist import read_complete_filelist
+from fecompiler.tools.common.sv_module import strip_sv_comments
+from fecompiler.tools.review.inputs import prepared_review_inputs
 from fecompiler.tools.common.rtl_ownership import (
     is_actionable_rtl_ownership,
     rtl_ownership_map,
@@ -142,6 +144,9 @@ def finalize_review_report(
         for issue in (previous_report or {}).get("issues", [])
         if isinstance(issue, dict)
     ]
+    # Anchors are recorded with each report; the current issues get theirs
+    # from the sources as they are now.
+    _assign_anchors([issue for issue in report.get("issues", []) if isinstance(issue, dict)])
     previous_by_id = {str(issue["fingerprint"]): issue for issue in previous_issues}
     current_issues = [
         _decorate_issue(issue, workspace, ownership_by_path)
@@ -161,7 +166,9 @@ def finalize_review_report(
             new_count += 1
         else:
             existing_count += 1
-        waiver = waiver_by_id.get(fingerprint)
+        waiver = waiver_by_id.get(fingerprint) or waiver_by_id.get(
+            str(issue.get("legacy_fingerprint", ""))
+        )
         issue["waived"] = waiver is not None
         if waiver is not None:
             issue["waiver"] = waiver
@@ -250,6 +257,10 @@ def _candidate_rtl_files(workspace: dict[str, Any]) -> list[str]:
     CPU RTL and SoC wrapper/harness RTL.  Review must ignore the harness side so
     users are not blamed for integration collateral.
     """
+    prepared = prepared_review_inputs(workspace)
+    if prepared is not None:
+        return list(prepared["rtl_files"])
+
     cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
     if cpu_filelist:
         return _filelist_rtl_files(cpu_filelist)
@@ -364,18 +375,77 @@ def _issues(
     return sorted(issues, key=_issue_sort_key)
 
 
+_CLOCK_NAME = re.compile(r"(?:^|_)(?:clk|clock)(?:_|$)|^(?:clk|clock)\w*$|\w*(?:clk|clock)$", re.I)
+# Names that mention a clock but are data about it, not a clock.
+_NOT_A_CLOCK = re.compile(
+    r"(?:_|^)(?:en|ena|enable|sel|select|req|ack|valid|vld|ready|rdy|cnt|count|"
+    r"counter|ratio|freq|period|stable|locked|lock|ok|gate_en)"
+    # ...optionally followed by a pipeline/next-state/port suffix.
+    r"(?:_(?:next|nxt|d|q|r|reg|ff|n|i|o))?$",
+    re.I,
+)
+_CLOCK_ASSIGN = re.compile(r"\bassign\s+(\w+)\s*(?:\[[^\]]*\]\s*)?=\s*([^;]*)")
+_PLAIN_REFERENCE = re.compile(r"\s*[\w.$]+\s*(?:\[[^\]]*\]\s*)?")
+_COMB_BLOCK_START = re.compile(r"\balways_comb\b|\balways\s*@\s*(?:\*|\(\s*\*\s*\))")
+_CASE_START = re.compile(r"\b(?:(unique0?|priority)\s+)?case[zx]?\s*\(")
+_BLOCK_BOUNDARY = re.compile(
+    r"^\s*(?:always(?:_comb|_ff|_latch)?\b|assign\b|endmodule\b|module\b|"
+    r"function\b|task\b|initial\b|generate\b|endgenerate\b)"
+)
+_ASYNC_RESET_EDGES = re.compile(r"\b(posedge|negedge)\s+.*\b(posedge|negedge)\b")
+
+
+def _is_clock_name(name: str) -> bool:
+    return bool(_CLOCK_NAME.search(name)) and not _NOT_A_CLOCK.search(name)
+
+
+def _block_after(lines: list[str], start: int, limit: int) -> list[str]:
+    """Return the lines of the block starting at *start* (0-based).
+
+    The block ends before the next line that opens another always block,
+    assign, function, or module, so a rule never reads into its neighbour.
+    """
+    block = [lines[start]]
+    for line in lines[start + 1 : start + limit]:
+        if _BLOCK_BOUNDARY.match(line):
+            break
+        block.append(line)
+    return block
+
+
+def _case_body(lines: list[str], start: int, limit: int) -> str:
+    """Return the text of the case statement opening at *start* up to its endcase."""
+    depth = 0
+    collected: list[str] = []
+    for line in lines[start : start + limit]:
+        collected.append(line)
+        depth += len(re.findall(r"\bcase[zx]?\b", line)) - len(re.findall(r"\bendcase\b", line))
+        if depth <= 0:
+            break
+    return "\n".join(collected)
+
+
 def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
-    lines = source.text.splitlines()
-    stripped_text = _strip_comments(source.text)
+    # Comments are removed first, keeping line numbers, so commented-out code
+    # is never reported.
+    stripped_text = strip_sv_comments(source.text)
+    lines = stripped_text.splitlines()
+    async_reset_lines: list[int] = []
 
     for idx, line in enumerate(lines, start=1):
         clean = line.strip()
         if not clean:
             continue
         lower = clean.lower()
-        if re.search(r"\bassign\s+\w*clk\w*\s*=", clean, flags=re.I):
+        clock_assign = _CLOCK_ASSIGN.search(clean)
+        if (
+            clock_assign
+            and _is_clock_name(clock_assign.group(1))
+            # `assign clk_o = clk_i;` renames a clock; it does not generate one.
+            and not _PLAIN_REFERENCE.fullmatch(clock_assign.group(2))
+        ):
             issues.append(_issue(
-                "error",
+                "warning",
                 "clock",
                 "Clock generated by RTL logic",
                 "Generated or gated clocks make STA, CDC, and clock routing fragile.",
@@ -383,7 +453,8 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                 idx,
                 recommendation="Use clock-enable logic, or route generated clocks through explicit clocking resources and constraints.",
             ))
-        if re.search(r"\b(?:clk|clock)\w*\s*=", clean, flags=re.I) and "assign" not in lower and "<=" in clean:
+        sequential_clock = re.search(r"\b(\w*(?:clk|clock)\w*)\s*<=", clean, flags=re.I)
+        if sequential_clock and "assign" not in lower and _is_clock_name(sequential_clock.group(1)):
             issues.append(_issue(
                 "warning",
                 "clock",
@@ -393,7 +464,10 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                 idx,
                 recommendation="Review whether this is really a clock; prefer clock enables for datapath control.",
             ))
-        if re.search(r"\bif\s*\([^)]*(?:clk|clock)[^)]*\)", clean, flags=re.I):
+        condition = re.search(r"\bif\s*\(([^)]*)\)", clean)
+        if condition and any(
+            _is_clock_name(name) for name in re.findall(r"\b[A-Za-z_]\w*\b", condition.group(1))
+        ):
             issues.append(_issue(
                 "warning",
                 "clock",
@@ -403,16 +477,8 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                 idx,
                 recommendation="Keep clocks in event controls and constraints; avoid using clocks as datapath conditions.",
             ))
-        if re.search(r"\b(posedge|negedge)\s+.*\b(posedge|negedge)\b", clean):
-            issues.append(_issue(
-                "warning",
-                "reset",
-                "Sequential block has multiple edge controls",
-                "Async reset is legal, but reset release must be synchronized and constrained.",
-                source.path,
-                idx,
-                recommendation="Document async reset intent, synchronize reset release per clock domain, and add RDC checks.",
-            ))
+        if _ASYNC_RESET_EDGES.search(clean):
+            async_reset_lines.append(idx)
         if re.search(r"\b(?:rst|reset)\w*\s*(?:&|\||\^)", clean, flags=re.I):
             issues.append(_issue(
                 "warning",
@@ -423,9 +489,20 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                 idx,
                 recommendation="Prefer a clean reset tree and local synchronized reset release.",
             ))
-        if re.search(r"\balways\s*@\s*\*", clean) and idx <= len(lines):
-            block = "\n".join(lines[idx - 1:min(idx + 28, len(lines))])
-            if re.search(r"\bif\s*\(", block) and not re.search(r"\belse\b", block):
+        if _COMB_BLOCK_START.search(clean):
+            block_lines = _block_after(lines, idx - 1, 60)
+            block = "\n".join(block_lines)
+            first_if = next(
+                (n for n, text in enumerate(block_lines) if re.search(r"\bif\s*\(", text)),
+                None,
+            )
+            # Values assigned before the first `if` are defaults: every path
+            # then drives the signal, so a missing else infers no latch.
+            has_defaults = first_if is not None and any(
+                re.search(r"[^=!<>]=[^=]", text) and not re.search(r"\b(?:if|case[zx]?|for)\b", text)
+                for text in block_lines[1:first_if]
+            )
+            if first_if is not None and not has_defaults and not re.search(r"\belse\b", block):
                 issues.append(_issue(
                     "warning",
                     "combinational",
@@ -435,9 +512,10 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                     idx,
                     recommendation="Assign defaults at block entry or cover all branches with else.",
                 ))
-        if re.search(r"\bcase[zx]?\s*\(", clean):
-            block = "\n".join(lines[idx - 1:min(idx + 60, len(lines))])
-            if "default" not in block:
+        case_start = _CASE_START.search(clean)
+        # `unique`/`priority` state that the listed cases are complete.
+        if case_start and not case_start.group(1):
+            if not re.search(r"\bdefault\b", _case_body(lines, idx - 1, 200)):
                 issues.append(_issue(
                     "warning",
                     "state-machine",
@@ -469,6 +547,20 @@ def _scan_source(source: SourceFile, issues: list[dict[str, Any]]) -> None:
                 evidence={"characters": len(clean)},
                 recommendation="Break the expression into named intermediate signals.",
             ))
+
+    if async_reset_lines:
+        # Asynchronous reset is ordinary practice: one note per file, not one
+        # warning per always block.
+        issues.append(_issue(
+            "info",
+            "reset",
+            "Asynchronous reset in sequential blocks",
+            "Async reset is legal, but reset release must be synchronized and constrained.",
+            source.path,
+            async_reset_lines[0],
+            evidence={"blocks": len(async_reset_lines)},
+            recommendation="Document async reset intent, synchronize reset release per clock domain, and add RDC checks.",
+        ))
 
     for assign_match in re.finditer(r"\bassign\s+[^=]+=\s*([^;]+);", stripped_text, flags=re.S):
         rhs = assign_match.group(1)
@@ -635,10 +727,50 @@ def _decorate_issue(
             ownership_by_path,
         )
     decorated["fingerprint"] = _issue_fingerprint(decorated, workspace)
+    decorated["legacy_fingerprint"] = _legacy_issue_fingerprint(decorated, workspace)
     return decorated
 
 
+def _fingerprint_source_key(source: str, workspace: dict[str, Any]) -> str:
+    """Name a source so the fingerprint survives a different checkout location."""
+    if not source:
+        return ""
+    for field in ("cpu_filelist", "input_filelist"):
+        filelist = str(workspace.get(field, "")).strip()
+        if not filelist:
+            continue
+        try:
+            return (
+                Path(source).resolve()
+                .relative_to(Path(filelist).resolve().parent)
+                .as_posix()
+            )
+        except ValueError:
+            continue
+    return Path(source).name
+
+
 def _issue_fingerprint(issue: dict[str, Any], workspace: dict[str, Any]) -> str:
+    """Identify an issue by what it is about, not by where the line sits.
+
+    The source line's own text (``anchor``) and its occurrence among equal
+    lines stand in for the line number, so editing code above an issue
+    leaves its fingerprint, and a waiver for it, intact.
+    """
+    identity = {
+        "origin": str(issue.get("origin", "")),
+        "category": str(issue.get("category", "")),
+        "title": str(issue.get("title", "")),
+        "source": _fingerprint_source_key(str(issue.get("source", "")).strip(), workspace),
+        "anchor": str(issue.get("anchor", "")),
+        "occurrence": int(issue.get("occurrence", 0) or 0),
+    }
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _legacy_issue_fingerprint(issue: dict[str, Any], workspace: dict[str, Any]) -> str:
+    """The fingerprint used before anchors; kept so existing waivers still match."""
     source = str(issue.get("source", "")).strip()
     source_key = source
     cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
@@ -657,6 +789,30 @@ def _issue_fingerprint(issue: dict[str, Any], workspace: dict[str, Any]) -> str:
     }
     payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _assign_anchors(issues: list[dict[str, Any]]) -> None:
+    """Give each issue the text of its source line and its occurrence number."""
+    texts: dict[str, list[str]] = {}
+    seen: Counter[tuple[str, str, str, str]] = Counter()
+    for issue in sorted(issues, key=lambda item: (str(item.get("source", "")), int(item.get("line", 0) or 0))):
+        source = str(issue.get("source", "")).strip()
+        line = int(issue.get("line", 0) or 0)
+        anchor = ""
+        if source and line:
+            if source not in texts:
+                try:
+                    texts[source] = strip_sv_comments(
+                        Path(source).read_text(encoding="utf-8", errors="ignore")
+                    ).splitlines()
+                except OSError:
+                    texts[source] = []
+            if line <= len(texts[source]):
+                anchor = " ".join(texts[source][line - 1].split())
+        issue["anchor"] = anchor
+        key = (str(issue.get("origin", "")), str(issue.get("title", "")), source, anchor)
+        issue["occurrence"] = seen[key]
+        seen[key] += 1
 
 
 def _valid_waivers(waivers: Any) -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]]:
@@ -692,8 +848,7 @@ def _issue_sort_key(issue: dict[str, Any]) -> tuple[int, str, str, str, int]:
 
 
 def _strip_comments(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    return re.sub(r"//.*", "", text)
+    return strip_sv_comments(text)
 
 
 def _identifiers(text: str) -> list[str]:

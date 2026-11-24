@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
+from fecompiler.tools.review.inputs import prepared_review_inputs
 from fecompiler.tools.common.process import run_tool
 from fecompiler.tools.common.filelist import read_complete_filelist
 
@@ -102,6 +103,33 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "artifacts": paths,
         })
 
+    spaced = _paths_with_whitespace(inputs)
+    if spaced:
+        # A Yosys script cannot express such a path; elab and lint can, so
+        # the structural metrics are skipped rather than failing review.
+        return _write_probe(paths, {
+            "status": "skipped",
+            "mode": mode,
+            "scope": scope,
+            "tool": "yosys",
+            "title": "Yosys Precheck",
+            "reason": "Yosys scripts cannot name paths that contain spaces: " + spaced[0],
+            "top_module": top_module,
+            "inputs": inputs,
+            "metrics": {},
+            "module_risks": [],
+            "quality": _quality("skipped"),
+            "diagnostics": [],
+            "issues": [_issue(
+                "info",
+                "tooling",
+                "Yosys precheck skipped",
+                "A source or include path contains spaces, which a Yosys script cannot express.",
+                recommendation="Structural metrics are unavailable; move the sources to a path without spaces to get them.",
+            )],
+            "artifacts": paths,
+        })
+
     script_path = Path(paths["script"])
     log_path = Path(paths["log"])
     stat_path = Path(paths["stat"])
@@ -176,6 +204,14 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
 
     stat = _read_json(stat_path)
     diagnostics = _diagnostics_from_log(output)
+    if (
+        result.returncode != 0
+        and frontend == "read_verilog"
+        and _has_systemverilog_sources(inputs)
+    ):
+        # Without the slang plugin Yosys reads SystemVerilog with its own
+        # limited parser. What it rejects may be valid: elab decides, not this.
+        diagnostics = _as_frontend_limits(diagnostics)
     netlist = _read_json(netlist_path)
     metrics = _metrics_from_stat(stat, output)
     metrics.update(_structural_metrics_from_netlist(netlist))
@@ -214,6 +250,23 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
 
 
 def _cpu_probe_inputs(workspace: dict[str, Any]) -> dict[str, Any]:
+    prepared = prepared_review_inputs(workspace)
+    if prepared is not None:
+        rtl_files = [
+            str(path)
+            for path in _filter_review_rtl_files(Path(item) for item in prepared["rtl_files"])
+        ]
+        completed = _complete_missing_module_sources({
+            "rtl_files": rtl_files,
+            "incdirs": _unique_paths([Path(item) for item in prepared["incdirs"]]),
+            "defines": list(prepared["defines"]),
+            "auto_discovered_rtl_files": [],
+        })
+        completed["filelist"] = str(
+            workspace.get("cpu_filelist") or workspace.get("input_filelist") or ""
+        ).strip()
+        return completed
+
     cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
     if cpu_filelist:
         parsed = _parse_filelist(cpu_filelist)
@@ -587,6 +640,32 @@ def _build_yosys_script(
         f"write_json {_quote_yosys(str(netlist_path))}",
         "",
     ])
+
+
+def _paths_with_whitespace(inputs: dict[str, Any]) -> list[str]:
+    return [
+        str(path)
+        for path in (*inputs.get("rtl_files", []), *inputs.get("incdirs", []))
+        if any(char.isspace() for char in str(path))
+    ]
+
+
+def _as_frontend_limits(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the errors of a limited frontend as tool limits, which do not block."""
+    limited = [
+        {**item, "category": "tool-limit"} if str(item.get("severity", "")).lower() == "error" else item
+        for item in diagnostics
+    ]
+    if not any(str(item.get("severity", "")).lower() == "error" for item in limited):
+        limited.append({
+            "severity": "error",
+            "category": "tool-limit",
+            "message": "Yosys read_verilog could not read the SystemVerilog sources; the slang plugin is not installed.",
+            "source": "",
+            "line": 0,
+            "column": 0,
+        })
+    return limited
 
 
 def _select_yosys_frontend(yosys: str, inputs: dict[str, Any]) -> str:

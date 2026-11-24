@@ -94,6 +94,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
         source_files=(
             "tools/review/runner.py",
             "tools/review/analyzer.py",
+            "tools/review/inputs.py",
             "tools/review/structural_probe.py",
         ),
         executables=("yosys",),
