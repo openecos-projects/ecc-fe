@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import re
 import shlex
 
 
+_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]*")
+# Used when a failure reaches the output without a code of its own.
+UNCLASSIFIED_ERROR = "command_failed"
+
+
 def error_record(error: str, **fields: object) -> dict[str, object]:
-    return {"kind": "error", "error": error, **fields}
+    """Return an error record whose ``error`` is always a stable code.
+
+    A free-form sentence is never a code: it is reported as ``message`` under
+    :data:`UNCLASSIFIED_ERROR`, so consumers can always match on ``error``.
+    """
+    if _ERROR_CODE.fullmatch(error):
+        return {"kind": "error", "error": error, **fields}
+    return {"kind": "error", "error": UNCLASSIFIED_ERROR, "message": error, **fields}
+
+
+def failure_record(
+    code: str, cause: BaseException | str, **fields: object
+) -> dict[str, object]:
+    """Return an error record for *code* that carries *cause* as its message."""
+    return {"kind": "error", "error": code, "message": str(cause), **fields}
 
 
 def disclosure_cmd(

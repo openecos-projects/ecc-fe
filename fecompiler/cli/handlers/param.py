@@ -16,7 +16,7 @@ from fecompiler.cli.core.inputs import (
     ParamUnsetInput,
 )
 from fecompiler.cli.core.locking import with_workspace_lock
-from fecompiler.cli.core.records import disclosure_cmd, error_record
+from fecompiler.cli.core.records import disclosure_cmd, error_record, failure_record
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import (
     ProjectConfig,
@@ -70,7 +70,8 @@ def show_parameter(
     schema = lookup_parameter(command_input.key)
     if schema is None:
         return CommandResult.err(
-            [error_record("unknown_parameter", param=command_input.key)]
+            [error_record("unknown_parameter", param=command_input.key)],
+            exit_code=2,
         )
     record = _parameter_view(command_input, context)
     if isinstance(record, CommandResult):
@@ -117,13 +118,15 @@ def _set_parameter(
     schema = lookup_parameter(command_input.key)
     if schema is None:
         return CommandResult.err(
-            [error_record("unknown_parameter", param=command_input.key)]
+            [error_record("unknown_parameter", param=command_input.key)],
+            exit_code=2,
         )
     try:
         value = parse_cli_value(command_input.value, schema)
     except ValueError as error:
         return CommandResult.err(
-            [error_record("invalid_value", param=schema.param, reason=str(error))]
+            [error_record("invalid_value", param=schema.param, reason=str(error))],
+            exit_code=2,
         )
     refused = _fixed_run_parameters(context, schema)
     if refused is not None:
@@ -141,7 +144,7 @@ def _set_parameter(
         config = write_parameter_override(config, schema.param, value)
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     return CommandResult.ok(
         [
@@ -208,7 +211,7 @@ def _write_workspace_parameter(
             config = write_parameter_override(config, schema.param, None, unset=True)
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if changed:
         # The value is stored first: if the reset fails, the next run still
@@ -238,7 +241,8 @@ def _unset_parameter(
     schema = lookup_parameter(command_input.key)
     if schema is None:
         return CommandResult.err(
-            [error_record("unknown_parameter", param=command_input.key)]
+            [error_record("unknown_parameter", param=command_input.key)],
+            exit_code=2,
         )
     refused = _fixed_run_parameters(context, schema)
     if refused is not None:
@@ -272,7 +276,7 @@ def _unset_parameter(
         updated = write_parameter_override(config, schema.param, None, unset=True)
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     return CommandResult.ok(
         [
@@ -388,7 +392,7 @@ def _load(
             return CommandResult.err(
                 [
                     error_record(
-                        "Frontend workspace was not found",
+                        "workspace_not_found",
                         workspace=workspace_dir,
                         remediation_cmd=_init_target_cmd(context),
                     )
@@ -399,7 +403,7 @@ def _load(
         return workspace, parameters, config
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
 
 
@@ -412,7 +416,7 @@ def _reset_flow(directory: str) -> CommandResult | None:
     return CommandResult.err(
         [
             error_record(
-                "Unable to reset frontend flow after parameter change",
+                "flow_reset_failed",
                 workspace=directory,
                 messages=result.message,
             )

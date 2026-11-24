@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from fecompiler.cli.core.inputs import CommandInput
-from fecompiler.cli.core.records import error_record
+from fecompiler.cli.core.records import error_record, failure_record
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.project.config import ProjectConfigError, load_project_config
 from fecompiler.cli.project.layout import (
@@ -111,7 +111,9 @@ def execute_command(
     try:
         result = handler(command_input, context)
     except Exception as error:  # noqa: BLE001 - command boundaries return stable error records.
-        result = CommandResult.err([error_record(str(error), command=command)])
+        result = CommandResult.err(
+            [failure_record("internal_error", error, command=command)]
+        )
     if not result.rendered:
         render_result(command, result, context.output_mode)
     raise typer.Exit(code=result.exit_code)

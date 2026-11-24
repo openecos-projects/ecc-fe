@@ -245,7 +245,8 @@ def test_status_tells_a_running_step_from_an_interrupted_one(
     assert "resume_cmd" not in running[0]
     assert running[1]["state"] == "ongoing"
 
-    assert interrupted_exit == 1
+    # An interrupted flow is flow state, not a failure of `status` itself.
+    assert interrupted_exit == 0
     assert interrupted[0]["running"] is False
     assert "owner_pid" not in interrupted[0]
     assert interrupted[0]["resume_cmd"] == (

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fecompiler.allflow.steps import step_directory, step_names
 from fecompiler.cli.core.inputs import CommandInput, ReportFilesInput, ReportQorInput
-from fecompiler.cli.core.records import error_record, normalize_state
+from fecompiler.cli.core.records import error_record, failure_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
 
@@ -160,12 +160,12 @@ def _load_workspace(
         workspace = load_existing_workspace(directory)
         if workspace is None:
             return CommandResult.err(
-                [error_record("Frontend workspace was not found", workspace=directory)]
+                [error_record("workspace_not_found", workspace=directory)]
             )
         flow = read_json_object(Path(workspace["flow_path"]))
         return workspace, flow
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-        return CommandResult.err([error_record(str(error), workspace=directory)])
+        return CommandResult.err([failure_record("workspace_unreadable", error, workspace=directory)])
 
 
 def _report_directory(workspace: Path, step: str) -> Path:

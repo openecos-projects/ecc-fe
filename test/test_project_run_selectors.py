@@ -46,7 +46,7 @@ def calls(monkeypatch) -> list[tuple[str, dict[str, object]]]:
 
 def _run(capsys, project: Path, *args: str) -> tuple[int, dict[str, object]]:
     exit_code, payload = _json_call(capsys, "run", "--project", str(project), *args)
-    return exit_code, payload["records"][0]
+    return exit_code, payload["records"][-1]
 
 
 def test_new_run_can_stop_after_a_step(project, calls, capsys) -> None:
@@ -186,14 +186,18 @@ def _fake_engine_runs(monkeypatch) -> list[tuple[str, bool]]:
 def test_flow_stops_after_the_requested_step(project, monkeypatch, capsys) -> None:
     executed = _fake_engine_runs(monkeypatch)
 
-    exit_code, record = _run(capsys, project, "--to", "elab")
+    exit_code, payload = _json_call(
+        capsys, "run", "--project", str(project), "--to", "elab"
+    )
 
     assert exit_code == 0
     # The fake engine produces no prepared inputs, so prepare is refreshed once more.
     assert executed[0][0] == "prepare"
     assert [name for name, _ in executed if name != "prepare"] == ["review", "elab"]
-    assert record["data"]["to_step"] == "elab"
-    assert [report["step"] for report in record["data"]["reports"]] == [
+    records = payload["records"]
+    assert records[-1]["kind"] == "run"
+    assert records[-1]["to_step"] == "elab"
+    assert [record["step"] for record in records if record["kind"] == "step"] == [
         "prepare",
         "review",
         "elab",

@@ -7,7 +7,7 @@ import typer
 WorkspaceOption = Annotated[
     str | None,
     typer.Option(
-        "--workspace", help="Reuse an existing frontend workspace in place"
+        "--workspace", help="Use this directory as a direct workspace, without a project"
     ),
 ]
 ProjectOption = Annotated[

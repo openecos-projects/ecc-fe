@@ -468,7 +468,8 @@ def test_check_preserves_unknown_step_error(monkeypatch, tmp_path, capsys) -> No
 
     assert exit_code == 2
     assert len(payload["records"]) == 1
-    assert payload["records"][0]["error"] == "Unknown flow step: unknown"
+    assert payload["records"][0]["error"] == "unknown_step"
+    assert payload["records"][0]["step"] == "unknown"
 
 
 def test_missing_project_remediation_uses_positional_init(

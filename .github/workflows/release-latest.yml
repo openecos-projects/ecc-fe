@@ -88,6 +88,7 @@ jobs:
             test/test_resources.py \
             test/test_rtl_review.py \
             test/test_run_progress.py \
+            test/test_output_contract.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \
             test/test_runtime_transport.py \
