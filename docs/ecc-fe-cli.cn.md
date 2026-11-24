@@ -297,6 +297,22 @@ ecc-fe report compare default faster-sim --fail-on-regression  # 变差时退出
 run 之间不同的参数。某个步骤标出"inputs or settings differ"时，表示两边的输入
 或设置不同，数字不能直接当作同一条件下的对比。
 
+## 排查问题
+
+`ecc-fe init` 失败时会列出每一条原因（`init_issue` 记录，带 `code` 和 `message`），
+并清掉它自己创建的目录；目录里原有的文件不会被动，修正后可以直接重新执行。
+
+`status` 的每个步骤带有 `runtime_s`（精确到毫秒的耗时）和 `peak_memory_mb`
+（该步骤期间 ECC-FE 及其子进程的内存峰值，仅 Linux，每秒采样 5 次）。
+
+命令因内部异常失败时报 `internal_error`。加 `--debug`（放在子命令前）或设置
+`ECC_FE_DEBUG=1` 可以把调用栈打印到 stderr：
+
+```bash
+ecc-fe --debug status
+ECC_FE_DEBUG=1 ecc-fe run
+```
+
 ## 管理 run
 
 ```bash

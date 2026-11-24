@@ -16,6 +16,7 @@ from fecompiler.cli.project.params import (
 )
 from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id
 from fecompiler.cli.workspace_access import read_json_object
+from fecompiler.resources import frontend_repo_root, managed_tools_dir, resource_roots
 from fecompiler.utility.atomic_write import atomic_write_json, atomic_write_text
 
 CONFIG_FILENAME = "ecc-fe.toml"
@@ -28,6 +29,17 @@ _CONFIG_KEYS = {
     "defaults",
     "params",
 }
+
+
+_CONFIG_HEADER = (
+    "# ECC-FE project configuration.",
+    "#",
+    "# [params] holds the settings new runs are created with; edit it here or",
+    "# with `ecc-fe param set`. [flow].run is the run used without --run-id.",
+    "# [design], [frontend] and [defaults] record how the project was created.",
+    "# They are not read back: the inputs themselves are in .ecc-fe/template.",
+    "",
+)
 
 
 class ProjectConfigError(ValueError):
@@ -137,6 +149,9 @@ def create_project_config(
         and parameters[key] is not None
         and parameters[key] != ""
         and parameters[key] != []
+        # A filelist that ships with ECC-FE or an installed resource follows
+        # from the ids above; its location on this machine is not recorded.
+        and not (key.endswith("_filelist") and _is_managed_path(parameters[key]))
     }
     flow = {"run": "default"} if project_layout else {}
     text = _render_config(design, frontend, flow, defaults, {})
@@ -145,6 +160,17 @@ def create_project_config(
     if loaded is None:
         raise ProjectConfigError(f"Unable to create project config: {path}")
     return loaded
+
+
+def _is_managed_path(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        path = Path(value).expanduser().resolve()
+        roots = [frontend_repo_root(), managed_tools_dir(), *resource_roots()]
+        return any(path.is_relative_to(Path(root).resolve()) for root in roots)
+    except (OSError, ValueError):
+        return False
 
 
 def ensure_project_config(directory: str, parameters: dict[str, Any]) -> ProjectConfig:
@@ -161,7 +187,7 @@ def write_parameter_override(
     else:
         overrides[key] = value
     original = config.path.read_text(encoding="utf-8")
-    updated = _replace_params_table(original, overrides)
+    updated = _updated_config_text(original, overrides, config.path)
     atomic_write_text(config.path, updated)
     loaded = load_project_config(str(config.path.parent))
     if loaded is None:
@@ -304,7 +330,7 @@ def _render_config(
     defaults: dict[str, object],
     overrides: dict[str, object],
 ) -> str:
-    lines = [f"schema_version = {CONFIG_SCHEMA_VERSION}", ""]
+    lines = [*_CONFIG_HEADER, f"schema_version = {CONFIG_SCHEMA_VERSION}", ""]
     lines.extend(_render_table("design", design))
     lines.extend(_render_table("frontend", frontend))
     if flow:
@@ -342,6 +368,139 @@ def _toml_value(value: object) -> str:
 
 
 _TABLE_RE = re.compile(r"(?m)^[ \t]*\[([^\]]+)\][ \t]*(?:#.*)?$")
+_HEADER_LINE = re.compile(r"[ \t]*\[\[?[^\]]+\]\]?[ \t]*(?:#.*)?")
+_KEY_LINE = re.compile(
+    r"""[ \t]*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)[ \t]*="""
+)
+
+
+def _updated_config_text(text: str, overrides: dict[str, object], path: Path) -> str:
+    """Return *text* with ``[params]`` set to *overrides* and nothing else changed.
+
+    The edit keeps comments and untouched entries. Whatever it produces is
+    parsed before it is written: if the result is not the same document with
+    only ``[params]`` changed, a plain rewrite of the table is tried, and if
+    that fails too the file is left alone.
+    """
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise ProjectConfigError(f"Unable to read {path}: {error}") from error
+    expected = {**before, "params": overrides}
+    if not overrides and "params" not in before:
+        return text
+    # A line that looks like the [params] header can also sit inside a
+    # multi-line string, so every such line is tried until one checks out.
+    headers = [
+        index
+        for index, line in enumerate(text.splitlines())
+        if _is_params_header(line)
+    ]
+    candidates = [
+        *(_edit_params_table(text, overrides, start) for start in headers),
+        _replace_params_table(text, overrides),
+    ]
+    for candidate in candidates:
+        try:
+            after = tomllib.loads(candidate)
+        except tomllib.TOMLDecodeError:
+            continue
+        after.setdefault("params", {})
+        if _same_document(after, {**expected, "params": dict(overrides)}):
+            return candidate
+    raise ProjectConfigError(
+        f"Unable to update [params] in {path} without changing the rest of the "
+        "file; edit the table by hand"
+    )
+
+
+def _same_document(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    def canonical(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: canonical(item) for key, item in sorted(value.items())}
+        if isinstance(value, (list, tuple)):
+            return [canonical(item) for item in value]
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return value
+
+    return canonical(left) == canonical(right)
+
+
+def _is_params_header(line: str) -> bool:
+    return (
+        _HEADER_LINE.fullmatch(line) is not None
+        and not line.lstrip().startswith("[[")
+        and line.split("#", 1)[0].strip().strip("[]").strip() == "params"
+    )
+
+
+def _edit_params_table(text: str, overrides: dict[str, object], start: int) -> str:
+    """Edit the ``[params]`` table whose header is line *start*, entry by entry.
+
+    Comments and entries whose value does not change are kept as written.
+    """
+    lines = text.splitlines()
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if _HEADER_LINE.fullmatch(lines[index])
+        ),
+        len(lines),
+    )
+    body = lines[start + 1 : end]
+    kept: list[str] = []
+    seen: set[str] = set()
+    last_entry_end: int | None = None
+    index = 0
+    while index < len(body):
+        entry = _entry_at(body, index)
+        if entry is None:
+            kept.append(body[index])
+            index += 1
+            continue
+        key, value, length = entry
+        if key in overrides:
+            seen.add(key)
+            if _same_document({"v": value}, {"v": overrides[key]}):
+                kept.extend(body[index : index + length])
+            else:
+                kept.append(f"{json.dumps(key, ensure_ascii=False)} = {_toml_value(overrides[key])}")
+            last_entry_end = len(kept)
+        index += length
+    added = [
+        f"{json.dumps(key, ensure_ascii=False)} = {_toml_value(value)}"
+        for key, value in sorted(overrides.items())
+        if key not in seen
+    ]
+    # New entries follow the last entry; in an empty table they follow
+    # whatever comes first, before the blank lines that end the table.
+    tail = last_entry_end
+    if tail is None:
+        tail = len(kept)
+        while tail and not kept[tail - 1].strip():
+            tail -= 1
+    kept[tail:tail] = added
+    result = "\n".join([*lines[: start + 1], *kept, *lines[end:]])
+    return result + "\n" if text.endswith("\n") or not result.endswith("\n") else result
+
+
+def _entry_at(body: list[str], index: int) -> tuple[str, object, int] | None:
+    """Parse the ``key = value`` entry starting at *index*, which may span lines."""
+    if _KEY_LINE.match(body[index]) is None:
+        return None
+    for length in range(1, len(body) - index + 1):
+        try:
+            parsed = tomllib.loads("\n".join(body[index : index + length]))
+        except tomllib.TOMLDecodeError:
+            continue
+        if len(parsed) == 1:
+            key, value = next(iter(parsed.items()))
+            if not isinstance(value, dict):
+                return key, value, length
+        return None
+    return None
 
 
 def _replace_params_table(text: str, overrides: dict[str, object]) -> str:
