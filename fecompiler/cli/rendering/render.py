@@ -5,6 +5,7 @@ import sys
 from typing import TextIO
 
 from fecompiler.cli.core.types import CommandResult, OutputMode
+from fecompiler.utility.program import program_name
 
 
 def render_result(
@@ -60,7 +61,7 @@ def _render_text(
                 print(file=target)
             _render_fields(record, target)
     for record in errors:
-        print(f"ecc-fe: error: {record.get('error')}", file=error_target)
+        print(f"{program_name()}: error: {record.get('error')}", file=error_target)
         _render_fields(
             {key: value for key, value in record.items() if key not in {"kind", "error"}},
             error_target,

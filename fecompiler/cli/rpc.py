@@ -4,11 +4,12 @@ import argparse
 from collections.abc import Sequence
 
 from fecompiler.runtime.stdio_server import main as run_stdio_runtime
+from fecompiler.utility.program import program_name
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ecc-fe rpc",
+        prog=f"{program_name()} rpc",
         description="Serve the private ECOS Studio runtime protocol.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

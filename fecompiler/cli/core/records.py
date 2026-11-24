@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 
+from fecompiler.utility.program import invoked
 
 _ERROR_CODE = re.compile(r"[a-z][a-z0-9_]*")
 # Used when a failure reaches the output without a code of its own.
@@ -34,7 +35,7 @@ def disclosure_cmd(
     project: str | None = None,
     run_id: str | None = None,
 ) -> str:
-    parts = [command]
+    parts = [invoked(command)]
     if workspace:
         parts.append(f"--workspace {shlex.quote(workspace)}")
     elif project:

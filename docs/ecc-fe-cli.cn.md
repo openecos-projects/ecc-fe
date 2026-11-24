@@ -339,6 +339,25 @@ ecc-fe --debug status
 ECC_FE_DEBUG=1 ecc-fe run
 ```
 
+## 通过其他命令调用
+
+如果 `ecc-fe` 是被另一个命令转发调用的（例如 `ecc fe ...`），转发方设置
+`ECC_FE_PROGRAM`，输出里的程序名就会跟着变：
+
+```bash
+ECC_FE_PROGRAM="ecc fe" ecc-fe status
+# ecc fe: error: workspace_not_found
+#   remediation_cmd: ecc fe run
+```
+
+受影响的只有输出：用法和帮助、文本模式下的消息前缀、所有 `*_cmd` 字段和
+`reason` 里引用的命令。记录的种类、字段名、错误码和退出码不变。
+
+写到磁盘上的内容不随它变化：`ecc-fe.toml`、运行目录、日志、lint baseline
+和交接清单里出现的仍是 `ecc-fe`。`version` 也仍然报告 `ecc-fe`。
+
+取值只接受 1 到 4 个由字母、数字和 `_ . + / -` 组成的词，其他取值会被忽略。
+
 ## 让 lint 收敛
 
 lint 的行为通过参数配置，写在 `ecc-fe.toml` 的 `[params]` 里（或用 `param set`）：

@@ -20,6 +20,7 @@ from typing import Any, TextIO
 
 from fecompiler.cli.core.types import OutputMode
 from fecompiler.cli.rendering.render import _plain_record
+from fecompiler.utility.program import program_name
 
 _STEP_STARTED = "started"
 _STEP_FINISHED = {"completed", "failed"}
@@ -108,10 +109,10 @@ class RunProgress:
 def _text_line(record: dict[str, object]) -> str:
     step = record["step"]
     if record["event"] == "step_started":
-        return f"ecc-fe: {step} started"
+        return f"{program_name()}: {step} started"
     elapsed = record.get("elapsed_s")
     suffix = f" ({elapsed:.1f}s)" if isinstance(elapsed, float) else ""
-    return f"ecc-fe: {step} {record.get('state', '')}{suffix}"
+    return f"{program_name()}: {step} {record.get('state', '')}{suffix}"
 
 
 __all__ = ["RunProgress"]
