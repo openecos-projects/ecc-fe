@@ -3,16 +3,25 @@
 One parser for every reader that needs to know what a filelist refers to. It
 understands:
 
-* one or more entries per line, with shell-style quoting and ``#`` comments;
-* whole-line comments starting with ``#``, ``//``, or a backtick;
+* one or more entries per line, with shell-style quoting;
+* comments: a line starting with ``#``, ``//``, or a backtick, and anything
+  after ``#`` or ``//`` on a line;
 * nested filelists: ``-f other.f``, ``-F other.f``, ``-fother.f``, ``-Fother.f``;
-* ``+incdir+a+b`` and ``+define+A+B=1``;
+* include directories: ``+incdir+a+b``, ``-I dir``, ``-Idir``, ``-incdir dir``;
+* defines: ``+define+A+B=1``, ``-D A``, ``-DA=1``;
+* ``-v file``: a library file, read as one more RTL file;
 * RTL files, recognised by suffix: compilation units (``.v``, ``.sv``) and
-  headers (``.vh``, ``.svh``).
+  headers (``.vh``, ``.svh``);
+* environment variables in paths: ``$VAR``, ``${VAR}``, ``$(VAR)``.
 
 Relative paths are resolved against the directory of the filelist that names
-them, and paths under ``thirdparty/`` follow managed resources. Every other
-option is ignored.
+them, and paths under ``thirdparty/`` follow managed resources.
+
+Nothing is dropped silently. An entry the parser does not act on (``-y dir``,
+``+libext+``, a file with another suffix) is listed in
+:attr:`Filelist.unsupported`, a path that uses an undefined variable or does
+not exist in :attr:`Filelist.missing`, and an include directory that does not
+exist in :attr:`Filelist.missing_incdirs` (it stays in ``incdirs`` too).
 
 :func:`parse_filelist` never raises for a missing file: anything that cannot
 be found is reported in :attr:`Filelist.missing`. :func:`read_complete_filelist`
@@ -21,6 +30,8 @@ is the strict form used when the design is about to be compiled.
 
 from __future__ import annotations
 
+import os
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +45,12 @@ RTL_SUFFIXES = RTL_SOURCE_SUFFIXES + RTL_HEADER_SUFFIXES
 _NESTED_OPTIONS = ("-f", "-F")
 _INCDIR = "+incdir+"
 _DEFINE = "+define+"
+# Options that take their value as the next entry.
+_INCDIR_OPTIONS = ("-I", "-incdir")
+_DEFINE_OPTION = "-D"
+_LIBRARY_FILE_OPTION = "-v"
+_OPTIONS_WITH_VALUE = ("-y", "-top", "--top", "--top-module", "-o", "-timescale")
+_PAREN_VARIABLE = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +66,18 @@ class Filelist:
     missing: tuple[Path, ...]
     incdirs: tuple[Path, ...]
     defines: tuple[str, ...]
+    # Entries of :attr:`incdirs` that do not exist, and include directories
+    # whose path uses an undefined variable.
+    missing_incdirs: tuple[Path, ...] = ()
+    # Entries that were read and not acted on, as written.
+    unsupported: tuple[str, ...] = ()
+
+    @property
+    def headers(self) -> tuple[Path, ...]:
+        """The headers among :attr:`files`; they are included, not compiled."""
+        return tuple(
+            path for path in self.files if path.suffix.lower() in RTL_HEADER_SUFFIXES
+        )
 
     @property
     def sources(self) -> tuple[Path, ...]:
@@ -60,7 +89,7 @@ class Filelist:
 
 def parse_filelist(path: str | Path) -> Filelist:
     """Parse *path* and every filelist it nests."""
-    root = _resolve(Path.cwd(), str(path))
+    root = _resolve(Path.cwd(), str(path)) or Path(str(path))
     collected = _Collected()
     _visit(root, collected)
     return Filelist(
@@ -68,8 +97,10 @@ def parse_filelist(path: str | Path) -> Filelist:
         filelists=tuple(collected.filelists),
         files=tuple(collected.files),
         missing=tuple(collected.missing),
-        incdirs=tuple(collected.incdirs),
+        incdirs=tuple(dict.fromkeys(collected.incdirs)),
         defines=tuple(collected.defines),
+        missing_incdirs=tuple(dict.fromkeys(collected.missing_incdirs)),
+        unsupported=tuple(collected.unsupported),
     )
 
 
@@ -96,9 +127,14 @@ def filelist_tokens(raw_line: str) -> list[str]:
     if not line or line.startswith(("#", "//", "`")):
         return []
     try:
-        return shlex.split(line, comments=True, posix=True)
+        tokens = shlex.split(line, comments=True, posix=True)
     except ValueError:  # unbalanced quote: fall back to whitespace
-        return line.split()
+        tokens = line.split()
+    # `a.v // note` — everything from a `//` entry on is a comment.
+    for index, token in enumerate(tokens):
+        if token.startswith("//"):
+            return tokens[:index]
+    return tokens
 
 
 def is_rtl_path_token(token: str) -> bool:
@@ -116,6 +152,28 @@ class _Collected:
         self.missing: list[Path] = []
         self.incdirs: list[Path] = []
         self.defines: list[str] = []
+        self.missing_incdirs: list[Path] = []
+        self.unsupported: list[str] = []
+
+    def add_incdir(self, base: Path, value: str) -> None:
+        path = _resolve(base, value)
+        if path is None:
+            self.missing_incdirs.append(Path(value))
+            return
+        # A directory that does not exist stays listed (tools ignore it) and
+        # is reported as well.
+        self.incdirs.append(path)
+        if not path.is_dir():
+            self.missing_incdirs.append(path)
+
+    def add_file(self, base: Path, value: str) -> None:
+        path = _resolve(base, value)
+        if path is None:
+            self.missing.append(Path(value))
+        elif path.is_file():
+            self.files.append(path)
+        else:
+            self.missing.append(path)
 
 
 def _visit(filelist: Path, collected: _Collected) -> None:
@@ -133,50 +191,79 @@ def _visit(filelist: Path, collected: _Collected) -> None:
     for raw_line in lines:
         tokens = filelist_tokens(raw_line)
         index = 0
+
+        def value_after(option: str) -> str | None:
+            """Return the entry that follows *option*, consuming it."""
+            nonlocal index
+            if index < len(tokens):
+                index += 1
+                return tokens[index - 1]
+            collected.unsupported.append(option)
+            return None
+
         while index < len(tokens):
             token = tokens[index]
             index += 1
-            nested = ""
-            if token in _NESTED_OPTIONS:
-                if index < len(tokens):
-                    nested = tokens[index]
-                    index += 1
-            elif token.startswith(_NESTED_OPTIONS) and len(token) > 2:
-                nested = token[2:]
-            if nested:
+
+            if token in _NESTED_OPTIONS or (
+                token.startswith(_NESTED_OPTIONS) and len(token) > 2
+            ):
+                nested = value_after(token) if token in _NESTED_OPTIONS else token[2:]
+                if nested is None:
+                    continue
                 nested_path = _resolve(base, nested)
-                if nested_path.is_file():
+                if nested_path is None:
+                    collected.missing.append(Path(nested))
+                elif nested_path.is_file():
                     _visit(nested_path, collected)
                 else:
                     collected.missing.append(nested_path)
-                continue
-
-            if token.startswith(_INCDIR):
-                collected.incdirs.extend(
-                    _resolve(base, item)
-                    for item in token.removeprefix(_INCDIR).split("+")
-                    if item.strip()
-                )
-                continue
-            if token.startswith(_DEFINE):
+            elif token.startswith(_INCDIR):
+                for item in token.removeprefix(_INCDIR).split("+"):
+                    if item.strip():
+                        collected.add_incdir(base, item)
+            elif token in _INCDIR_OPTIONS:
+                value = value_after(token)
+                if value is not None:
+                    collected.add_incdir(base, value)
+            elif token.startswith("-I") and len(token) > 2:
+                collected.add_incdir(base, token[2:])
+            elif token.startswith(_DEFINE):
                 collected.defines.extend(
                     item.strip()
                     for item in token.removeprefix(_DEFINE).split("+")
                     if item.strip()
                 )
-                continue
-
-            if not is_rtl_path_token(token):
-                continue
-            rtl_path = _resolve(base, token)
-            if rtl_path.is_file():
-                collected.files.append(rtl_path)
+            elif token == _DEFINE_OPTION:
+                value = value_after(token)
+                if value is not None:
+                    collected.defines.append(value.strip())
+            elif token.startswith(_DEFINE_OPTION) and len(token) > 2:
+                collected.defines.append(token[2:].strip())
+            elif token == _LIBRARY_FILE_OPTION:
+                value = value_after(token)
+                if value is not None:
+                    collected.add_file(base, value)
+            elif token in _OPTIONS_WITH_VALUE:
+                value = value_after(token)
+                collected.unsupported.append(
+                    token if value is None else f"{token} {value}"
+                )
+            elif token.startswith(("+", "-")):
+                collected.unsupported.append(token)
+            elif Path(token).suffix.lower() in RTL_SUFFIXES:
+                collected.add_file(base, token)
             else:
-                collected.missing.append(rtl_path)
+                collected.unsupported.append(token)
 
 
-def _resolve(base: Path, value: str) -> Path:
-    path = Path(value.strip().strip("\"'")).expanduser()
+def _resolve(base: Path, value: str) -> Path | None:
+    """Resolve one path entry; ``None`` when it uses an undefined variable."""
+    text = _PAREN_VARIABLE.sub(r"${\1}", value.strip().strip("\"'"))
+    text = os.path.expandvars(text)
+    if "$" in text:
+        return None
+    path = Path(text).expanduser()
     if not path.is_absolute():
         path = base / path
     return resolve_thirdparty_path(path).resolve()

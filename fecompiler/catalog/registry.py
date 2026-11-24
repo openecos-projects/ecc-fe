@@ -22,6 +22,7 @@ from fecompiler.tools.common.filelist import parse_filelist
 from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 from fecompiler.tools.common.sv_module import (
     is_simple_sv_identifier,
+    macro_names,
     module_definitions,
     module_port_contract_from_files,
 )
@@ -479,7 +480,8 @@ def _validate_user_cpu_filelist_contract(
         )
         for path in parsed.missing
     ]
-    top_count = _filelist_module_count(list(parsed.files), required_top)
+    macros = macro_names(parsed.defines)
+    top_count = _filelist_module_count(list(parsed.files), required_top, macros)
     if top_count != 1:
         code = "cpu_top_module_not_found" if top_count == 0 else "cpu_top_module_count_mismatch"
         issues.append(
@@ -494,7 +496,9 @@ def _validate_user_cpu_filelist_contract(
 
     required_ports = _required_user_cpu_top_ports(core)
     if required_ports:
-        found_contract = _filelist_module_port_contract(list(parsed.files), required_top)
+        found_contract = _filelist_module_port_contract(
+            list(parsed.files), required_top, macros
+        )
         found_ports = [str(port.get("name", "")) for port in found_contract]
         missing = [port for port in required_ports if port not in found_ports]
         extra = [port for port in found_ports if port not in required_ports]
@@ -602,12 +606,21 @@ def cpu_filelist_supports_difftest(filelist_path: str | Path) -> bool:
     return rtl_sources_provide_difftest_adapter(list(parsed.files))
 
 
-def _filelist_module_count(files: list[Path], module_name: str) -> int:
-    return len(module_definitions(files, module_name))
+def _filelist_module_count(
+    files: list[Path], module_name: str, macros: frozenset[str] = frozenset()
+) -> int:
+    # Count under the filelist's own defines; if that selects no definition,
+    # count every branch so the message reflects what the files contain.
+    selected = module_definitions(files, module_name, defined_macros=macros)
+    return len(selected or module_definitions(files, module_name))
 
 
-def _filelist_module_port_contract(files: list[Path], module_name: str) -> list[dict[str, Any]]:
-    _, contract = module_port_contract_from_files(files, module_name)
+def _filelist_module_port_contract(
+    files: list[Path], module_name: str, macros: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
+    _, contract = module_port_contract_from_files(
+        files, module_name, defined_macros=macros
+    )
     return contract
 
 

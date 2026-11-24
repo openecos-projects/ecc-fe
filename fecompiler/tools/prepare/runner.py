@@ -14,6 +14,7 @@ from fecompiler.tools.common.rtl_ownership import classify_rtl_source, ownership
 from fecompiler.tools.common.sv_module import (
     compare_port_contracts,
     is_simple_sv_identifier,
+    macro_names,
     module_definitions,
     module_port_contract_from_files,
 )
@@ -61,6 +62,7 @@ class PrepareStep(BaseStep):
             "incdirs": len(prepared["incdirs"]),
             "defines": len(prepared["defines"]),
             "inputs": source_info,
+            "input_notes": prepared["input_notes"],
             "contracts": [top_contract],
             "ownership": prepared["ownership"],
             "readiness": self._build_readiness_facts(
@@ -106,12 +108,23 @@ class PrepareStep(BaseStep):
                     seen.add(key)
                     target.append(item)
 
+        header_files: list[Path] = []
+        seen_header: set[str] = set()
+        notes: list[dict[str, str]] = []
+
         def _add_filelist(label: str, path: str) -> None:
             data = self._parse_sv_filelist(path)
             _add_unique(data["rtl_files"], merged, seen_rtl)
             _add_unique(data["incdirs"], incdirs, seen_incdir)
+            # A listed header is included, not compiled: make its directory
+            # searchable so the `include that names it resolves.
+            _add_unique(data["header_files"], header_files, seen_header)
+            _add_unique(
+                [header.parent for header in data["header_files"]], incdirs, seen_incdir
+            )
             _add_unique(data["defines"], defines, seen_define)
             inputs[label] = self._filelist_info(path, data)
+            notes.extend(self._filelist_notes(label, data))
             for rtl_path in data["rtl_files"]:
                 key = str(rtl_path)
                 rtl_source_by_path.setdefault(key, {
@@ -178,8 +191,11 @@ class PrepareStep(BaseStep):
             "rtl_files": [str(p) for p in merged],
             "rtl_sources": rtl_sources,
             "ownership": ownership_summary(rtl_sources),
+            "header_files": [str(p) for p in header_files],
             "incdirs": [str(p) for p in incdirs],
             "defines": defines,
+            # What the filelists contained that prepare did not act on.
+            "input_notes": notes,
             "source_fingerprint": workspace_input_fingerprint(workspace),
         }
         return prepared, inputs
@@ -210,7 +226,7 @@ class PrepareStep(BaseStep):
                 prepared,
             )
 
-        matches = module_definitions(prepared["rtl_files"], top_module)
+        matches = self._top_definitions(prepared, top_module)
         if len(matches) != 1:
             self._fail_generic_top_contract(
                 step,
@@ -282,7 +298,6 @@ class PrepareStep(BaseStep):
         if not self._requires_frontend_cpu_top(workspace):
             return {"id": "cpu_top", "status": "not_required"}
 
-        rtl_files = prepared["rtl_files"]
         required_top = str(workspace.get("required_cpu_top_module", "")).strip() or ECOS_CPU_TOP
         if not is_simple_sv_identifier(required_top):
             self._fail_cpu_top_contract(
@@ -292,7 +307,7 @@ class PrepareStep(BaseStep):
                 prepared,
             )
 
-        matches = module_definitions(rtl_files, required_top)
+        matches = self._top_definitions(prepared, required_top)
         if len(matches) != 1:
             self._fail_cpu_top_contract(
                 step,
@@ -302,7 +317,13 @@ class PrepareStep(BaseStep):
             )
 
         expected = self._expected_cpu_top_contract(workspace)
-        source, actual = module_port_contract_from_files(matches, required_top)
+        source, actual = module_port_contract_from_files(
+            matches, required_top, defined_macros=macro_names(prepared.get("defines"))
+        )
+        if not actual:
+            # The defines select no definition this parser can see (a macro
+            # may come from an included header): read the first one written.
+            source, actual = module_port_contract_from_files(matches, required_top)
         result: dict[str, Any] = {
             "id": "cpu_top",
             "status": "pass" if expected else "module_only",
@@ -338,6 +359,20 @@ class PrepareStep(BaseStep):
             prepared,
         )
         return result
+
+    @staticmethod
+    def _top_definitions(prepared: dict[str, Any], module_name: str) -> list[Path]:
+        """Return the files that define *module_name* under the prepared defines.
+
+        A module written once per `` `ifdef `` branch, in one file or two, is
+        one definition once the defines select a branch. If that selection
+        leaves none, every branch is searched so the error can name the files.
+        """
+        rtl_files = prepared["rtl_files"]
+        selected = module_definitions(
+            rtl_files, module_name, defined_macros=macro_names(prepared.get("defines"))
+        )
+        return selected or module_definitions(rtl_files, module_name)
 
     @staticmethod
     def _inject_custom_cpu_top_define(
@@ -518,9 +553,34 @@ class PrepareStep(BaseStep):
         return {
             "path": path,
             "rtl_files": len(data["rtl_files"]),
+            "header_files": len(data["header_files"]),
             "incdirs": len(data["incdirs"]),
             "defines": len(data["defines"]),
+            "unsupported": len(data["unsupported"]),
+            "missing_incdirs": len(data["missing_incdirs"]),
         }
+
+    @staticmethod
+    def _filelist_notes(label: str, data: dict[str, list[Any]]) -> list[dict[str, str]]:
+        notes = [
+            {
+                "source": label,
+                "kind": "unsupported_entry",
+                "entry": str(entry),
+                "detail": "read from the filelist but not passed to any tool",
+            }
+            for entry in data["unsupported"]
+        ]
+        notes.extend(
+            {
+                "source": label,
+                "kind": "missing_incdir",
+                "entry": str(path),
+                "detail": "include directory does not exist",
+            }
+            for path in data["missing_incdirs"]
+        )
+        return notes
 
     @staticmethod
     def _file_defines_module(path: Path, module_name: str) -> bool:
@@ -557,13 +617,20 @@ class PrepareStep(BaseStep):
             normalize_frontend_design_kind(workspace.get("frontend_design_kind"))
             == GENERIC_RTL
         )
-        if not is_generic:
+        # `input_filelist` is replaced by the merged list only when it is not
+        # itself the input: overwriting a filelist the user supplied would
+        # drop its include directories and defines on the next run.
+        replace_input = not is_generic and bool(
+            str(workspace.get("cpu_filelist", "")).strip()
+            or str(workspace.get("soc_filelist", "")).strip()
+        )
+        if replace_input:
             workspace["input_filelist"] = str(merged_path)
 
         params_path = str(workspace.get("parameters_path", "")).strip()
         if params_path:
             params = json_read(params_path)
-            if not is_generic:
+            if replace_input:
                 params["input_filelist"] = str(merged_path)
             params["prepared_manifest"] = str(manifest_path)
             cpu_filelist = str(workspace.get("cpu_filelist", "")).strip()
@@ -581,8 +648,11 @@ class PrepareStep(BaseStep):
         parsed = read_complete_filelist(filelist_path)
         return {
             "rtl_files": list(parsed.sources),
+            "header_files": list(parsed.headers),
             "incdirs": list(parsed.incdirs),
             "defines": list(parsed.defines),
+            "unsupported": list(parsed.unsupported),
+            "missing_incdirs": list(parsed.missing_incdirs),
         }
 
     @staticmethod
