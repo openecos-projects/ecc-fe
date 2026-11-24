@@ -237,6 +237,41 @@ CPU 模式下的端口契约检查同样带上 filelist 里的宏定义。端口
 参数的默认值求值（支持 `+ - * / % **`、括号和 `$clog2`）；求不出来的位宽不判为
 不匹配，留给 elab 检查。
 
+## review 的判断规则
+
+review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整个设计），源文件、include
+目录、库目录和宏定义都取自 prepare 的结果；只有 prepare 结果不是最新时才自己读 filelist。
+
+源码启发式检查先去掉注释再逐行看，所以注释掉的代码不会被报告。它们给出的都是
+`warning` 或 `info`，不会是 `error`：
+
+| 检查 | 不再误报的情况 |
+| --- | --- |
+| 由逻辑生成的时钟 | `assign clk_o = clk_i;` 这类改名；`clk_en`、`clk_sel`、`clk_cnt`、`*_valid` 等不是时钟的名字 |
+| 条件里用了时钟 | 只是名字里含 `clk` 字样的信号或参数（如 `MUL_CLKGATE`） |
+| 异步复位 | 每个文件只给一条 `info`，带上出现的块数，不再每个 `always` 一条警告 |
+| 组合逻辑 `if` 缺 `else` | 认 `always @*`、`always @(*)`、`always_comb`；块开头已赋默认值的不报；不会读到下一个块里去 |
+| `case` 缺 `default` | `unique` / `priority case` 不报；只看到自己的 `endcase` 为止 |
+| 一行里运算符过多 | 行尾注释里的 `/`、`-` 不计入 |
+
+### 问题指纹和 waiver
+
+每个问题有一个指纹，`review_waivers` 按指纹豁免。指纹由"检查项 + 文件（相对 filelist
+所在目录）+ 该行代码本身 + 同样的行里第几次出现"组成，不含行号和绝对路径，所以：
+
+- 在问题上方增删代码，指纹不变，waiver 继续生效；
+- 换一个目录检出同一份代码，指纹不变；
+- 改了那一行代码本身，指纹才变。
+
+用旧指纹（含行号）写的 waiver 仍然被接受，直到那一行的行号变动为止。
+
+### Yosys 结构预检查不再拦住合法设计
+
+- 没有 yosys-slang 插件时，Yosys 只能用自带的解析器读 SystemVerilog，它拒绝的写法可能
+  完全合法。这种情况下预检查的错误记为工具限制，review 不会失败，由 elab 把关。
+- 源文件或 include 路径里有空格时（Yosys 脚本表达不了），预检查跳过并说明原因，
+  结构指标不可用，其余检查照常。
+
 ## Step 注册表
 
 每个步骤在 `fecompiler/allflow/steps.py` 里有且只有一条 `StepDefinition`，记录：
