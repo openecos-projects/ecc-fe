@@ -4,7 +4,11 @@ from collections.abc import Callable
 
 from fecompiler.cli.core.records import error_record
 from fecompiler.cli.core.types import CommandResult
-from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
+from fecompiler.utility.workspace_lock import (
+    WorkspaceBusyError,
+    discard_workspace_lock,
+    workspace_lock,
+)
 
 
 def with_workspace_lock(
@@ -17,7 +21,12 @@ def with_workspace_lock(
     """
     try:
         with workspace_lock(workspace_dir):
-            return action()
+            try:
+                return action()
+            finally:
+                # A command aimed at a workspace that does not exist, or that
+                # failed to create one, must not leave a lock file behind.
+                discard_workspace_lock(workspace_dir)
     except WorkspaceBusyError as error:
         return CommandResult.err(
             [

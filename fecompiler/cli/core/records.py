@@ -46,3 +46,19 @@ def disclosure_cmd(
 
 def normalize_state(state: object) -> str:
     return str(state or "unknown").strip().lower()
+
+
+FAILED_STATES = frozenset({"incomplete", "invalid"})
+
+
+def flow_state(states: list[str], *, running: bool) -> str:
+    """Summarise step states as one of running/interrupted/failed/success/pending."""
+    if running:
+        return "running"
+    if "interrupted" in states:
+        return "interrupted"
+    if any(state in FAILED_STATES for state in states):
+        return "failed"
+    if states and all(state == "success" for state in states):
+        return "success"
+    return "pending"

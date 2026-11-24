@@ -283,6 +283,34 @@ ecc-fe report files --step lint
 不会虚构后端物理设计的面积、时序或功耗指标。`report files` 同时列出 `report/`
 与 `analysis/` 下的文件路径、相对路径、大小和格式，便于脚本继续处理。
 
+比较同一工程的两个 run：
+
+```bash
+ecc-fe report compare default faster-sim
+ecc-fe report compare default faster-sim --all                 # 连没变的指标也列出
+ecc-fe report compare default faster-sim --fail-on-regression  # 变差时退出码为 1
+```
+
+第一个是基准，第二个是被评判的 run。输出包括每个步骤的状态、质量结论和分数，
+以及数值发生变化的指标；指标按自身的方向（越高越好 / 越低越好）标为 `improved`
+或 `regressed`，没有方向的只标 `changed`。汇总里的 `parameter_changes` 列出两个
+run 之间不同的参数。某个步骤标出"inputs or settings differ"时，表示两边的输入
+或设置不同，数字不能直接当作同一条件下的对比。
+
+## 管理 run
+
+```bash
+ecc-fe runs list                 # 列出工程里所有 run 及其状态
+ecc-fe runs delete old-a old-b   # 删除 run
+```
+
+`runs list` 显示每个 run 的整体状态（与 `status` 一致）、完成的步骤数、最后
+更新时间和创建时用 `--set` 指定的参数，并标出不带 `--run-id` 时默认使用的 run。
+
+`runs delete` 不会询问确认，删除后无法恢复。正在运行的 run 会被拒绝
+（`workspace_busy`）；run id 必须是普通名字，符号链接和非 run 目录不会被删除；
+工程模板和 `ecc-fe.toml` 不受影响。
+
 ## 自动化输出
 
 ```bash

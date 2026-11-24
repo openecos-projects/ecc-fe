@@ -125,6 +125,23 @@ def workspace_is_busy(directory: str | Path) -> bool:
     return workspace_lock_owner(directory) is not None
 
 
+def discard_workspace_lock(directory: str | Path) -> bool:
+    """Remove the lock file of a workspace that does not exist.
+
+    Returns ``False`` and leaves the file alone when the workspace exists or
+    another command holds the lock. Safe to call while holding the lock.
+    """
+    path = _resolved(directory)
+    if path.exists():
+        return False
+    try:
+        with workspace_lock(path):
+            workspace_lock_path(path).unlink(missing_ok=True)
+    except (WorkspaceBusyError, OSError):
+        return False
+    return True
+
+
 def _resolved(directory: str | Path) -> Path:
     return Path(directory).expanduser().resolve()
 
@@ -199,6 +216,7 @@ def _release(descriptor: int | None) -> None:
 
 __all__ = [
     "WorkspaceBusyError",
+    "discard_workspace_lock",
     "workspace_is_busy",
     "workspace_lock",
     "workspace_lock_owner",
