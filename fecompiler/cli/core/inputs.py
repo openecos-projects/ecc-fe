@@ -159,6 +159,14 @@ class ReportLintBaselineInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class HandoffInput(CommandInput):
+    output_dir: str | None = None
+    bundle: bool = False
+    allow_incomplete: bool = False
+    check: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class RunsDeleteInput(CommandInput):
     run_ids: tuple[str, ...] = ()
 

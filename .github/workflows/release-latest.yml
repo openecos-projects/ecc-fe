@@ -95,6 +95,7 @@ jobs:
             test/test_generic_rtl.py \
             test/test_lint_settings.py \
             test/test_review_noise.py \
+            test/test_handoff.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \
             test/test_runtime_transport.py \

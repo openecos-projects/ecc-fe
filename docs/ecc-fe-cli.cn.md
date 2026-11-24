@@ -375,6 +375,27 @@ ecc-fe param set lint.baseline lint-baseline.json
 
 没有设置 baseline 时行为和以前一样：警告不会让 lint 失败。
 
+## 交接给后端
+
+流程跑完后，用 `handoff` 生成交接清单，后续工具（如 ECC）只读这份清单：
+
+```bash
+ecc-fe handoff                         # 写到 handoff/<run-id>/，RTL 按路径引用
+ecc-fe handoff --bundle -o ./export    # 把 RTL 一起复制进去，目录可以拷走
+```
+
+目录里有 `handoff.json`（清单）和 `design.f`（同一份设计的 filelist，带 `+incdir+`
+和 `+define+`）。
+
+- 只交接你自己的设计。CPU 工程交接的是 CPU 本身，top 是 CPU 的顶层；仿真用的 SoC
+  外壳不在其中。
+- 默认要求所有步骤都成功、且结果没有过期，否则报 `handoff_not_ready` 并列出原因。
+- 默认还会用 slang 只凭清单内容把设计单独编译一遍，确认它离开前端环境也成立；
+  不成立时报 `handoff_design_incomplete`，日志在 `standalone_check.log`。
+- `--allow-incomplete` 可以强行生成，清单里会标明 `incomplete` 和原因。
+
+清单的字段见 `docs/specification/handoff-manifest.md`。
+
 ## 管理 run
 
 ```bash

@@ -15,6 +15,7 @@ from fecompiler.cli.core.inputs import (
     CommandInput,
     ConfigInput,
     DoctorInput,
+    HandoffInput,
     InitInput,
     LogInput,
     ParamDiffInput,
@@ -49,6 +50,7 @@ from fecompiler.cli.core.version_info import (
     version_text,
 )
 from fecompiler.cli.handlers import catalog as catalog_handlers
+from fecompiler.cli.handlers import handoff as handoff_handlers
 from fecompiler.cli.handlers import param as param_handlers
 from fecompiler.cli.handlers import report as report_handlers
 from fecompiler.cli.handlers import runs as runs_handlers
@@ -432,6 +434,61 @@ def build_app() -> typer.Typer:
                 resolved=resolved,
             ),
             commands.config,
+        )
+
+    @app.command(
+        "handoff",
+        help="Write the handoff manifest of a finished run for the next tool.",
+    )
+    def handoff_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        output_dir: Annotated[
+            str | None,
+            typer.Option(
+                "--output", "-o", help="Directory to write (default: handoff/<run-id>)"
+            ),
+        ] = None,
+        bundle: Annotated[
+            bool,
+            typer.Option(
+                "--bundle", help="Copy the RTL in, so the directory is self-contained"
+            ),
+        ] = False,
+        allow_incomplete: Annotated[
+            bool,
+            typer.Option(
+                "--allow-incomplete",
+                help="Write the manifest although a step failed, is unfinished, or is stale",
+            ),
+        ] = False,
+        check: Annotated[
+            bool,
+            typer.Option(
+                "--check/--no-check",
+                help="Elaborate the design from the manifest alone (default: on)",
+            ),
+        ] = True,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "handoff",
+            HandoffInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                output_dir=output_dir,
+                bundle=bundle,
+                allow_incomplete=allow_incomplete,
+                check=check,
+            ),
+            handoff_handlers.handoff,
         )
 
     @resource_app.command("list", help="List the resources ECC-FE can install.")
