@@ -61,6 +61,21 @@ def stale_reason(
     return None
 
 
+def same_command(program: Path, command: Sequence[str]) -> bool:
+    """Whether the last recorded build of *program* used exactly *command*.
+
+    Then its build directory holds objects made with the same options, and
+    make can be trusted to rebuild only what changed.
+    """
+    try:
+        recorded = json.loads(stamp_path(program).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(recorded, dict) and recorded.get("command") == [
+        str(item) for item in command
+    ]
+
+
 def _stamp(build_dir: Path, command: Sequence[str], inputs: Iterable[str]) -> dict[str, object]:
     paths = {*_explicit(inputs), *_dependencies(build_dir)}
     return {
@@ -110,4 +125,4 @@ def _sha256(path: Path) -> str:
         return ""
 
 
-__all__ = ["record_build", "stale_reason", "stamp_path"]
+__all__ = ["record_build", "same_command", "stale_reason", "stamp_path"]

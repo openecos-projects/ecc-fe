@@ -319,6 +319,26 @@ ecc-fe config --resolved --run-id faster-sim
 旧版桌面工作区没有 `ecc-fe.toml` 时仍可直接查询。第一次执行 `param set` 时，
 CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修改旧工作区。
 
+### CPU 仿真的运行方式
+
+下面几个参数只改变仿真怎么跑，不改变结果；改动它们不会让已有的 sim 结果过期
+（`sim.dump_waveform` 除外，它决定有没有波形文件）：
+
+| 参数 | 默认 | 作用 |
+| --- | --- | --- |
+| `sim.build_jobs` | `0` | 编译仿真程序和测试程序的并行数；`0` 表示用上所有核 |
+| `sim.case_jobs` | `1` | 同时运行的用例数 |
+| `sim.dump_waveform` | `true` | 每个用例是否写出 `wave.vcd`（CoreMark 始终不写） |
+| `sim.history_limit` | `20` | `report/runs/` 下保留最近多少次运行 |
+
+几点说明：
+
+- 仿真程序是增量构建的：编译参数和源文件列表没变时，只重编变了的部分。
+- 整套 cpu-tests 的时间主要花在编译 35 个测试程序上，它们现在并行编译。
+- 不需要看波形时把 `sim.dump_waveform` 设为 `false`：整套 cpu-tests 的波形约 500 MB。
+- 用例运行参数里显式写了 `--wave <文件>` 的，始终照写。
+- 波形只有 VCD 格式：SoC 外壳的 C++ 驱动只支持 VCD。
+
 ## Catalog 查询
 
 CLI 直接复用桌面端和 RPC 使用的前端 catalog：

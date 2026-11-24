@@ -35,6 +35,9 @@ class StepDefinition:
     config_files: tuple[str, ...] = ()
     # Every parameter whose name starts with one of these is tracked as well.
     config_prefixes: tuple[str, ...] = ()
+    # Parameters under those prefixes that change how the step runs, not what
+    # it produces; changing them leaves a result valid.
+    config_untracked: tuple[str, ...] = ()
     # Runner sources, relative to the package root, hashed into the provenance.
     source_files: tuple[str, ...] = ()
     # External programs whose identity is part of the provenance.
@@ -142,6 +145,12 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
         ),
         config_files=("testbench_files",),
         config_prefixes=("sim_", "testbench_"),
+        config_untracked=(
+            "sim_build_jobs",
+            "sim_case_jobs",
+            "sim_history_limit",
+            "sim_reuse_binary",
+        ),
         source_files=(
             "tools/verilator/sim.py",
             "tools/verilator/runner.py",

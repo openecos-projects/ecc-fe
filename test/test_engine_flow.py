@@ -2795,6 +2795,48 @@ def test_sim_rebuilds_when_the_build_options_changed(tmp_path, monkeypatch):
     assert compiles() == 1
 
 
+def test_sim_builds_on_the_previous_build_while_the_command_is_the_same(tmp_path, monkeypatch):
+    engine, ws, rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    ws["sim_reuse_binary"] = False
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    leftover = Path(ws["directory"]) / "sim_verilator" / "obj_dir" / "kept_object.o"
+    leftover.write_text("object", encoding="utf-8")
+
+    # An edited source is make's business: the build directory stays.
+    rtl.write_text(rtl.read_text(encoding="utf-8") + "// edited\n", encoding="utf-8")
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert leftover.exists()
+
+    # Other options mean other objects: start from nothing.
+    ws["sim_cflags"] = [*(ws.get("sim_cflags") or []), "-DEXTRA=1"]
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert not leftover.exists()
+    assert compiles() == 3
+
+
+def test_sim_build_jobs_do_not_start_a_clean_build(tmp_path, monkeypatch):
+    engine, ws, _rtl, _header, _tb, _compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    ws["sim_reuse_binary"] = False
+    calls: list[list[str]] = []
+    real = __import__("fecompiler.tools.verilator.runner", fromlist=["run_tool"]).run_tool
+
+    def recording(cmd, **options):
+        calls.append([str(item) for item in cmd])
+        return real(cmd, **options)
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", recording)
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    leftover = Path(ws["directory"]) / "sim_verilator" / "obj_dir" / "kept_object.o"
+    leftover.write_text("object", encoding="utf-8")
+
+    ws["sim_build_jobs"] = 3
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+
+    builds = [call for call in calls if _is_verilator_compile_cmd(call)]
+    assert [call[call.index("-j") + 1] for call in builds] == ["0", "3"]
+    assert leftover.exists()
+
+
 def test_sim_does_not_trust_a_binary_without_a_build_record(tmp_path, monkeypatch):
     engine, ws, _rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
     sim_bin = Path(ws["directory"]) / "sim_verilator" / "output" / "chip_sim"

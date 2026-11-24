@@ -179,6 +179,11 @@ def _signal_group(group_id: int, signum: int) -> None:
         pass
 
 
+def stop_session(session_dir: str | Path) -> None:
+    """Stop the tool processes started for *session_dir* that are still running."""
+    _stop_abandoned_session(Path(session_dir) / _SESSION_FILE)
+
+
 def _stop_abandoned_session(session_file: Path) -> None:
     """Kill tool processes that outlived the command that started them.
 
@@ -215,4 +220,4 @@ def _process_ids() -> list[int]:
     return [int(name) for name in names if name.isdigit() and int(name) != os.getpid()]
 
 
-__all__ = ["TIMEOUT_RETURNCODE", "ToolResult", "run_tool", "tool_timeout"]
+__all__ = ["TIMEOUT_RETURNCODE", "ToolResult", "run_tool", "stop_session", "tool_timeout"]
