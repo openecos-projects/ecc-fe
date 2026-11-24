@@ -534,9 +534,8 @@ class PrepareStep(BaseStep):
                 "mismatched_ports": len(mismatches),
             },
             "reproducibility": {
-                "input_fingerprint": bool(
-                    str(prepared.get("source_fingerprint", "")).strip()
-                ),
+                # The fingerprint is a record; it counts only when it has content.
+                "input_fingerprint": bool(prepared.get("source_fingerprint")),
                 "merged_filelist": outputs_persisted,
                 "prepared_manifest": outputs_persisted,
             },

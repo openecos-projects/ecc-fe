@@ -1,0 +1,53 @@
+{
+  "scoring_version": 2,
+  "size": {
+    "minimum_lines": 200
+  },
+  "prepare": {
+    "rtl_sources": 20,
+    "include_directories": 10,
+    "top_defined_once": 15,
+    "top_in_inputs": 5,
+    "interface_ports": 35,
+    "interface_no_extra_ports": 5,
+    "input_fingerprint": 5,
+    "merged_filelist": 2.5,
+    "prepared_manifest": 2.5
+  },
+  "review": {
+    "structural_precheck": 30,
+    "actionable_errors": 30,
+    "points_per_error": 10,
+    "warning_hygiene": 15,
+    "warnings_per_kloc_for_zero": 5,
+    "structural_headroom": {
+      "max_fanout": 8.3,
+      "max_fanin": 8.3,
+      "max_comb_depth": 8.4
+    }
+  },
+  "elab": {
+    "compiler_execution": 25,
+    "diagnostic_errors": 30,
+    "points_per_error": 10,
+    "hierarchy_closure": 20,
+    "points_per_unresolved_module": 5,
+    "top_resolution": 15,
+    "warning_hygiene": 10,
+    "warnings_per_kloc_for_zero": 5
+  },
+  "lint": {
+    "analysis_execution": 25,
+    "errors": 40,
+    "points_per_error": 20,
+    "warnings": 25,
+    "warnings_per_kloc_for_zero": 20,
+    "rule_breadth": 10,
+    "points_per_rule": 2
+  },
+  "sim": {
+    "required_cases": 60,
+    "difftest_confidence": 25,
+    "cycle_telemetry": 15
+  }
+}

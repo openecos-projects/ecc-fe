@@ -351,6 +351,23 @@ ecc-fe report files --step lint
 不会虚构后端物理设计的面积、时序或功耗指标。`report files` 同时列出 `report/`
 与 `analysis/` 下的文件路径、相对路径、大小和格式，便于脚本继续处理。
 
+每个步骤有三个互相独立的结论：
+
+- **状态**（`state`）：步骤有没有跑完。
+- **质量**（`quality`）：结果有没有通过门禁。`blocked` 表示有硬性条件没过（比如有
+  elaboration 错误），`incomplete` 表示有门禁没法判定（比如没装 Yosys）。
+- **分数**（`score`）：结果有多好，满分 100。分数不影响质量结论。
+
+分数遵循三条规则（详见 `docs/specification/quality-scoring.md`）：
+
+1. 只算评估过的项。不适用于该设计的检查、没运行的工具，对应的项标为
+   `"evaluated": false`，不得分也不扣分；`evaluated_weight` 说明这次实际评估了多少权重。
+2. 警告按密度算，即每千行 RTL 的警告数；不足 200 行的设计按 200 行计。错误不按规模
+   折算，每个固定扣分。
+3. 分数只描述这一次运行，不依赖以前的运行。两次运行的比较用 `report compare`。
+
+权重和容忍度在 `fecompiler/analysis/scoring_policy.json` 里。
+
 比较同一工程的两个 run：
 
 ```bash

@@ -258,6 +258,19 @@ def _two_runs(capsys, project: Path) -> tuple[Path, Path]:
     return base, cand
 
 
+def test_compare_gives_no_score_delta_across_scoring_versions(project, capsys) -> None:
+    _two_runs(capsys, project)
+    summary_path = project / "runs" / "cand" / "sim_verilator" / "analysis" / "qor_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["score"]["scoring_version"] = 2
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    _, records = _call(capsys, "report", "compare", "base", "cand", "--project", str(project))
+
+    sim = next(r for r in records if r["kind"] == "qor_step" and r["step"] == "sim")
+    assert (sim["base_score"], sim["run_score"], sim["score_delta"]) == (80, 85.5, None)
+
+
 def test_compare_reports_changed_metrics_with_a_verdict(project, capsys) -> None:
     _two_runs(capsys, project)
 
