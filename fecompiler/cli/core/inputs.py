@@ -154,6 +154,11 @@ class ReportCompareInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class ReportLintBaselineInput(CommandInput):
+    output_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RunsDeleteInput(CommandInput):
     run_ids: tuple[str, ...] = ()
 

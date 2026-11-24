@@ -11,8 +11,10 @@ from fecompiler.cli.core.inputs import (
     CommandInput,
     ReportCompareInput,
     ReportFilesInput,
+    ReportLintBaselineInput,
     ReportQorInput,
 )
+from fecompiler.tools.verilator.lint import BASELINE_SCHEMA_VERSION, lint_baseline_entries
 from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id, resolve_run_dir
 from fecompiler.cli.core.records import error_record, failure_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
@@ -396,6 +398,65 @@ def _is_run_path(base: object, run: object) -> bool:
         and os.sep in base
         and os.sep in run
         and os.path.basename(base) == os.path.basename(run)
+    )
+
+
+def lint_baseline(command_input: CommandInput, context: CommandContext) -> CommandResult:
+    """Write the lint warnings of a run as a baseline file."""
+    assert isinstance(command_input, ReportLintBaselineInput)
+    loaded = _load_workspace(context.workspace_dir)
+    if isinstance(loaded, CommandResult):
+        return loaded
+    summary_path = (
+        _report_directory(Path(context.workspace_dir), "lint") / "lint_summary.json"
+    )
+    try:
+        summary = read_json_object(summary_path)
+        diagnostics = summary["diagnostics"]
+        if not isinstance(diagnostics, list):
+            raise TypeError("diagnostics must be a list")
+    except (OSError, TypeError, ValueError, KeyError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "lint_result_not_found",
+                    error,
+                    workspace=context.workspace_dir,
+                    remediation_cmd="ecc-fe run --to lint",
+                )
+            ]
+        )
+    entries = lint_baseline_entries(
+        [item for item in diagnostics if isinstance(item, dict)]
+    )
+    base = Path(context.project_dir if not context.workspace_mode else context.workspace_dir)
+    destination = Path(command_input.output_path or "lint-baseline.json").expanduser()
+    if not destination.is_absolute():
+        destination = (Path.cwd() / destination).resolve()
+    payload = {
+        "schema_version": BASELINE_SCHEMA_VERSION,
+        "tool": "verilator",
+        "top_module": summary.get("top_module", ""),
+        "entries": entries,
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    destination.write_text(content, encoding="utf-8")
+    # Inside the project the setting is written relative, so it moves with it.
+    try:
+        setting = str(destination.relative_to(base.resolve()))
+    except ValueError:
+        setting = str(destination)
+    return CommandResult.ok(
+        [
+            {
+                "kind": "lint_baseline",
+                "path": str(destination),
+                "warnings": sum(int(entry["count"]) for entry in entries),
+                "entries": len(entries),
+                "set_cmd": f"ecc-fe param set lint.baseline {shlex.quote(setting)}",
+            }
+        ]
     )
 
 

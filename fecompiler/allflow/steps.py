@@ -31,6 +31,8 @@ class StepDefinition:
     qor_report: str
     # Workspace parameters whose change makes a successful result stale.
     config_fields: tuple[str, ...] = ()
+    # Parameters naming files (one path or a list) whose content is tracked too.
+    config_files: tuple[str, ...] = ()
     # Every parameter whose name starts with one of these is tracked as well.
     config_prefixes: tuple[str, ...] = ()
     # Runner sources, relative to the package root, hashed into the provenance.
@@ -101,7 +103,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
         tool="slang",
         handler="fecompiler.tools.slang.runner:SlangElabStep",
         qor_report="elab_summary.json",
-        config_fields=("top_module",),
+        config_fields=("top_module", "design_parameters", "elab_extra_args"),
         source_files=("tools/slang/runner.py",),
         executables=("slang",),
         doctor_checks=("slang",),
@@ -109,10 +111,19 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
     StepDefinition(
         name="lint",
         tool="verilator",
-        handler="fecompiler.tools.verilator.runner:VerilatorLintStep",
+        handler="fecompiler.tools.verilator.lint:VerilatorLintStep",
         qor_report="lint_summary.json",
-        config_fields=("top_module", "lint_profile", "lint_baseline", "lint_waivers"),
-        source_files=("tools/verilator/runner.py",),
+        config_fields=(
+            "top_module",
+            "design_parameters",
+            "lint_profile",
+            "lint_rules_off",
+            "lint_extra_args",
+            "lint_baseline",
+            "lint_waivers",
+        ),
+        config_files=("lint_baseline", "lint_waivers"),
+        source_files=("tools/verilator/lint.py", "tools/verilator/command.py"),
         executables=("verilator",),
         doctor_checks=("verilator",),
     ),
@@ -129,7 +140,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
             "soc_supports_difftest",
         ),
         config_prefixes=("sim_",),
-        source_files=("tools/verilator/runner.py",),
+        source_files=("tools/verilator/runner.py", "tools/verilator/command.py"),
         executables=("verilator",),
         doctor_checks=("verilator", "cxx", "make", "riscv"),
     ),

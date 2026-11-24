@@ -36,6 +36,66 @@ PARAMETERS = (
         maximum=10000.0,
     ),
     ParameterSchema(
+        "design.parameters",
+        "design_parameters",
+        "string_list",
+        [],
+        "elab,lint",
+        "Top-level parameter overrides as a JSON array of NAME=value.",
+        advanced=True,
+    ),
+    ParameterSchema(
+        "elab.extra_args",
+        "elab_extra_args",
+        "string_list",
+        [],
+        "elab",
+        "Additional slang arguments as a JSON string array.",
+        advanced=True,
+    ),
+    ParameterSchema(
+        "lint.profile",
+        "lint_profile",
+        "string",
+        "all",
+        "lint",
+        "Warning set: all (every lint and style warning) or basic (Verilator's defaults).",
+        choices=("all", "basic"),
+    ),
+    ParameterSchema(
+        "lint.rules_off",
+        "lint_rules_off",
+        "string_list",
+        [],
+        "lint",
+        "Verilator rules to turn off, as a JSON array such as [\"UNUSEDSIGNAL\"].",
+    ),
+    ParameterSchema(
+        "lint.waiver_files",
+        "lint_waivers",
+        "string_list",
+        [],
+        "lint",
+        "Verilator waiver (.vlt) files as a JSON array of paths.",
+    ),
+    ParameterSchema(
+        "lint.baseline",
+        "lint_baseline",
+        "string",
+        "",
+        "lint",
+        "Baseline file; lint fails on warnings of your own code that it does not list.",
+    ),
+    ParameterSchema(
+        "lint.extra_args",
+        "lint_extra_args",
+        "string_list",
+        [],
+        "lint",
+        "Additional Verilator lint arguments as a JSON string array.",
+        advanced=True,
+    ),
+    ParameterSchema(
         "sim.compile_preset",
         "sim_compile_preset",
         "string",
@@ -201,7 +261,10 @@ def parse_cli_overrides(
 
 def validate_value(value: object, schema: ParameterSchema) -> None:
     if schema.value_type == "string":
-        valid_type = isinstance(value, str) and bool(value.strip())
+        # Empty is a value only for a setting whose default is "not set".
+        valid_type = isinstance(value, str) and (
+            bool(value.strip()) or schema.default == ""
+        )
     elif schema.value_type == "integer":
         valid_type = isinstance(value, int) and not isinstance(value, bool)
     elif schema.value_type == "float":
@@ -220,6 +283,8 @@ def validate_value(value: object, schema: ParameterSchema) -> None:
         valid_type = False
     if not valid_type:
         raise ValueError(f"expected {schema.value_type}")
+    if value == "" and schema.default == "":
+        return
     if schema.choices and value not in schema.choices:
         raise ValueError(f"expected one of: {', '.join(schema.choices)}")
     if isinstance(value, (int, float)) and not isinstance(value, bool):

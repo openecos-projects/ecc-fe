@@ -176,6 +176,10 @@ def test_param_list_types_validation_and_dash_prefixed_value(
     assert exit_code == 0
     assert {item["param"] for item in payload["records"]} == {
         "design.frequency_mhz",
+        "lint.profile",
+        "lint.rules_off",
+        "lint.waiver_files",
+        "lint.baseline",
         "sim.compile_preset",
     }
 
@@ -183,7 +187,7 @@ def test_param_list_types_validation_and_dash_prefixed_value(
         capsys, "param", "list", "--all", "--workspace", str(workspace)
     )
     assert exit_code == 0
-    assert len(payload["records"]) == 11
+    assert len(payload["records"]) == 18
 
     original = (workspace / "ecc-fe.toml").read_text(encoding="utf-8")
     exit_code, payload = _json_call(

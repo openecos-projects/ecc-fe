@@ -11,6 +11,7 @@ from typing import Any
 from fecompiler.allflow.steps import find_step_definition
 from fecompiler.resources import frontend_repo_root
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
+from fecompiler.tools.common.tool_config import config_paths
 from fecompiler.utility.json import json_read
 
 
@@ -118,11 +119,19 @@ def _step_configuration(
                     if str(key).startswith(definition.config_prefixes)
                 )
             )
-    return {
+    configuration = {
         field: _normalize_value(merged.get(field))
         for field in dict.fromkeys(fields)
         if field in merged
     }
+    # A setting that names files also depends on what is in them.
+    for field in definition.config_files if definition is not None else ():
+        paths = config_paths(workspace, field)
+        if paths:
+            configuration[f"{field}:content"] = {
+                str(path): _file_sha256(path) for path in paths
+            }
+    return configuration
 
 
 def _resource_versions(parameters: dict[str, Any]) -> Any:

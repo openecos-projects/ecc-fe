@@ -27,7 +27,7 @@ ecc-fe config
 ecc-fe resource list|status|install|update|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
-ecc-fe report qor|files|compare
+ecc-fe report qor|files|compare|lint-baseline
 ecc-fe runs list|delete
 ecc-fe workspace ...
 ecc-fe rpc ...
@@ -566,6 +566,56 @@ record per metric whose value differs (`--all` includes the unchanged ones).
 The command exits `0` when the comparison was made. With
 `--fail-on-regression` it exits `1` when `regressed` is not zero. A run that
 does not exist is `run_not_found`.
+
+## Lint And Elaboration Settings
+
+Tool behaviour is set through parameters, so it is recorded with each run
+and a change makes the affected step stale.
+
+| Parameter | Effect |
+| --- | --- |
+| `lint.profile` | `all` (default): `-Wall`, every lint and style warning. `basic`: Verilator's default warnings. |
+| `lint.rules_off` | Rules turned off, e.g. `["UNUSEDSIGNAL"]`; each becomes `-Wno-<RULE>`. |
+| `lint.waiver_files` | Verilator configuration (`.vlt`) files passed to lint. |
+| `lint.baseline` | Baseline file for the gate described below. |
+| `lint.extra_args` | Further Verilator arguments, appended as given. |
+| `elab.extra_args` | Further slang arguments, appended as given. |
+| `design.parameters` | Top-level parameter overrides, e.g. `["WIDTH=16"]`; `-G` for both tools. Not applied to `sim`. |
+
+Paths in `lint.waiver_files` and `lint.baseline` are resolved against the
+project directory (the workspace directory for a direct workspace). The
+content of those files is part of the lint result's provenance: editing a
+waiver file makes lint stale. A setting that cannot be used (an unknown
+profile, a rule name that is not one, a missing waiver file) fails the step
+and is named in its log.
+
+Library directories and suffixes from the filelist (`-y dir`, `+libext+`)
+are passed to review, elab, lint, and the simulation build.
+
+### Baseline Gate
+
+`ecc-fe report lint-baseline [-o file]` writes the warnings of a run's lint
+result to a file (default `lint-baseline.json`) and prints the `param set`
+command that enables it. With `lint.baseline` set:
+
+- every warning is marked `baseline=known` or `baseline=new` in
+  `lint_summary.json`; the summary carries `baseline` (`known`, `new`,
+  `new_actionable`, `fixed`, `gate`);
+- lint fails when a warning in code the user owns is not covered by the
+  baseline (`gate=failed`); new warnings in other code are reported only;
+- a baseline that cannot be read fails the gate.
+
+A warning is identified by rule, file name, and message, counted: line
+numbers and directories are not part of it, so moving code or checking the
+design out elsewhere does not turn known warnings into new ones, and one
+more occurrence of a known warning is new. Without a baseline the gate is
+`off` and warnings never fail lint, as before.
+
+Verilator's closing lines (`Exiting due to N error(s)`, `Command Failed`)
+are not counted as errors.
+
+`check` and `doctor` require Verilator 5.0 or newer; an older one is
+reported as `error=tool_too_old` with `minimum_version`.
 
 ## Run Management
 

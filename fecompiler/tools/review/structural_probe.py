@@ -253,6 +253,9 @@ def _parse_filelist(filelist: str) -> dict[str, Any]:
         # searchable for the `include that names it.
         *(path.parent for path in parsed.headers),
         *(Path(path).parent for path in rtl_files),
+        # Library directories (-y) are searched for modules the listed
+        # sources instantiate but do not define.
+        *parsed.libdirs,
     ])
     return _complete_missing_module_sources({
         "rtl_files": rtl_files,

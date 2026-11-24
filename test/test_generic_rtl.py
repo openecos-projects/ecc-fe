@@ -195,7 +195,9 @@ def test_cpu_project_check_still_asks_for_the_simulation_tools(tmp_path, capsys)
 
 def test_parameters_of_absent_steps_are_hidden_and_refused(project, capsys) -> None:
     _, listed = _call(capsys, "param", "list", "--all", "--project", str(project))
-    assert [record["param"] for record in listed] == ["design.frequency_mhz"]
+    names = [record["param"] for record in listed]
+    assert "design.frequency_mhz" in names and "lint.profile" in names
+    assert not [name for name in names if name.startswith("sim.")]
 
     for command in (("show", "sim.compile_preset"), ("set", "sim.compile_preset", "speed")):
         exit_code, records = _call(capsys, "param", *command, "--project", str(project))
@@ -203,7 +205,7 @@ def test_parameters_of_absent_steps_are_hidden_and_refused(project, capsys) -> N
         assert records[0]["error"] == "parameter_not_applicable"
     config = tomllib.loads((project / "ecc-fe.toml").read_text(encoding="utf-8"))
     assert config["params"] == {}
-    assert list(config["defaults"]) == ["design.frequency_mhz"]
+    assert not [name for name in config["defaults"] if name.startswith("sim.")]
 
 
 @pytest.mark.parametrize("selector", [["--only", "sim"], ["--to", "sim"], ["--from", "sim"]])

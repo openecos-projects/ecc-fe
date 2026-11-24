@@ -10,6 +10,8 @@ understands:
 * include directories: ``+incdir+a+b``, ``-I dir``, ``-Idir``, ``-incdir dir``;
 * defines: ``+define+A+B=1``, ``-D A``, ``-DA=1``;
 * ``-v file``: a library file, read as one more RTL file;
+* ``-y dir`` and ``+libext+.v+.sv``: library directories and the suffixes
+  searched in them, passed on to the tools;
 * RTL files, recognised by suffix: compilation units (``.v``, ``.sv``) and
   headers (``.vh``, ``.svh``);
 * environment variables in paths: ``$VAR``, ``${VAR}``, ``$(VAR)``.
@@ -17,8 +19,8 @@ understands:
 Relative paths are resolved against the directory of the filelist that names
 them, and paths under ``thirdparty/`` follow managed resources.
 
-Nothing is dropped silently. An entry the parser does not act on (``-y dir``,
-``+libext+``, a file with another suffix) is listed in
+Nothing is dropped silently. An entry the parser does not act on (a tool
+option, a file with another suffix) is listed in
 :attr:`Filelist.unsupported`, a path that uses an undefined variable or does
 not exist in :attr:`Filelist.missing`, and an include directory that does not
 exist in :attr:`Filelist.missing_incdirs` (it stays in ``incdirs`` too).
@@ -49,7 +51,9 @@ _DEFINE = "+define+"
 _INCDIR_OPTIONS = ("-I", "-incdir")
 _DEFINE_OPTION = "-D"
 _LIBRARY_FILE_OPTION = "-v"
-_OPTIONS_WITH_VALUE = ("-y", "-top", "--top", "--top-module", "-o", "-timescale")
+_LIBDIR_OPTION = "-y"
+_LIBEXT = "+libext+"
+_OPTIONS_WITH_VALUE = ("-top", "--top", "--top-module", "-o", "-timescale")
 _PAREN_VARIABLE = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)")
 
 
@@ -66,8 +70,11 @@ class Filelist:
     missing: tuple[Path, ...]
     incdirs: tuple[Path, ...]
     defines: tuple[str, ...]
-    # Entries of :attr:`incdirs` that do not exist, and include directories
-    # whose path uses an undefined variable.
+    # Library directories (``-y``) and the suffixes searched in them.
+    libdirs: tuple[Path, ...] = ()
+    libexts: tuple[str, ...] = ()
+    # Entries of :attr:`incdirs` and :attr:`libdirs` that do not exist, and
+    # directories whose path uses an undefined variable.
     missing_incdirs: tuple[Path, ...] = ()
     # Entries that were read and not acted on, as written.
     unsupported: tuple[str, ...] = ()
@@ -99,6 +106,8 @@ def parse_filelist(path: str | Path) -> Filelist:
         missing=tuple(collected.missing),
         incdirs=tuple(dict.fromkeys(collected.incdirs)),
         defines=tuple(collected.defines),
+        libdirs=tuple(dict.fromkeys(collected.libdirs)),
+        libexts=tuple(dict.fromkeys(collected.libexts)),
         missing_incdirs=tuple(dict.fromkeys(collected.missing_incdirs)),
         unsupported=tuple(collected.unsupported),
     )
@@ -154,6 +163,17 @@ class _Collected:
         self.defines: list[str] = []
         self.missing_incdirs: list[Path] = []
         self.unsupported: list[str] = []
+        self.libdirs: list[Path] = []
+        self.libexts: list[str] = []
+
+    def add_libdir(self, base: Path, value: str) -> None:
+        path = _resolve(base, value)
+        if path is None:
+            self.missing_incdirs.append(Path(value))
+            return
+        self.libdirs.append(path)
+        if not path.is_dir():
+            self.missing_incdirs.append(path)
 
     def add_incdir(self, base: Path, value: str) -> None:
         path = _resolve(base, value)
@@ -244,6 +264,16 @@ def _visit(filelist: Path, collected: _Collected) -> None:
                 value = value_after(token)
                 if value is not None:
                     collected.add_file(base, value)
+            elif token == _LIBDIR_OPTION:
+                value = value_after(token)
+                if value is not None:
+                    collected.add_libdir(base, value)
+            elif token.startswith(_LIBEXT):
+                collected.libexts.extend(
+                    item.strip()
+                    for item in token.removeprefix(_LIBEXT).split("+")
+                    if item.strip()
+                )
             elif token in _OPTIONS_WITH_VALUE:
                 value = value_after(token)
                 collected.unsupported.append(
