@@ -302,8 +302,43 @@ ecc-fe report qor --json
 与 ECC 一致，`ecc-fe version --json` 是例外：它直接输出 schema 对象，不包裹
 `records`。
 
-退出码为 `0` 表示成功，`1` 表示业务或工具失败，`2` 表示参数错误，`130`
-表示用户取消。
+布尔值在所有模式下都写作 `true` / `false`。文本模式下字段名与结构化模式一致
+（例如 `status_cmd`），不会和 `status` 混在一起。
+
+### 退出码
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 命令完成了它该做的事 |
+| `1` | 命令失败：工作区不存在或读不了、流程步骤失败、检查未通过、资源或工具出错 |
+| `2` | 调用方式有误：未知的选项、步骤、参数名，值无法解析，或选项互相冲突；此时不会读写任何东西 |
+| `130` | 用户取消 |
+
+退出码描述的是命令本身，不是设计的状态。`status`、`log`、`config`、`report`
+只要能读到内容就返回 `0`，流程有步骤失败也一样；脚本应该读输出里的状态：
+
+```bash
+ecc-fe status --json | jq -r '.records[0].state'   # running / interrupted / failed / success / pending
+```
+
+`run` 在有步骤失败时返回 `1`，`check` 和 `doctor` 在必需项未通过时返回 `1`。
+
+### 错误输出
+
+错误记录是 `kind=error`，其中 `error` 一定是稳定的小写代码（如
+`workspace_not_found`、`unknown_step`、`log_not_found`），不会是一句话；
+细节在 `message`、`reason` 等字段里。
+
+- 文本模式：错误写到 stderr，形如 `ecc-fe: error: <代码>` 加若干字段行；
+  stdout 只有正常记录。
+- `--json` / `--jsonl` / `--plain`：错误记录和其他记录一样写到 stdout，
+  消费方只需要读 stdout。
+
+### `run` 的输出
+
+`run` 先为每个执行过的步骤输出一条 `step` 记录（`step`、`tool`、`state`、
+`log`、`report`），最后输出 `run` 记录。步骤产物不再塞进 `run` 记录，
+用 `ecc-fe report files` 查看。
 
 ## 兼容命令
 

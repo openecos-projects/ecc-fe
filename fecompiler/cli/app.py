@@ -102,7 +102,7 @@ def build_app() -> typer.Typer:
     ) -> None:
         pass
 
-    @app.command("version")
+    @app.command("version", help="Show the ECC-FE version.")
     def version_command(
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
@@ -123,7 +123,7 @@ def build_app() -> typer.Typer:
             "version", CommandResult.ok([{"kind": "version", **payload}]), mode
         )
 
-    @app.command("init")
+    @app.command("init", help="Create a project, or a workspace in place with --workspace.")
     def init_command(
         name: Annotated[
             str | None, typer.Argument(help="Project directory to create")
@@ -173,7 +173,7 @@ def build_app() -> typer.Typer:
             commands.init,
         )
 
-    @app.command("run")
+    @app.command("run", help="Run the frontend flow, or continue or repeat part of it.")
     def run_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -239,7 +239,7 @@ def build_app() -> typer.Typer:
             commands.run_flow,
         )
 
-    @app.command("check")
+    @app.command("check", help="Check that the tools and the project are ready to run.")
     def check_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -265,7 +265,7 @@ def build_app() -> typer.Typer:
             commands.check,
         )
 
-    @app.command("doctor")
+    @app.command("doctor", help="Diagnose the tool environment, with a fix for each problem.")
     def doctor_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -291,7 +291,7 @@ def build_app() -> typer.Typer:
             commands.doctor,
         )
 
-    @app.command("status")
+    @app.command("status", help="Show the state of every flow step of a run.")
     def status_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -313,7 +313,7 @@ def build_app() -> typer.Typer:
             commands.status,
         )
 
-    @app.command("log")
+    @app.command("log", help="Print the log of the flow or of one step.")
     def log_command(
         step_argument: Annotated[
             str | None, typer.Argument(help="Frontend step log")
@@ -356,7 +356,7 @@ def build_app() -> typer.Typer:
             commands.log,
         )
 
-    @app.command("config")
+    @app.command("config", help="Show the parameter values a run uses.")
     def config_command(
         step_argument: Annotated[
             str | None, typer.Argument(help="Frontend step config")
@@ -392,7 +392,7 @@ def build_app() -> typer.Typer:
             commands.config,
         )
 
-    @resource_app.command("list")
+    @resource_app.command("list", help="List the resources ECC-FE can install.")
     def resource_list_command(
         installed: Annotated[
             bool, typer.Option("--installed", help="Only show installed resources")
@@ -413,7 +413,7 @@ def build_app() -> typer.Typer:
             commands.resource_list,
         )
 
-    @resource_app.command("status")
+    @resource_app.command("status", help="Show which required resources are installed.")
     def resource_status_command(
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
@@ -453,7 +453,7 @@ def build_app() -> typer.Typer:
             commands.resource_install,
         )
 
-    @resource_app.command("install")
+    @resource_app.command("install", help="Install one resource, or every required one.")
     def resource_install_command(
         resource_id: Annotated[
             str | None, typer.Argument(help="Resource id, for example slang")
@@ -478,7 +478,7 @@ def build_app() -> typer.Typer:
             plain,
         )
 
-    @resource_app.command("update")
+    @resource_app.command("update", help="Update one resource, or every required one.")
     def resource_update_command(
         resource_id: Annotated[
             str | None, typer.Argument(help="Resource id, for example slang")
@@ -494,7 +494,7 @@ def build_app() -> typer.Typer:
             "resource.update", resource_id, required, None, json_output, jsonl, plain
         )
 
-    @resource_app.command("env")
+    @resource_app.command("env", help="Print the shell environment for the installed resources.")
     def resource_env_command(
         shell: Annotated[
             str, typer.Option("--shell", help="sh, bash, zsh, or fish")
@@ -515,7 +515,7 @@ def build_app() -> typer.Typer:
             commands.resource_env,
         )
 
-    @param_app.command("list")
+    @param_app.command("list", help="List parameters with their values and where each comes from.")
     def param_list_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -543,7 +543,7 @@ def build_app() -> typer.Typer:
             param_handlers.list_parameters,
         )
 
-    @param_app.command("show")
+    @param_app.command("show", help="Show one parameter: value, source, type, and default.")
     def param_show_command(
         key: Annotated[str, typer.Argument(help="Parameter name")],
         workspace: WorkspaceOption = None,
@@ -567,7 +567,7 @@ def build_app() -> typer.Typer:
             param_handlers.show_parameter,
         )
 
-    @param_app.command("set")
+    @param_app.command("set", help="Set a parameter in the project or direct workspace.")
     def param_set_command(
         key: Annotated[str, typer.Argument(help="Parameter name")],
         value: Annotated[
@@ -608,7 +608,7 @@ def build_app() -> typer.Typer:
             param_handlers.set_parameter,
         )
 
-    @param_app.command("unset")
+    @param_app.command("unset", help="Return a parameter to its default.")
     def param_unset_command(
         key: Annotated[str, typer.Argument(help="Parameter name")],
         workspace: WorkspaceOption = None,
@@ -630,7 +630,7 @@ def build_app() -> typer.Typer:
             param_handlers.unset_parameter,
         )
 
-    @param_app.command("diff")
+    @param_app.command("diff", help="List the parameters that differ from their defaults.")
     def param_diff_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -652,7 +652,7 @@ def build_app() -> typer.Typer:
             param_handlers.diff_parameters,
         )
 
-    @catalog_app.command("list")
+    @catalog_app.command("list", help="List the CPU, SoC, toolchain, and test-suite entries.")
     def catalog_list_command(
         kind: Annotated[
             str | None,
@@ -676,7 +676,7 @@ def build_app() -> typer.Typer:
             catalog_handlers.list_catalog,
         )
 
-    @catalog_app.command("show")
+    @catalog_app.command("show", help="Show one catalog entry.")
     def catalog_show_command(
         entry_id: Annotated[str, typer.Argument(help="Catalog entry id")],
         json_output: JsonOption = False,
@@ -695,7 +695,7 @@ def build_app() -> typer.Typer:
             catalog_handlers.show_catalog,
         )
 
-    @catalog_app.command("check")
+    @catalog_app.command("check", help="Check that the catalog entries meet their contracts.")
     def catalog_check_command(
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
@@ -712,7 +712,7 @@ def build_app() -> typer.Typer:
             catalog_handlers.check_catalog,
         )
 
-    @catalog_app.command("validate")
+    @catalog_app.command("validate", help="Check whether a CPU, SoC, toolchain, and test-suite selection can create a workspace.")
     def catalog_validate_command(
         core_id: Annotated[str | None, typer.Option("--core-id")] = None,
         soc_harness_id: Annotated[str | None, typer.Option("--soc-harness-id")] = None,
@@ -741,7 +741,7 @@ def build_app() -> typer.Typer:
             catalog_handlers.validate_catalog,
         )
 
-    @report_app.command("qor")
+    @report_app.command("qor", help="Summarise the quality of results of every step.")
     def report_qor_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,
@@ -767,7 +767,7 @@ def build_app() -> typer.Typer:
             report_handlers.qor,
         )
 
-    @report_app.command("files")
+    @report_app.command("files", help="List the report files a run produced.")
     def report_files_command(
         workspace: WorkspaceOption = None,
         project: ProjectOption = None,

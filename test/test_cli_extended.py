@@ -195,7 +195,7 @@ def test_param_list_types_validation_and_dash_prefixed_value(
         "--workspace",
         str(workspace),
     )
-    assert exit_code == 1
+    assert exit_code == 2
     assert payload["records"][0]["error"] == "invalid_value"
     assert (workspace / "ecc-fe.toml").read_text(encoding="utf-8") == original
 
@@ -279,9 +279,7 @@ def test_param_set_stores_the_value_before_resetting_the_flow(
         str(workspace),
     )
     assert exit_code == 1
-    assert payload["records"][0]["error"] == (
-        "Unable to reset frontend flow after parameter change"
-    )
+    assert payload["records"][0]["error"] == "flow_reset_failed"
     # The change is kept, so the next run sees it and marks old results stale.
     assert _read_json(parameters_path)["Frequency max [MHz]"] == 180.0
     assert config_path.read_bytes() == original_config

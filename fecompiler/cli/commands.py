@@ -29,7 +29,12 @@ from fecompiler.cli.core.inputs import (
     StatusInput,
 )
 from fecompiler.cli.core.locking import with_workspace_lock
-from fecompiler.cli.core.records import disclosure_cmd, error_record, normalize_state
+from fecompiler.cli.core.records import (
+    disclosure_cmd,
+    error_record,
+    failure_record,
+    normalize_state,
+)
 from fecompiler.cli.core.types import CommandContext, CommandResult, OutputMode
 from fecompiler.cli.project.config import (
     ProjectConfig,
@@ -151,7 +156,6 @@ def _init_workspace(
         "kind": "workspace_init",
         "status": result.response,
         "workspace": result.data.get("directory", context.workspace_dir),
-        "data": result.data,
         "messages": result.message,
         "config": config_path,
         "next_cmd": disclosure_cmd("ecc-fe doctor", context.workspace_dir),
@@ -300,7 +304,7 @@ def _run_workspace(
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if workspace is None:
         return _workspace_not_found(context)
@@ -320,7 +324,7 @@ def _run_workspace(
         "step": only,
         "from_step": selection.from_step,
         "to_step": selection.to_step,
-        "data": result.data,
+        "error": _result_error(result.data),
         "messages": result.message,
         "config": str(project_config.path) if project_config else None,
         "config_changes": changed,
@@ -334,11 +338,44 @@ def _run_workspace(
             run_id=context.run_id,
         ),
     }
-    return (
-        CommandResult.ok([record])
-        if result.response == "success"
-        else CommandResult.err([record])
-    )
+    return _run_result(record, result)
+
+
+def _run_result(record: dict[str, object], result: object) -> CommandResult:
+    """Return one `step` record per executed step, then the `run` record.
+
+    The `run` record is always the last one, after any streamed progress.
+    """
+    records = [*_step_result_records(getattr(result, "data", None)), record]
+    if getattr(result, "response", None) == "success":
+        return CommandResult.ok(records)
+    return CommandResult.err(records)
+
+
+def _result_error(data: object) -> object:
+    return data.get("error") if isinstance(data, dict) else None
+
+
+def _step_result_records(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, dict):
+        return []
+    reports = data.get("reports")
+    entries = reports if isinstance(reports, list) else [data]
+    records: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("step"):
+            continue
+        records.append(
+            {
+                "kind": "step",
+                "step": entry["step"],
+                "tool": entry.get("tool"),
+                "state": normalize_state(entry.get("state")),
+                "log": entry.get("log_file"),
+                "report": entry.get("report_file"),
+            }
+        )
+    return records
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,7 +518,7 @@ def _continue_project_run(
     try:
         workspace = load_existing_workspace(run_dir)
     except (OSError, TypeError, ValueError) as error:
-        return CommandResult.err([error_record(str(error), workspace=run_dir)])
+        return CommandResult.err([failure_record("workspace_unreadable", error, workspace=run_dir)])
     if workspace is None:
         return _workspace_not_found(context)
     result = _execute_selection(selection, run_dir, context)
@@ -493,7 +530,7 @@ def _continue_project_run(
         "step": selection.only,
         "from_step": selection.from_step,
         "to_step": selection.to_step,
-        "data": result.data,
+        "error": _result_error(result.data),
         "messages": result.message,
         "config": str(config.path),
         "status_cmd": _target_cmd("ecc-fe status", context),
@@ -502,11 +539,7 @@ def _continue_project_run(
             context,
         ),
     }
-    return (
-        CommandResult.ok([record])
-        if result.response == "success"
-        else CommandResult.err([record])
-    )
+    return _run_result(record, result)
 
 
 def _run_project(command_input: RunInput, context: CommandContext) -> CommandResult:
@@ -671,7 +704,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
         "status": result.response,
         "workspace": run_dir,
         "to_step": selection.to_step,
-        "data": result.data,
+        "error": _result_error(result.data),
         "messages": result.message,
         "config": str(config.path),
         "config_changes": changed,
@@ -679,11 +712,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
         "status_cmd": _target_cmd("ecc-fe status", context),
         "log_cmd": _target_cmd("ecc-fe log", context),
     }
-    return (
-        CommandResult.ok([record])
-        if result.response == "success"
-        else CommandResult.err([record])
-    )
+    return _run_result(record, result)
 
 
 def check(command_input: CommandInput, context: CommandContext) -> CommandResult:
@@ -745,7 +774,8 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
         return CommandResult.err(
             [
                 error_record(
-                    f"Unknown flow step: {command_input.step}",
+                    "unknown_step",
+                    step=command_input.step,
                     expected=list(_FLOW_STEPS),
                 )
             ],
@@ -899,7 +929,7 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if workspace is None:
         return _workspace_not_found(context)
@@ -907,7 +937,7 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         flow = read_json_object(Path(workspace["flow_path"]))
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     # A step stays "ongoing" on disk when its command is killed. The workspace
     # lock tells a flow that is really running from one that died.
@@ -953,11 +983,35 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         # The stored results are kept until the next run re-executes them.
         summary["stale_steps"] = list(stale)
         summary.setdefault("resume_cmd", _target_cmd("ecc-fe run --resume", context))
-    failed = any(
-        record.get("state") in {"incomplete", "invalid", "interrupted"}
-        for record in records
+    states = [str(record.get("state")) for record in records[1:]]
+    summary["state"] = _flow_state(states, running=owner is not None)
+    summary["failed_step"] = next(
+        (
+            record["step"]
+            for record in records[1:]
+            if record.get("state") in _FAILED_STATES
+        ),
+        None,
     )
-    return CommandResult.err(records) if failed else CommandResult.ok(records)
+    # Reading the state succeeded, so the command did: a failed or interrupted
+    # flow is reported in the records, not through the exit status.
+    return CommandResult.ok(records)
+
+
+_FAILED_STATES = frozenset({"incomplete", "invalid"})
+
+
+def _flow_state(states: list[str], *, running: bool) -> str:
+    """Summarise step states as one of running/interrupted/failed/success/pending."""
+    if running:
+        return "running"
+    if "interrupted" in states:
+        return "interrupted"
+    if any(state in _FAILED_STATES for state in states):
+        return "failed"
+    if states and all(state == "success" for state in states):
+        return "success"
+    return "pending"
 
 
 def _stale_step_reasons(
@@ -991,13 +1045,20 @@ def log(command_input: CommandInput, context: CommandContext) -> CommandResult:
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if workspace is None:
         return _workspace_not_found(context)
     if command_input.step and command_input.step not in _FLOW_STEPS:
         return CommandResult.err(
-            [error_record(f"Unknown flow step: {command_input.step}")]
+            [
+                error_record(
+                    "unknown_step",
+                    step=command_input.step,
+                    expected=list(_FLOW_STEPS),
+                )
+            ],
+            exit_code=2,
         )
     log_path = _step_log_path(Path(context.workspace_dir), command_input.step)
     if command_input.follow:
@@ -1022,13 +1083,13 @@ def log(command_input: CommandInput, context: CommandContext) -> CommandResult:
         return CommandResult.err(
             [
                 error_record(
-                    "Log file was not found",
+                    "log_not_found",
                     path=str(log_path),
-                    remediation_cmd=disclosure_cmd(
-                        f"ecc-fe workspace run-step --step {command_input.step}"
+                    remediation_cmd=_target_cmd(
+                        f"ecc-fe run --only {command_input.step}"
                         if command_input.step
-                        else "ecc-fe workspace run-flow",
-                        context.workspace_dir,
+                        else "ecc-fe run",
+                        context,
                     ),
                 )
             ]
@@ -1146,19 +1207,26 @@ def config(command_input: CommandInput, context: CommandContext) -> CommandResul
         workspace = load_existing_workspace(context.workspace_dir)
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if workspace is None:
         return _workspace_not_found(context)
     if command_input.step and command_input.step not in _FLOW_STEPS:
         return CommandResult.err(
-            [error_record(f"Unknown flow step: {command_input.step}")]
+            [
+                error_record(
+                    "unknown_step",
+                    step=command_input.step,
+                    expected=list(_FLOW_STEPS),
+                )
+            ],
+            exit_code=2,
         )
     try:
         parameters = read_json_object(Path(workspace["parameters_path"]))
     except (OSError, TypeError, ValueError) as error:
         return CommandResult.err(
-            [error_record(str(error), workspace=context.workspace_dir)]
+            [failure_record("workspace_unreadable", error, workspace=context.workspace_dir)]
         )
     if command_input.resolved:
         parameters = {
@@ -1252,7 +1320,7 @@ def resource_list(
     try:
         records = ResourceManager().list_resources()
     except ResourceManagerError as error:
-        return CommandResult.err([error_record(str(error))])
+        return CommandResult.err([failure_record("resource_failed", error)])
     if command_input.installed_only:
         records = [record for record in records if record.get("installed_version")]
     return CommandResult.ok(records)
@@ -1265,13 +1333,25 @@ def resource_status(
         manifest = read_resource_manifest(strict=True)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         return CommandResult.err(
-            [error_record(str(error), path=str(resource_manifest_path()))]
+            [
+                failure_record(
+                    "invalid_resource_manifest",
+                    error,
+                    path=str(resource_manifest_path()),
+                )
+            ]
         )
     try:
         required_resources = _manifest_required_resources(manifest)
     except TypeError as error:
         return CommandResult.err(
-            [error_record(str(error), path=str(resource_manifest_path()))]
+            [
+                failure_record(
+                    "invalid_resource_manifest",
+                    error,
+                    path=str(resource_manifest_path()),
+                )
+            ]
         )
     required_set = set(required_resources)
     installed = installed_tool_entries(manifest)
@@ -1348,11 +1428,23 @@ def resource_install(
     assert isinstance(command_input, ResourceInstallInput)
     if command_input.required == bool(command_input.resource_id):
         return CommandResult.err(
-            [error_record("Specify exactly one resource id or --required")], exit_code=2
+            [
+                error_record(
+                    "invalid_resource_selection",
+                    reason="specify exactly one resource id or --required",
+                )
+            ],
+            exit_code=2,
         )
     if command_input.required and command_input.version:
         return CommandResult.err(
-            [error_record("--version cannot be combined with --required")], exit_code=2
+            [
+                error_record(
+                    "invalid_resource_selection",
+                    reason="--version cannot be combined with --required",
+                )
+            ],
+            exit_code=2,
         )
     manager = ResourceManager()
     try:
@@ -1367,7 +1459,13 @@ def resource_install(
         )
     except ResourceManagerError as error:
         return CommandResult.err(
-            [error_record(str(error), resource_id=command_input.resource_id)]
+            [
+                failure_record(
+                    "resource_install_failed",
+                    error,
+                    resource_id=command_input.resource_id,
+                )
+            ]
         )
     activate_managed_resources()
     return CommandResult.ok(records)
@@ -1378,9 +1476,16 @@ def resource_env(command_input: CommandInput, context: CommandContext) -> Comman
     env = dict(os.environ)
     activate_managed_resources(env)
     selected = {key: env[key] for key in _RESOURCE_ENV_KEYS if env.get(key)}
-    if command_input.shell not in {"sh", "bash", "zsh", "fish"}:
+    if command_input.shell not in _SHELLS:
         return CommandResult.err(
-            [error_record(f"Unsupported shell: {command_input.shell}")], exit_code=2
+            [
+                error_record(
+                    "unsupported_shell",
+                    shell=command_input.shell,
+                    expected=list(_SHELLS),
+                )
+            ],
+            exit_code=2,
         )
     if command_input.output_mode.value == "text":
         content = "\n".join(
@@ -1393,6 +1498,9 @@ def resource_env(command_input: CommandInput, context: CommandContext) -> Comman
     return CommandResult.ok(
         [{"kind": "resource_env", "shell": command_input.shell, "values": selected}]
     )
+
+
+_SHELLS = ("sh", "bash", "zsh", "fish")
 
 
 def _target_cmd(command: str, context: CommandContext) -> str:
@@ -1416,7 +1524,7 @@ def _workspace_not_found(context: CommandContext) -> CommandResult:
     return CommandResult.err(
         [
             error_record(
-                "Frontend workspace was not found",
+                "workspace_not_found",
                 workspace=directory,
                 project=context.project_dir if not context.workspace_mode else None,
                 run=None

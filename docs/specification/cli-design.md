@@ -62,6 +62,68 @@ default text. Text and structured modes describe the same records.
 
 Summary records expose follow-up commands through fields ending in `_cmd`.
 Examples include `status_cmd`, `log_cmd`, `next_cmd`, and `remediation_cmd`.
+Text mode prints field names exactly as the structured modes do, so
+`status_cmd` never reads as a second `status`. Booleans are `true` and `false`
+in every mode.
+
+### Streams
+
+| Mode | stdout | stderr |
+| --- | --- | --- |
+| text | records | error records, `run` progress lines |
+| `--json` | one document, error records included | `run` progress lines |
+| `--jsonl`, `--plain` | every record, errors and progress included | nothing |
+
+A structured consumer reads stdout only. In text mode an error is written to
+stderr as `ecc-fe: error: <code>` followed by its fields, and stdout carries
+only the records that are not errors.
+
+### Error Records
+
+An error record is `kind=error` with `error` set to a stable lower-case code
+(`[a-z][a-z0-9_]*`), never a sentence. Detail is carried by other fields:
+`message` for the text of an underlying failure, `reason` for a rule that was
+broken, and the offending value under its own name (`step`, `param`, `run`,
+`workspace`).
+
+| Code | Meaning |
+| --- | --- |
+| `workspace_not_found` | The selected workspace or run does not exist. |
+| `workspace_unreadable` | A workspace state file is missing or malformed. |
+| `workspace_busy` | Another command holds the workspace lock. |
+| `unknown_step`, `unknown_parameter` | The name is not one ECC-FE knows; `expected` lists the steps. |
+| `invalid_value`, `invalid_parameter`, `invalid_run_id` | The value is not acceptable; `reason` says why. |
+| `log_not_found` | The step has not produced a log yet. |
+| `invalid_resource_selection`, `unsupported_shell` | `resource` was called with a bad selection. |
+| `resource_failed`, `resource_install_failed`, `invalid_resource_manifest` | Resource management failed. |
+| `internal_error` | An unexpected exception; `message` carries it. |
+| `command_failed` | A failure that reached the output without a code of its own. |
+
+The selector, run, parameter, catalog, and report sections list the codes
+specific to them.
+
+### `run` Records
+
+`run` writes one `step` record per executed step (`step`, `tool`, `state`,
+`log`, `report`) and then the `run` record, which is always last. The `run`
+record carries `status`, the selectors that were used, `messages`, and
+follow-up commands; when the application reports a coded failure it also
+carries `error`. Step artifacts are not repeated here: `report files` lists
+them.
+
+### `status` Records
+
+The first record is the `workspace` summary; one `step` record follows per
+flow step. The summary carries `state`, the flow as a whole:
+
+| `state` | Meaning |
+| --- | --- |
+| `running` | A command holds the workspace. |
+| `interrupted` | A step was running when its command died. |
+| `failed` | A step failed; `failed_step` names the first one. |
+| `success` | Every step succeeded. |
+| `pending` | Nothing failed and some steps have not run. |
+
 `ecc-fe version --json` follows ECC's version exception and emits the schema
 object directly; its `--jsonl` and `--plain` forms remain record-oriented.
 
@@ -69,10 +131,17 @@ object directly; its `--jsonl` and `--plain` forms remain record-oriented.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Command completed; optional checks may still need attention. |
-| `1` | Business, validation, resource, or tool failure. |
-| `2` | Invalid command-line usage. |
+| `0` | The command did what it was asked. |
+| `1` | The command failed: a missing or unreadable workspace, a failed flow step, a failed check, a resource or tool failure. |
+| `2` | The invocation is wrong: an unknown option, step, or parameter, a value that does not parse, or options that cannot be combined. Nothing was read or changed. |
 | `130` | User cancellation. |
+
+The exit status describes the command, not the design. `status`, `log`,
+`config`, and `report` exit `0` whenever they could read what they were asked
+for, whatever the flow state is; a script reads the state from the records
+(`status` summary `state`). `run` exits `1` when a step fails, and `check` and
+`doctor` exit `1` when a required check fails, because producing that result
+is what those commands are for.
 
 ## Workspace Locking
 
@@ -98,8 +167,8 @@ reset by recovery only when no live command holds the lock.
 `status` probes the lock without taking it. Its workspace record carries
 `running` and, while a command owns the workspace, `owner_pid`. A step stored
 as running whose owner is gone is reported as `state=interrupted`; the
-workspace record then carries `resume_cmd` and the command exits with status
-`1`. `status` never rewrites the stored state.
+workspace record then carries `state=interrupted` and `resume_cmd`. The
+command still exits with status `0`. `status` never rewrites the stored state.
 
 `run --overwrite` builds the replacement run beside the existing one and swaps
 it in only after it is complete. If the template, the parameter overrides, or
@@ -317,7 +386,7 @@ staying silent until the flow ends.
 | --- | --- | --- |
 | text | stderr | `ecc-fe: lint started`, `ecc-fe: lint success (0.5s)` |
 | `--json` | stderr | the same lines; stdout stays one JSON document |
-| `--jsonl` | stdout | `progress` records, one per line, before the `run` record |
+| `--jsonl` | stdout | `progress` records, one per line, before the `step` and `run` records |
 | `--plain` | stdout | the same records as `key=value` lines |
 
 A `progress` record has `event` set to `step_started` (`step`, `tool`),

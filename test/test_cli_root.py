@@ -216,8 +216,9 @@ def test_required_install_rejects_specific_version_before_registry_access(
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert (
-        payload["records"][0]["error"] == "--version cannot be combined with --required"
+    assert payload["records"][0]["error"] == "invalid_resource_selection"
+    assert payload["records"][0]["reason"] == (
+        "--version cannot be combined with --required"
     )
 
 
@@ -361,7 +362,7 @@ def test_existing_non_workspace_directory_is_rejected(
     assert cli_main.run(["status", "--workspace", str(tmp_path), "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["records"][0]["error"] == "Frontend workspace was not found"
+    assert payload["records"][0]["error"] == "workspace_not_found"
 
 
 def test_run_does_not_mutate_existing_non_workspace_directory(
@@ -386,4 +387,5 @@ def test_status_rejects_malformed_workspace_json(monkeypatch, tmp_path, capsys) 
     assert cli_main.run(["status", "--workspace", str(workspace), "--json"]) == 1
 
     payload = json.loads(capsys.readouterr().out)
-    assert "Expecting property name" in payload["records"][0]["error"]
+    assert payload["records"][0]["error"] == "workspace_unreadable"
+    assert "Expecting property name" in payload["records"][0]["message"]
