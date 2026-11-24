@@ -131,7 +131,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
     StepDefinition(
         name="sim",
         tool="verilator",
-        handler="fecompiler.tools.verilator.runner:VerilatorSimStep",
+        handler="fecompiler.tools.verilator.sim:SimStep",
         qor_report="cases.json",
         config_fields=(
             "testbench",
@@ -140,8 +140,14 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
             "cpu_supports_difftest",
             "soc_supports_difftest",
         ),
-        config_prefixes=("sim_",),
-        source_files=("tools/verilator/runner.py", "tools/verilator/command.py"),
+        config_files=("testbench_files",),
+        config_prefixes=("sim_", "testbench_"),
+        source_files=(
+            "tools/verilator/sim.py",
+            "tools/verilator/runner.py",
+            "tools/verilator/testbench.py",
+            "tools/verilator/command.py",
+        ),
         executables=("verilator",),
         doctor_checks=("verilator", "cxx", "make", "riscv"),
     ),

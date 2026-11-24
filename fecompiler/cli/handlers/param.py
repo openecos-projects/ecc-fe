@@ -27,7 +27,7 @@ from fecompiler.cli.project.config import (
     set_workspace_parameter,
     write_parameter_override,
 )
-from fecompiler.allflow.profile import frontend_flow_profile
+from fecompiler.allflow.profile import parameter_groups_outside
 from fecompiler.cli.project.layout import enclosing_project
 from fecompiler.cli.project.params import (
     ParameterSchema,
@@ -85,7 +85,7 @@ def show_parameter(
                 error_record(
                     "parameter_not_applicable",
                     param=schema.param,
-                    reason=f"this design's flow has no {schema.group} step",
+                    reason=_not_applicable_reason(schema),
                 )
             ],
             exit_code=2,
@@ -391,18 +391,29 @@ def _parameter_view(
 
 
 def _groups_outside_flow(parameters: dict[str, object]) -> frozenset[str]:
-    """Return parameter groups that belong to steps this design does not run."""
+    """Return parameter groups that do not apply to this design."""
     try:
-        profile = frontend_flow_profile(parameters.get("frontend_design_kind"))
+        return parameter_groups_outside(parameters)
     except ValueError:
         return frozenset()
-    return frozenset(_FLOW_STEPS) - {name for name, _ in profile.steps}
 
 
 def _without_groups(
     records: list[dict[str, object]], hidden: frozenset[str]
 ) -> list[dict[str, object]]:
     return [record for record in records if record.get("group") not in hidden]
+
+
+_NOT_APPLICABLE = {
+    "testbench": "a CPU design is simulated on its SoC harness, not with a testbench",
+    "sim": "sim.* configures CPU programs; an RTL design is simulated with testbench.*",
+}
+
+
+def _not_applicable_reason(schema: ParameterSchema) -> str:
+    return _NOT_APPLICABLE.get(
+        schema.group, f"this design's flow has no {schema.group} step"
+    )
 
 
 def _not_applicable(
@@ -415,7 +426,7 @@ def _not_applicable(
             error_record(
                 "parameter_not_applicable",
                 param=schema.param,
-                reason=f"this design's flow has no {schema.group} step",
+                reason=_not_applicable_reason(schema),
             )
         ],
         exit_code=2,

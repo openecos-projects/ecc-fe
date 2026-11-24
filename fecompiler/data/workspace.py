@@ -14,7 +14,7 @@ from fecompiler.data.step import StateEnum
 from fecompiler.allflow.profile import (
     CPU_CORE,
     GENERIC_RTL,
-    flow_steps_for,
+    flow_steps,
     normalize_frontend_design_kind,
 )
 from fecompiler.tools.common.filelist import RTL_SOURCE_SUFFIXES, parse_filelist
@@ -540,7 +540,7 @@ def _write_home_files(project_dir: Path, parameters: dict[str, Any]) -> None:
                 "peak memory (mb)":  0,
                 "info":              {},
             }
-            for name, tool in flow_steps_for(parameters.get("frontend_design_kind"))
+            for name, tool in flow_steps(parameters)
         ]
     })
 
