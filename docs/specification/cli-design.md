@@ -29,6 +29,7 @@ ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
 ecc-fe report qor|files|compare|lint-baseline
 ecc-fe runs list|delete
+ecc-fe handoff
 ecc-fe workspace ...
 ecc-fe rpc ...
 ```
@@ -616,6 +617,15 @@ are not counted as errors.
 
 `check` and `doctor` require Verilator 5.0 or newer; an older one is
 reported as `error=tool_too_old` with `minimum_version`.
+
+## Handoff
+
+`ecc-fe handoff [--run-id <id>] [--output <dir>] [--bundle]
+[--allow-incomplete] [--no-check]` writes the handoff manifest of a run: the
+user's design with everything needed to compile it, and what the flow
+concluded. It is the only interface a consumer such as ECC uses; its content
+and readiness rules are specified in
+[handoff-manifest.md](handoff-manifest.md).
 
 ## Run Management
 
