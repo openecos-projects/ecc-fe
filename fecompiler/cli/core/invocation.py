@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +20,13 @@ from fecompiler.cli.project.layout import (
     template_dir,
 )
 from fecompiler.cli.rendering.render import render_result
+
+DEBUG_ENV = "ECC_FE_DEBUG"
+
+
+def debug_enabled() -> bool:
+    return os.environ.get(DEBUG_ENV, "").strip().lower() not in {"", "0", "false", "no"}
+
 
 CommandHandler = Callable[[CommandInput, CommandContext], CommandResult]
 
@@ -111,8 +120,19 @@ def execute_command(
     try:
         result = handler(command_input, context)
     except Exception as error:  # noqa: BLE001 - command boundaries return stable error records.
+        debug = debug_enabled()
+        if debug:
+            traceback.print_exc(file=sys.stderr)
         result = CommandResult.err(
-            [failure_record("internal_error", error, command=command)]
+            [
+                failure_record(
+                    "internal_error",
+                    error,
+                    command=command,
+                    exception=type(error).__name__,
+                    hint=None if debug else f"set {DEBUG_ENV}=1 or pass --debug for a traceback",
+                )
+            ]
         )
     if not result.rendered:
         render_result(command, result, context.output_mode)

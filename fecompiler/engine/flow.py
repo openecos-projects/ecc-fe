@@ -22,6 +22,7 @@ from fecompiler.data import workspace as workspace_data
 from fecompiler.data.step import StateEnum
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.engine.provenance import build_step_provenance, output_fingerprint
+from fecompiler.engine.resource_usage import StepUsage
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.fe import builder
 
@@ -93,6 +94,7 @@ class EngineFlow:
             self._reset_step_config(step)
             step["state"] = StateEnum.Unstart.value
             step["runtime"] = ""
+            step.pop("runtime_s", None)
             step["peak memory (mb)"] = 0
             step["info"] = {}
             step.pop("provenance", None)
@@ -141,6 +143,7 @@ class EngineFlow:
         runtime: str | None = None,
         peak_memory: float | None = None,
         clear_runtime_operation: bool = False,
+        runtime_seconds: float | None = None,
     ) -> bool:
         step = self.get_step(name, tool)
         if step is None:
@@ -148,6 +151,9 @@ class EngineFlow:
         step["state"] = state.value
         if runtime is not None:
             step["runtime"] = runtime
+        if runtime_seconds is not None:
+            # "runtime" is whole seconds; this keeps the exact duration.
+            step["runtime_s"] = runtime_seconds
         if peak_memory is not None:
             step["peak memory (mb)"] = peak_memory
         if clear_runtime_operation:
@@ -256,6 +262,7 @@ class EngineFlow:
         provenance["started_at"] = _utc_now()
         self._clear_step_stale(flow_step)
         start = time.time()
+        self._step_usage = StepUsage()
         initial_qor_source_revision = step_qor_source_revision(ws_step)
         clear_step_qor(ws_step.directory)
         self._start_step(ws_step, observer, start)
@@ -309,16 +316,20 @@ class EngineFlow:
                 self._flow_logger.error("[ABORT]   %-20s  elapsed=%s", step_name, runtime)
             raise
         finally:
+            self._step_usage.stop()
             restore_signal_handlers()
 
     def _finish_step(self, step: WorkspaceStep, state: StateEnum, runtime: str) -> None:
+        usage = getattr(self, "_step_usage", None)
+        seconds, peak_memory = usage.stop() if usage is not None else (None, 0.0)
         self.set_state(
             name=step.name,
             tool=step.tool,
             state=state,
             runtime=runtime,
-            peak_memory=0.0,
+            peak_memory=peak_memory,
             clear_runtime_operation=True,
+            runtime_seconds=seconds,
         )
 
     def _run_single_step(self, step: WorkspaceStep) -> None:
@@ -388,6 +399,7 @@ class EngineFlow:
         self._reset_step_config(step)
         step["state"] = StateEnum.Unstart.value
         step["runtime"] = ""
+        step.pop("runtime_s", None)
         step["peak memory (mb)"] = 0
         info.update({"stale": True, "stale_reason": reason, "stale_from": stale_from})
         step["info"] = info

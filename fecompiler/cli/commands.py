@@ -131,9 +131,13 @@ def _init_workspace(
         context.workspace_dir,
         default_design=Path(context.workspace_dir).name,
     )
+    created = _missing_ancestors(Path(context.workspace_dir))
     result = workspace_application.execute_payload(
         "create", request, base_dir=Path.cwd()
     )
+    if result.response != "success":
+        _remove_created(created, [Path(context.workspace_dir)])
+        return _init_failure(result, workspace=context.workspace_dir)
     config_path: str | None = None
     if result.response == "success":
         try:
@@ -192,26 +196,26 @@ def _init_project(command_input: InitInput) -> CommandResult:
         return CommandResult.err(
             [error_record("project_already_exists", project=str(project_dir))]
         )
+    # Everything this command creates is removed again if it fails, so a
+    # failed init can simply be repeated.
+    created = _missing_ancestors(project_dir / "runs")
+    scratch = [project_dir / "runs", seed_dir, seed_dir.parent]
     (project_dir / "runs").mkdir(parents=True, exist_ok=True)
     request = _init_request(
         command_input,
         str(seed_dir),
         default_design=project_dir.name,
     )
-    result = workspace_application.execute_payload(
-        "create", request, base_dir=Path.cwd()
-    )
-    if result.response != "success":
-        return CommandResult.err(
-            [
-                {
-                    "kind": "project_init",
-                    "status": result.response,
-                    "project": str(project_dir),
-                    "messages": result.message,
-                }
-            ]
+    try:
+        result = workspace_application.execute_payload(
+            "create", request, base_dir=Path.cwd()
         )
+    except BaseException:
+        _remove_created(created, scratch)
+        raise
+    if result.response != "success":
+        _remove_created(created, scratch)
+        return _init_failure(result, project=str(project_dir))
     try:
         workspace = load_existing_workspace(str(seed_dir))
         if workspace is None:
@@ -221,6 +225,7 @@ def _init_project(command_input: InitInput) -> CommandResult:
             str(project_dir), parameters, project_layout=True
         )
     except (OSError, TypeError, ValueError, ProjectConfigError) as error:
+        _remove_created(created, scratch)
         return CommandResult.err(
             [
                 error_record(
@@ -244,6 +249,55 @@ def _init_project(command_input: InitInput) -> CommandResult:
             }
         ]
     )
+
+
+def _missing_ancestors(path: Path) -> list[Path]:
+    """Return the directories that do not exist yet on the way to *path*."""
+    missing: list[Path] = []
+    current = path
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    return missing
+
+
+def _remove_created(created: list[Path], scratch: list[Path]) -> None:
+    """Undo a failed init.
+
+    *scratch* directories hold only what init wrote: the half-built template
+    is removed with its content, the others only when they are empty.
+    *created* directories did not exist before and are removed when empty, so
+    nothing the user had is ever deleted.
+    """
+    for path in scratch:
+        if path.name == "template" and path.parent.name == ".ecc-fe":
+            shutil.rmtree(path, ignore_errors=True)
+    for path in [*scratch, *created]:
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
+def _init_failure(result: object, **target: object) -> CommandResult:
+    """Report why the workspace could not be created, one record per reason."""
+    data = getattr(result, "data", None)
+    messages = [str(item) for item in getattr(result, "message", None) or []]
+    validation = data.get("validation") if isinstance(data, dict) else None
+    issues = validation.get("issues") if isinstance(validation, dict) else None
+    records: list[dict[str, object]] = [
+        error_record(
+            "init_failed",
+            **target,
+            message=" ".join(messages) or None,
+            error_code=data.get("error") if isinstance(data, dict) else None,
+            fields=data.get("unsupported_fields") if isinstance(data, dict) else None,
+        )
+    ]
+    for issue in issues if isinstance(issues, list) else []:
+        if isinstance(issue, dict):
+            records.append({"kind": "init_issue", **issue})
+    return CommandResult.err(records)
 
 
 def _init_request(
@@ -975,6 +1029,7 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
             "tool": str(step.get("tool", "")),
             "state": state,
             "runtime": step.get("runtime", ""),
+            "runtime_s": step.get("runtime_s"),
             "peak_memory_mb": step.get("peak memory (mb)", 0),
         }
         if name in stale:

@@ -97,7 +97,7 @@ broken, and the offending value under its own name (`step`, `param`, `run`,
 | `log_not_found` | The step has not produced a log yet. |
 | `invalid_resource_selection`, `unsupported_shell` | `resource` was called with a bad selection. |
 | `resource_failed`, `resource_install_failed`, `invalid_resource_manifest` | Resource management failed. |
-| `internal_error` | An unexpected exception; `message` carries it. |
+| `internal_error` | An unexpected exception; `message` and `exception` describe it. `ecc-fe --debug <command>` or `ECC_FE_DEBUG=1` prints the traceback to stderr. |
 | `command_failed` | A failure that reached the output without a code of its own. |
 
 The selector, run, parameter, catalog, and report sections list the codes
@@ -124,6 +124,13 @@ flow step. The summary carries `state`, the flow as a whole:
 | `failed` | A step failed; `failed_step` names the first one. |
 | `success` | Every step succeeded. |
 | `pending` | Nothing failed and some steps have not run. |
+
+Each `step` record carries `runtime` (`HH:MM:SS`, whole seconds),
+`runtime_s` (seconds with millisecond precision), and `peak_memory_mb`: the
+largest resident memory of the ECC-FE process and all the processes the step
+started, sampled five times a second. Peak memory is measured on Linux only
+and is `0` elsewhere; a process that lives for less than one sample can be
+missed. Steps finished by an older version have no `runtime_s`.
 
 `ecc-fe version --json` follows ECC's version exception and emits the schema
 object directly; its `--jsonl` and `--plain` forms remain record-oriented.
@@ -290,11 +297,28 @@ The tables have distinct ownership:
 
 | Table | Meaning |
 | --- | --- |
-| `[design]` | Creation-time project identity snapshot. |
-| `[frontend]` | Creation-time catalog selection snapshot. |
+| `[design]` | Creation-time project identity snapshot. Not read back. |
+| `[frontend]` | Creation-time catalog selection snapshot. Not read back. |
 | `[flow].run` | Default run id when `--run-id` is omitted. |
 | `[defaults]` | Typed baseline captured from `home/parameters.json`. |
 | `[params]` | Project mode only: overrides applied when a run is created. |
+
+`[frontend]` records the catalog ids. It records `cpu_filelist` or
+`soc_filelist` only for a file the user supplied: a filelist that ships with
+ECC-FE or an installed resource follows from the ids, and its location on one
+machine (including a `latest` resource directory) is not written. The inputs a
+run actually reads are in `.ecc-fe/template`.
+
+`param set` and `param unset` edit `[params]` entry by entry: comments and
+entries whose value does not change are kept as written. The result is parsed
+before it is written, and it must be the same document with only `[params]`
+changed. When that cannot be achieved (for example `params` written as an
+inline table) the command fails and the file is left untouched.
+
+When `init` fails it removes what it created, including directories that did
+not exist before, and never anything that did. The failure is an
+`init_failed` error record followed by one `init_issue` record (`code`,
+`message`, `field`) per reason.
 
 Only quoted, flat, known parameter names are accepted in `[defaults]` and
 `[params]`. Unknown top-level keys, schema versions, parameter names, invalid

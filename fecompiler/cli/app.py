@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Annotated
 
 import typer
@@ -32,7 +33,7 @@ from fecompiler.cli.core.inputs import (
     StatusInput,
     output_mode,
 )
-from fecompiler.cli.core.invocation import execute_command
+from fecompiler.cli.core.invocation import DEBUG_ENV, execute_command
 from fecompiler.cli.core.options import (
     JsonlOption,
     JsonOption,
@@ -107,8 +108,17 @@ def build_app() -> typer.Typer:
                 help="Show the ECC-FE version and exit",
             ),
         ] = False,
+        debug: Annotated[
+            bool,
+            typer.Option(
+                "--debug",
+                help="Print a traceback when a command fails unexpectedly "
+                "(same as ECC_FE_DEBUG=1)",
+            ),
+        ] = False,
     ) -> None:
-        pass
+        if debug:
+            os.environ[DEBUG_ENV] = "1"
 
     @app.command("version", help="Show the ECC-FE version.")
     def version_command(
