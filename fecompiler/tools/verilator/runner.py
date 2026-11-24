@@ -22,6 +22,7 @@ from fecompiler.tools.common.rtl_inputs import (
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 
+from fecompiler.tools.verilator.build_stamp import record_build, stale_reason, stamp_path
 from fecompiler.tools.verilator.command import verilator_cmd as _verilator_cmd
 # The lint step lives in its own module; these names are re-exported for the
 # code that still imports them from here.
@@ -1354,19 +1355,6 @@ class VerilatorSimStep(BaseStep):
     def _run_compile(self, step: WorkspaceStep,
                      workspace: dict[str, Any]) -> bool:
         sim_bin = Path(step.output["dir"]) / f"{workspace['design']}_sim"
-        if workspace.get("sim_reuse_binary") and sim_bin.exists():
-            (Path(step.log["dir"]) / "log.txt").write_text(
-                f"reuse existing sim binary: {sim_bin}\n",
-                encoding="utf-8",
-            )
-            update_substep_ok(
-                step,
-                SimSubFlowEnum.compile.value,
-                True,
-                info={"skipped": "reuse binary", "sim_bin": str(sim_bin)},
-            )
-            return True
-
         cpp_sources = sim_cpp_sources(workspace)
         if not cpp_sources:
             message = (
@@ -1395,8 +1383,6 @@ class VerilatorSimStep(BaseStep):
         files   = rtl_files(workspace)
         top     = workspace.get("top_module", "top")
         obj_dir = Path(step.directory) / "obj_dir"
-        if obj_dir.exists():
-            shutil.rmtree(obj_dir)
 
         cmd = [
             _verilator_cmd(), "--cc", "--exe", "--build", "-j", "8",
@@ -1412,15 +1398,48 @@ class VerilatorSimStep(BaseStep):
             "--Mdir", str(obj_dir),
             "-o", str(sim_bin),
         ] + files + cpp_sources
+        build_inputs = [*files, *cpp_sources]
 
+        rebuild_note = ""
+        if workspace.get("sim_reuse_binary"):
+            # A program is reused only while it is what this build would produce.
+            reason = stale_reason(sim_bin, obj_dir, cmd, build_inputs)
+            if reason is None:
+                (Path(step.log["dir"]) / "log.txt").write_text(
+                    f"reuse existing sim binary: {sim_bin}\n",
+                    encoding="utf-8",
+                )
+                update_substep_ok(
+                    step,
+                    SimSubFlowEnum.compile.value,
+                    True,
+                    info={"skipped": "reuse binary", "sim_bin": str(sim_bin)},
+                )
+                return True
+            rebuild_note = f"not reusing {sim_bin}: {reason}; rebuilding\n"
+
+        if obj_dir.exists():
+            shutil.rmtree(obj_dir)
+        stamp_path(sim_bin).unlink(missing_ok=True)
+        log_path = Path(step.log["dir"]) / "log.txt"
         result = run_tool(
             cmd,
-            log_path=Path(step.log["dir"]) / "log.txt",
+            log_path=log_path,
             timeout=tool_timeout("sim_compile"),
             session_dir=Path(step.log["dir"]),
         )
         ok = result.returncode == 0
-        update_substep_ok(step, SimSubFlowEnum.compile.value, ok)
+        if ok:
+            record_build(sim_bin, obj_dir, cmd, build_inputs)
+        if rebuild_note:
+            previous = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+            log_path.write_text(rebuild_note + previous, encoding="utf-8")
+        update_substep_ok(
+            step,
+            SimSubFlowEnum.compile.value,
+            ok,
+            info={"rebuilt": rebuild_note.strip()} if rebuild_note else None,
+        )
         return ok
 
     @staticmethod
