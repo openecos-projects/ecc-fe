@@ -101,6 +101,7 @@ jobs:
             test/test_scoring_rules.py \
             test/test_flow_document.py \
             test/test_sim_run_settings.py \
+            test/test_program_build_record.py \
             test/test_packaging_handlers.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \

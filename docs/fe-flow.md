@@ -203,7 +203,13 @@ RTL 工程的 `sim_verilator` 只有 `obj_dir/`、`output/<testbench top>_sim`�
    - 要求复用已有程序时（`sim_reuse_binary`，只能由直接调用引擎的代码设置），只有记录
      与当前输入完全一致才复用，否则重新构建，并在编译日志的第一行说明原因。
 
-   测试程序各自独立编译，`sim.build_jobs` 个同时进行；用例默认一个一个跑，
+   测试程序也各带一份构建记录（`<程序名>.soc.bin.build.json`）：程序自己的源文件、
+   SoC 的 `tests/common`、`tests/include`、`tests/benchmarks` 下的全部文件、构建脚本、
+   脚本从环境里读的设置、它会选中的编译器，以及生成的镜像。全部没变的程序不再重编，
+   构建日志里记为 `up to date`。构建脚本不在 SoC 的标准目录结构里时无法知道它读了
+   什么，这种情况每次都重编。
+
+   需要编译的测试程序各自独立编译，`sim.build_jobs` 个同时进行；用例默认一个一个跑，
    `sim.case_jobs` 可以让多个用例同时跑。`report/runs/` 只保留最近
    `sim.history_limit` 次运行。
 
@@ -363,6 +369,7 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | sim 步骤的入口（按设计选择下面两种之一） | `fecompiler/tools/verilator/sim.py` |
 | CPU 仿真（SoC 外壳、测试程序、用例、回归记录） | `fecompiler/tools/verilator/runner.py` |
 | 仿真程序的构建记录与复用判断 | `fecompiler/tools/verilator/build_stamp.py` |
+| 测试程序的构建记录（没变就不重编） | `fecompiler/tools/verilator/program_build.py` |
 | RTL 设计用自己的 testbench 仿真 | `fecompiler/tools/verilator/testbench.py` |
 | review（步骤入口、源码检查、Yosys 结构预检查） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
 | 门禁、质量结论、分数 | `fecompiler/analysis/qor.py`、`scoring.py`、`scoring_policy.json` |
