@@ -110,6 +110,10 @@ class PrepareStep(BaseStep):
 
         header_files: list[Path] = []
         seen_header: set[str] = set()
+        libdirs: list[Path] = []
+        seen_libdir: set[str] = set()
+        libexts: list[str] = []
+        seen_libext: set[str] = set()
         notes: list[dict[str, str]] = []
 
         def _add_filelist(label: str, path: str) -> None:
@@ -123,6 +127,8 @@ class PrepareStep(BaseStep):
                 [header.parent for header in data["header_files"]], incdirs, seen_incdir
             )
             _add_unique(data["defines"], defines, seen_define)
+            _add_unique(data["libdirs"], libdirs, seen_libdir)
+            _add_unique(data["libexts"], libexts, seen_libext)
             inputs[label] = self._filelist_info(path, data)
             notes.extend(self._filelist_notes(label, data))
             for rtl_path in data["rtl_files"]:
@@ -194,6 +200,8 @@ class PrepareStep(BaseStep):
             "header_files": [str(p) for p in header_files],
             "incdirs": [str(p) for p in incdirs],
             "defines": defines,
+            "libdirs": [str(p) for p in libdirs],
+            "libexts": libexts,
             # What the filelists contained that prepare did not act on.
             "input_notes": notes,
             "source_fingerprint": workspace_input_fingerprint(workspace),
@@ -576,7 +584,7 @@ class PrepareStep(BaseStep):
                 "source": label,
                 "kind": "missing_incdir",
                 "entry": str(path),
-                "detail": "include directory does not exist",
+                "detail": "include or library directory does not exist",
             }
             for path in data["missing_incdirs"]
         )
@@ -651,6 +659,8 @@ class PrepareStep(BaseStep):
             "header_files": list(parsed.headers),
             "incdirs": list(parsed.incdirs),
             "defines": list(parsed.defines),
+            "libdirs": list(parsed.libdirs),
+            "libexts": list(parsed.libexts),
             "unsupported": list(parsed.unsupported),
             "missing_incdirs": list(parsed.missing_incdirs),
         }

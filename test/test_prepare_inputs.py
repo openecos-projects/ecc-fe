@@ -106,13 +106,10 @@ def test_entries_that_are_not_acted_on_are_listed(tmp_path) -> None:
 
     parsed = parse_filelist(filelist)
 
-    assert parsed.unsupported == (
-        "-y lib",
-        "+libext+.v+.sv",
-        "-Wno-fatal",
-        "waive.vlt",
-        "--top-module top",
-    )
+    assert parsed.unsupported == ("-Wno-fatal", "waive.vlt", "--top-module top")
+    # Library directories and suffixes are passed on to the tools.
+    assert parsed.libdirs == (tmp_path / "lib",)
+    assert parsed.libexts == (".v", ".sv")
 
 
 def test_missing_incdir_is_listed_and_kept(tmp_path) -> None:
@@ -129,17 +126,19 @@ def test_prepare_reports_what_it_did_not_use(tmp_path) -> None:
     _write(tmp_path / "top.sv")
     header = _write(tmp_path / "hdr" / "defs.svh", "`define X 1\n")
     filelist = _write(
-        tmp_path / "design.f", "top.sv\nhdr/defs.svh\n-y lib\n+incdir+gone\n"
+        tmp_path / "design.f", "top.sv\nhdr/defs.svh\n-y lib\nnotes.txt\n+incdir+gone\n"
     )
+    (tmp_path / "lib").mkdir()
 
     data = PrepareStep._parse_sv_filelist(str(filelist))
     notes = PrepareStep._filelist_notes("input_filelist", data)
 
     assert data["header_files"] == [header]
     assert [(note["kind"], note["entry"]) for note in notes] == [
-        ("unsupported_entry", "-y lib"),
+        ("unsupported_entry", "notes.txt"),
         ("missing_incdir", str(tmp_path / "gone")),
     ]
+    assert data["libdirs"] == [tmp_path / "lib"]
     info = PrepareStep._filelist_info(str(filelist), data)
     assert (info["header_files"], info["unsupported"], info["missing_incdirs"]) == (1, 1, 1)
 

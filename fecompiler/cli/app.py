@@ -24,6 +24,7 @@ from fecompiler.cli.core.inputs import (
     ParamUnsetInput,
     ReportCompareInput,
     ReportFilesInput,
+    ReportLintBaselineInput,
     ReportQorInput,
     ResourceEnvInput,
     ResourceInstallInput,
@@ -866,6 +867,38 @@ def build_app() -> typer.Typer:
                 fail_on_regression=fail_on_regression,
             ),
             report_handlers.compare,
+        )
+
+    @report_app.command(
+        "lint-baseline",
+        help="Write the lint warnings of a run as a baseline for lint.baseline.",
+    )
+    def report_lint_baseline_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        output_path: Annotated[
+            str | None,
+            typer.Option(
+                "--output", "-o", help="Baseline file (default: lint-baseline.json)"
+            ),
+        ] = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "report.lint-baseline",
+            ReportLintBaselineInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                output_path=output_path,
+            ),
+            report_handlers.lint_baseline,
         )
 
     @runs_app.command("list", help="List the runs of a project with their state.")

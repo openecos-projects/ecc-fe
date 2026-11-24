@@ -215,6 +215,43 @@ def defines(workspace: dict[str, Any]) -> list[str]:
     return list(fallback.defines) if fallback is not None else []
 
 
+def library_dirs(workspace: dict[str, Any]) -> list[str]:
+    """Return the ``-y`` library directories of the design."""
+    prepared = prepared_inputs(workspace)
+    if prepared:
+        return [str(path) for path in prepared.get("libdirs", [])]
+    fallback = _unprepared_filelist(workspace)
+    return [str(path) for path in fallback.libdirs] if fallback is not None else []
+
+
+def library_extensions(workspace: dict[str, Any]) -> list[str]:
+    """Return the ``+libext+`` suffixes searched in the library directories."""
+    prepared = prepared_inputs(workspace)
+    if prepared:
+        return [str(item) for item in prepared.get("libexts", [])]
+    fallback = _unprepared_filelist(workspace)
+    return list(fallback.libexts) if fallback is not None else []
+
+
+def verilator_library_args(workspace: dict[str, Any]) -> list[str]:
+    args: list[str] = []
+    for directory in library_dirs(workspace):
+        args.extend(["-y", directory])
+    extensions = library_extensions(workspace)
+    if extensions:
+        args.append("+libext+" + "+".join(extensions))
+    return args
+
+
+def slang_library_args(workspace: dict[str, Any]) -> list[str]:
+    args: list[str] = []
+    for directory in library_dirs(workspace):
+        args.extend(["-y", directory])
+    for extension in library_extensions(workspace):
+        args.extend(["-Y", extension])
+    return args
+
+
 def _unprepared_filelist(workspace: dict[str, Any]):
     """Parse the input filelist of a workspace that has no current prepare result.
 

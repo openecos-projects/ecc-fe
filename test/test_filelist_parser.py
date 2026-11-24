@@ -66,7 +66,9 @@ def test_entries_options_and_comments(tmp_path) -> None:
         tmp_path / "rtl" / "lib.v",
         Path("$ENV_PATH/skipped.sv"),
     )
-    assert parsed.unsupported == ("-y libdir", "+libext+.v", "notes.txt")
+    assert parsed.unsupported == ("notes.txt",)
+    assert parsed.libdirs == (tmp_path / "rtl" / "libdir",)
+    assert parsed.libexts == (".v",)
     assert parsed.incdirs == (tmp_path / "rtl" / "include", tmp_path / "shared")
     assert parsed.defines == ("SYNTHESIS", "WIDTH=32")
 

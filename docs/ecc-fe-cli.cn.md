@@ -339,6 +339,42 @@ ecc-fe --debug status
 ECC_FE_DEBUG=1 ecc-fe run
 ```
 
+## 让 lint 收敛
+
+lint 的行为通过参数配置，写在 `ecc-fe.toml` 的 `[params]` 里（或用 `param set`）：
+
+```bash
+ecc-fe param set lint.profile basic                       # 只用 Verilator 默认的警告集，不加 -Wall
+ecc-fe param set lint.rules_off '["UNUSEDSIGNAL"]'        # 关掉某些规则
+ecc-fe param set lint.waiver_files '["waivers.vlt"]'      # Verilator 的 .vlt 豁免文件
+ecc-fe param set lint.extra_args '["--timescale","1ns/1ps"]'
+ecc-fe param set elab.extra_args '["--max-generate-steps","200000"]'
+ecc-fe param set design.parameters '["WIDTH=16"]'         # 覆盖 top 的参数，elab 和 lint 都生效
+```
+
+路径相对工程目录解析。豁免文件的内容变了，lint 会被判为过期并重跑。
+
+### "不新增警告"的门禁
+
+存量警告一时清不完时，可以先把现状记成 baseline，之后只拦新增的：
+
+```bash
+ecc-fe run --to lint
+ecc-fe report lint-baseline            # 生成 lint-baseline.json
+ecc-fe param set lint.baseline lint-baseline.json
+```
+
+之后每次 lint：
+
+- baseline 里有的警告标为 `known`，没有的标为 `new`。
+- 自己代码里出现 `new` 警告时 lint 失败，日志末尾会说明有几条；SoC、第三方代码里的新
+  警告只报告、不拦。
+- 警告按"规则 + 文件名 + 消息"识别并计数，不看行号，所以在上面加几行代码不会让旧警告
+  变成新的；同一条警告多出现一次算新增。
+- 修掉的警告计入 `fixed`；想把 baseline 收紧，重新执行 `report lint-baseline` 即可。
+
+没有设置 baseline 时行为和以前一样：警告不会让 lint 失败。
+
 ## 管理 run
 
 ```bash

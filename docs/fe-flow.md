@@ -217,8 +217,11 @@ sequenceDiagram
 - 文件不存在，或路径里用了未定义的环境变量：prepare 失败，错误里写明是哪一项。
 - include 目录不存在：仍然传给工具，同时记到 `prepare.rpt` 的 `input_notes`
   （`kind=missing_incdir`）。
-- 解析器不处理的条目（`-y dir`、`+libext+`、其他后缀的文件、工具自己的选项）：
-  记到 `input_notes`（`kind=unsupported_entry`）。这些目前不会传给任何工具。
+- `-y dir` 和 `+libext+.v+.sv`：库目录和库文件后缀，会传给 review、elab、lint 和
+  仿真编译。
+- 解析器不处理的条目（其他后缀的文件、工具自己的选项）：记到 `input_notes`
+  （`kind=unsupported_entry`）。这些不会传给任何工具；工具参数请用 `lint.extra_args`、
+  `elab.extra_args`。
 
 ### top 模块的识别
 
@@ -277,6 +280,8 @@ CPU 模式下的端口契约检查同样带上 filelist 里的宏定义。端口
 | Step 目录结构 | `fecompiler/tools/fe/builder.py` |
 | Prepare 实现 | `fecompiler/tools/prepare/runner.py` |
 | Slang elaboration | `fecompiler/tools/slang/runner.py` |
-| Verilator lint/sim | `fecompiler/tools/verilator/runner.py` |
+| Verilator lint（设置、诊断解析、baseline 门禁） | `fecompiler/tools/verilator/lint.py` |
+| Verilator sim | `fecompiler/tools/verilator/runner.py` |
+| 各工具的设置读取 | `fecompiler/tools/common/tool_config.py` |
 | RTL 输入共享解析 | `fecompiler/tools/common/rtl_inputs.py` |
 | filelist 解析（`-f/-F`、`+incdir+`、`+define+`、缺失文件报告） | `fecompiler/tools/common/filelist.py` |

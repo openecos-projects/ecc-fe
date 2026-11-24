@@ -3,6 +3,7 @@ from __future__ import annotations
 import codecs
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -1029,19 +1030,32 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
         path = _find_executable(candidates)
         version = _tool_version(path) if path else None
         remediation_cmd, remediation = _doctor_remediation(check_id, path)
-        records.append(
-            {
-                "kind": "doctor_check",
-                "check": check_id,
-                "label": label,
-                "status": "pass" if path else "fail" if required else "attention",
-                "required": required,
-                "path": path,
-                "version": version,
-                "remediation_cmd": remediation_cmd,
-                "remediation": remediation,
-            }
+        minimum = _MINIMUM_TOOL_VERSIONS.get(check_id)
+        too_old = bool(
+            path and minimum and (found := _version_tuple(version)) and found < minimum
         )
+        if too_old:
+            remediation_cmd, remediation = _doctor_remediation(check_id, None)
+        record: dict[str, object] = {
+            "kind": "doctor_check",
+            "check": check_id,
+            "label": label,
+            "status": "pass"
+            if path and not too_old
+            else "fail"
+            if required
+            else "attention",
+            "required": required,
+            "path": path,
+            "version": version,
+            "remediation_cmd": remediation_cmd,
+            "remediation": remediation,
+        }
+        if minimum:
+            record["minimum_version"] = ".".join(str(part) for part in minimum)
+        if too_old:
+            record["error"] = "tool_too_old"
+        records.append(record)
 
     try:
         manifest = read_resource_manifest(strict=True)
@@ -1808,6 +1822,16 @@ def _step_outside_flow(
                 exit_code=2,
             )
     return None
+
+
+# Verilator 5 introduced --timing, which the simulation build relies on.
+_MINIMUM_TOOL_VERSIONS: dict[str, tuple[int, ...]] = {"verilator": (5, 0)}
+
+
+def _version_tuple(version: str | None) -> tuple[int, ...] | None:
+    """Return the first dotted number in a tool's version line."""
+    match = re.search(r"(\d+)\.(\d+)", version or "")
+    return (int(match.group(1)), int(match.group(2))) if match else None
 
 
 def _doctor_requirements(

@@ -11,12 +11,14 @@ from typing import Any
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.common.process import run_tool, tool_timeout
+from fecompiler.tools.common.tool_config import config_list, design_parameter_overrides
 from fecompiler.tools.common.rtl_inputs import (
     incdirs,
     rtl_files,
     slang_define_args,
     slang_defines,
     slang_incdir_args,
+    slang_library_args,
 )
 from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
 from fecompiler.tools.fe.subflow import update_substep_ok
@@ -159,6 +161,13 @@ class SlangElabStep(BaseStep):
         top       = workspace.get("top_module", "top")
         log_path = Path(step.report["dir"]) / "log.txt"
 
+        parameter_args: list[str] = []
+        setting_error = ""
+        try:
+            for override in design_parameter_overrides(workspace):
+                parameter_args.extend(["-G", override])
+        except ValueError as error:
+            setting_error = str(error)
         cmd = [
             _slang_cmd(),
             "--allow-use-before-declare",
@@ -168,12 +177,17 @@ class SlangElabStep(BaseStep):
             "--diag-location",
             "--diag-source",
             *slang_incdir_args(workspace),
+            *slang_library_args(workspace),
             *slang_define_args(workspace),
+            *parameter_args,
+            *config_list(workspace, "elab_extra_args"),
         ] + files
 
         log_path.parent.mkdir(parents=True, exist_ok=True)
         timeout = tool_timeout("elab")
         try:
+            if setting_error:
+                raise OSError(setting_error)
             result = run_tool(
                 cmd,
                 log_path=log_path,
