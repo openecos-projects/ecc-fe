@@ -315,6 +315,52 @@ before it is written, and it must be the same document with only `[params]`
 changed. When that cannot be achieved (for example `params` written as an
 inline table) the command fails and the file is left untouched.
 
+### Design Kinds
+
+A project is one of two kinds, fixed when it is created and recorded as
+`[design].kind`:
+
+| Kind | Created with | Flow |
+| --- | --- | --- |
+| `cpu` | `init <name>` (a catalog CPU), `--rtl <file>` or `--cpu-filelist <file>` (a custom CPU) | prepare, review, elab, lint, sim on the SoC harness |
+| `rtl` | `init <name> --top <module> --filelist <file>`, or `--kind rtl --rtl <file>...` | prepare, review, elab, lint |
+
+`--kind` defaults to `rtl` when `--filelist` is given and to `cpu` otherwise.
+`--rtl` is repeatable for an RTL design. The sources of an RTL design are
+used where they are, not copied, so the next run sees every edit.
+
+Invocation mistakes exit with status 2 before anything is created:
+`invalid_kind`, `init_option_conflict` (CPU options with an RTL design,
+`--filelist` with a CPU, several `--rtl` for a CPU), and
+`init_input_required` (an RTL design with neither or both of `--rtl` and
+`--filelist`). For an RTL design `init` also checks, before creating
+anything, that the filelist and every listed file exist and that the top
+module is defined exactly once; a failure is `init_failed` with `init_issue`
+records (`filelist_not_found`, `rtl_file_not_found`, `no_rtl_sources`,
+`top_module_not_found`, `top_module_count_mismatch`).
+
+Commands follow the flow of the design:
+
+- `check` and `doctor` ask only for the tools the flow's steps use. An RTL
+  design needs no C++ compiler, Make, or RISC-V toolchain.
+- `param list` and `param diff` leave out parameters of steps the flow does
+  not have, `ecc-fe.toml` does not record defaults for them, and `param show`
+  and `param set` refuse them with `parameter_not_applicable` (exit status 2).
+- `run --only/--from/--to <step>` with a step the flow does not have fails
+  with `step_not_in_flow` (exit status 2) and lists the steps it has.
+
+### Moving A Project
+
+A project stores absolute paths. Its location is recorded in
+`.ecc-fe/location.json`; when a command finds the project somewhere else, it
+rewrites every path below the old location to the new one in the template
+and in each run (`home/*.json` and generated filelists in `origin/`), says so
+on stderr, and updates the record. Inputs that live inside the project
+directory therefore move with it. Inputs outside it keep their absolute
+paths. Results of existing runs become stale, because the paths that went
+into them changed. A run that is in use is skipped and repaired by a later
+command.
+
 When `init` fails it removes what it created, including directories that did
 not exist before, and never anything that did. The failure is an
 `init_failed` error record followed by one `init_issue` record (`code`,

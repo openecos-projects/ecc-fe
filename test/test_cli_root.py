@@ -165,8 +165,8 @@ def test_init_passes_an_explicit_cpu_top_module_for_filelists_and_rtl() -> None:
     assert request(cpu_filelist="cpu.f", cpu_top_module="my_cpu")[
         "cpu_top_module"
     ] == "my_cpu"
-    assert request(rtl="cpu.v", top="core")["cpu_top_module"] == "core"
-    assert request(rtl="cpu.v", top="core", cpu_top_module="my_cpu")[
+    assert request(rtl=("cpu.v",), top="core")["cpu_top_module"] == "core"
+    assert request(rtl=("cpu.v",), top="core", cpu_top_module="my_cpu")[
         "cpu_top_module"
     ] == "my_cpu"
 

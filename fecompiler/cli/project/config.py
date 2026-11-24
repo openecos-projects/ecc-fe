@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.profile import frontend_flow_profile
+from fecompiler.allflow.steps import step_names
 from fecompiler.cli.project.params import (
     PARAMETERS,
     effective_default,
@@ -126,14 +128,30 @@ def create_project_config(
     path = project_config_path(directory)
     if path.exists() and not overwrite:
         raise ProjectConfigError(f"Project config already exists: {path}")
+    # Parameters of steps this design's flow does not have are left out.
+    try:
+        flow_steps = {
+            name
+            for name, _ in frontend_flow_profile(
+                parameters.get("frontend_design_kind")
+            ).steps
+        }
+    except ValueError:
+        flow_steps = set(step_names())
+    absent = set(step_names()) - flow_steps
     defaults = {
-        schema.param: effective_default(parameters, schema) for schema in PARAMETERS
+        schema.param: effective_default(parameters, schema)
+        for schema in PARAMETERS
+        if schema.group not in absent
     }
     design = {
+        "kind": "rtl"
+        if str(parameters.get("frontend_design_kind", "")).strip() == "generic_rtl"
+        else "cpu",
         "name": str(parameters.get("Design", Path(directory).name)),
         "top": str(parameters.get("Top module", "top")),
         "clock_port": str(parameters.get("Clock", "clk")),
-        "frequency_mhz": defaults["design.frequency_mhz"],
+        "frequency_mhz": defaults.get("design.frequency_mhz"),
     }
     frontend = {
         key: parameters[key]

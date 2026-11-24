@@ -27,6 +27,7 @@ from fecompiler.cli.project.config import (
     set_workspace_parameter,
     write_parameter_override,
 )
+from fecompiler.allflow.profile import frontend_flow_profile
 from fecompiler.cli.project.layout import enclosing_project
 from fecompiler.cli.project.params import (
     ParameterSchema,
@@ -76,7 +77,18 @@ def show_parameter(
     record = _parameter_view(command_input, context)
     if isinstance(record, CommandResult):
         return record
-    selected = next(item for item in record if item["param"] == schema.param)
+    selected = next((item for item in record if item["param"] == schema.param), None)
+    if selected is None:
+        return CommandResult.err(
+            [
+                error_record(
+                    "parameter_not_applicable",
+                    param=schema.param,
+                    reason=f"this design's flow has no {schema.group} step",
+                )
+            ],
+            exit_code=2,
+        )
     selected.update(
         {
             "inspect_cmd": _target_cmd(
@@ -135,6 +147,9 @@ def _set_parameter(
     if isinstance(loaded, CommandResult):
         return loaded
     _, parameters, config = loaded
+    refused = _not_applicable(schema, parameters)
+    if refused is not None:
+        return refused
     if context.workspace_mode:
         return _write_workspace_parameter(
             context, schema, parameters, config, value, status="set"
@@ -337,8 +352,12 @@ def _parameter_view(
         return loaded
     _, parameters, config = loaded
     defaults = config.defaults if config else None
+    hidden = _groups_outside_flow(parameters)
     if context.workspace_mode:
-        return parameter_records(parameters, defaults=defaults, overrides=None, step=step)
+        return _without_groups(
+            parameter_records(parameters, defaults=defaults, overrides=None, step=step),
+            hidden,
+        )
     if of_run:
         try:
             given = load_run_parameter_overrides(context.workspace_dir)
@@ -352,14 +371,52 @@ def _parameter_view(
                     )
                 ]
             )
-        return run_parameter_records(
-            parameters, defaults=defaults, cli_overrides=given, step=step
+        return _without_groups(
+            run_parameter_records(
+                parameters, defaults=defaults, cli_overrides=given, step=step
+            ),
+            hidden,
         )
-    return parameter_records(
-        parameters,
-        defaults=defaults,
-        overrides=config.overrides if config else None,
-        step=step,
+    return _without_groups(
+        parameter_records(
+            parameters,
+            defaults=defaults,
+            overrides=config.overrides if config else None,
+            step=step,
+        ),
+        hidden,
+    )
+
+
+def _groups_outside_flow(parameters: dict[str, object]) -> frozenset[str]:
+    """Return parameter groups that belong to steps this design does not run."""
+    try:
+        profile = frontend_flow_profile(parameters.get("frontend_design_kind"))
+    except ValueError:
+        return frozenset()
+    return frozenset(_FLOW_STEPS) - {name for name, _ in profile.steps}
+
+
+def _without_groups(
+    records: list[dict[str, object]], hidden: frozenset[str]
+) -> list[dict[str, object]]:
+    return [record for record in records if record.get("group") not in hidden]
+
+
+def _not_applicable(
+    schema: ParameterSchema, parameters: dict[str, object]
+) -> CommandResult | None:
+    if schema.group not in _groups_outside_flow(parameters):
+        return None
+    return CommandResult.err(
+        [
+            error_record(
+                "parameter_not_applicable",
+                param=schema.param,
+                reason=f"this design's flow has no {schema.group} step",
+            )
+        ],
+        exit_code=2,
     )
 
 

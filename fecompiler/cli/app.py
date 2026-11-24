@@ -149,10 +149,31 @@ def build_app() -> typer.Typer:
         workspace: WorkspaceOption = None,
         design: Annotated[str, typer.Option("--design", help="Design name")] = "",
         top: Annotated[str, typer.Option("--top", help="Top module name")] = "top",
-        rtl: Annotated[
-            str | None, typer.Option("--rtl", help="Custom CPU RTL source")
+        kind: Annotated[
+            str | None,
+            typer.Option(
+                "--kind",
+                help="cpu: a CPU run on the SoC harness with simulation; "
+                "rtl: any RTL design, checked through lint "
+                "(default: rtl with --filelist, otherwise cpu)",
+            ),
         ] = None,
-        cpu_filelist: Annotated[str | None, typer.Option("--cpu-filelist")] = None,
+        rtl: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--rtl",
+                help="RTL source file; repeatable. With --kind cpu it is the "
+                "custom CPU source",
+            ),
+        ] = None,
+        filelist: Annotated[
+            str | None,
+            typer.Option("--filelist", help="Filelist of an RTL design (--kind rtl)"),
+        ] = None,
+        cpu_filelist: Annotated[
+            str | None,
+            typer.Option("--cpu-filelist", help="Filelist of a custom CPU (--kind cpu)"),
+        ] = None,
         cpu_top_module: Annotated[
             str | None,
             typer.Option(
@@ -181,7 +202,9 @@ def build_app() -> typer.Typer:
                 name=name,
                 design=design,
                 top=top,
-                rtl=rtl,
+                kind=kind,
+                rtl=tuple(rtl or ()),
+                filelist=filelist,
                 cpu_filelist=cpu_filelist,
                 cpu_top_module=cpu_top_module,
                 soc_filelist=soc_filelist,

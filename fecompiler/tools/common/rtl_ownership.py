@@ -72,7 +72,36 @@ def classify_rtl_source(
         return "cpu"
     if _is_workspace_file(path, workspace, "origin_verilog"):
         return "design" if design_kind == GENERIC_RTL else "cpu"
+    if design_kind == GENERIC_RTL and _is_design_include(path, workspace):
+        return "design"
     return "unknown"
+
+
+def _is_design_include(path: Path, workspace: dict[str, Any] | None) -> bool:
+    """Report whether *path* is a header of an RTL design.
+
+    A header is not a compilation unit, so it is not among the prepared RTL
+    sources; without this a diagnostic inside it would belong to nobody. It
+    is the design's own when it is a listed header, or sits in one of the
+    design's include directories or next to its filelist.
+    """
+    if not workspace:
+        return False
+    manifest = str(workspace.get("prepared_manifest", "")).strip()
+    data: Any = {}
+    if manifest and Path(manifest).is_file():
+        try:
+            data = json_read(manifest)
+        except (OSError, ValueError):
+            data = {}
+    if isinstance(data, dict):
+        headers = {str(Path(str(item)).expanduser().resolve()) for item in data.get("header_files", [])}
+        if str(path) in headers:
+            return True
+        for raw in data.get("incdirs", []):
+            if _is_relative_to(path, Path(str(raw))):
+                return True
+    return _under_workspace_root(path, workspace, "input_filelist")
 
 
 def rtl_source_ownership(
