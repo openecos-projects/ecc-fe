@@ -16,7 +16,9 @@ HIDDENIMPORTS = (
     "fecompiler.tools.prepare.runner",
     "fecompiler.tools.review.runner",
     "fecompiler.tools.slang.runner",
+    "fecompiler.tools.verilator.lint",
     "fecompiler.tools.verilator.runner",
+    "fecompiler.tools.verilator.sim",
 )
 
 
