@@ -136,6 +136,31 @@ missed. Steps finished by an older version have no `runtime_s`.
 `ecc-fe version --json` follows ECC's version exception and emits the schema
 object directly; its `--jsonl` and `--plain` forms remain record-oriented.
 
+### Program Name
+
+ECC-FE may be started through a wrapper, such as an `ecc fe` subcommand that
+passes its arguments on unchanged. The wrapper sets `ECC_FE_PROGRAM` to the
+words a user types to reach ECC-FE (`ECC_FE_PROGRAM="ecc fe"`), and ECC-FE uses
+them wherever it names itself in output:
+
+- usage and help text (`Usage: ecc fe run [OPTIONS]`);
+- the prefix of text-mode messages (`ecc fe: error: unknown_step`);
+- every `*_cmd` field and every command quoted in a `reason`, so a suggested
+  command can be typed back as printed.
+
+The rules are:
+
+- The value is one to four words of letters, digits and `_ . + / -`. Anything
+  else, including an empty value, is ignored and the name stays `ecc-fe`.
+- Only output changes. Record kinds, field names, error codes and exit codes
+  are the same under any name.
+- Nothing written to disk depends on the name: `ecc-fe.toml`, run directories,
+  logs, lint baselines and handoff manifests are identical however ECC-FE was
+  started. Text inside those files says `ecc-fe`.
+- `ecc-fe version` and `--version` report the product as `ecc-fe`.
+- Values taken from the user (paths, project and run names) are never
+  rewritten, even when they contain `ecc-fe`.
+
 ## Exit Codes
 
 | Code | Meaning |

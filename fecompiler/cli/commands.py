@@ -86,6 +86,7 @@ from fecompiler.resources import (
     tool_entry_health,
 )
 from fecompiler.utility.atomic_write import atomic_write_json
+from fecompiler.utility.program import invoked
 from fecompiler.utility.workspace_lock import workspace_lock_owner
 
 _FLOW_STEPS = step_names()
@@ -727,7 +728,7 @@ def _continue_project_run(
                 error_record(
                     "set_requires_new_run",
                     reason="parameters are fixed when a run is created",
-                    new_run_cmd="ecc-fe run --run-id <new-run> --set key=value",
+                    new_run_cmd=invoked("ecc-fe run --run-id <new-run> --set key=value"),
                 )
             ],
             exit_code=2,
@@ -989,7 +990,7 @@ def check(command_input: CommandInput, context: CommandContext) -> CommandResult
                 "required": True,
                 "path": context.project_dir,
                 "error": "project_not_found",
-                "remediation_cmd": "ecc-fe init <name>",
+                "remediation_cmd": invoked("ecc-fe init <name>"),
             }
         )
     failed = any(
@@ -1095,7 +1096,7 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
             "counts": contract.counts,
             "remediation_cmd": None
             if contract.ok
-            else "ecc-fe workspace catalog-check --json",
+            else invoked("ecc-fe workspace catalog-check --json"),
         }
     )
 
@@ -1632,7 +1633,7 @@ def resource_status(
                 "managed": True,
                 "path": None,
                 "missing_markers": [],
-                "remediation_cmd": f"ecc-fe resource install {shlex.quote(name)}",
+                "remediation_cmd": invoked("ecc-fe resource install ") + shlex.quote(name),
             }
         )
     if not records:
@@ -1641,7 +1642,7 @@ def resource_status(
                 "kind": "resource_status",
                 "status": "empty",
                 "manifest": str(resource_manifest_path()),
-                "remediation_cmd": "ecc-fe resource install --required",
+                "remediation_cmd": invoked("ecc-fe resource install --required"),
             }
         )
     return CommandResult.err(records) if failed else CommandResult.ok(records)
@@ -1756,7 +1757,7 @@ def _init_target_cmd(context: CommandContext) -> str:
     if context.workspace_mode:
         return disclosure_cmd("ecc-fe init", context.workspace_dir)
     target = context.project or context.project_dir
-    return f"ecc-fe init {shlex.quote(target)}"
+    return invoked("ecc-fe init ") + shlex.quote(target)
 
 
 def _workspace_not_found(context: CommandContext) -> CommandResult:
@@ -1910,10 +1911,10 @@ def _doctor_remediation(
     if executable:
         return None, None
     resource_commands = {
-        "slang": "ecc-fe resource install slang",
-        "verilator": "ecc-fe resource install verilator",
-        "riscv": "ecc-fe resource install riscv-toolchain",
-        "yosys": "ecc-fe resource install yosys",
+        "slang": invoked("ecc-fe resource install slang"),
+        "verilator": invoked("ecc-fe resource install verilator"),
+        "riscv": invoked("ecc-fe resource install riscv-toolchain"),
+        "yosys": invoked("ecc-fe resource install yosys"),
     }
     system_hints = {
         "cxx": "Install a host C++ compiler and ensure c++ is on PATH.",

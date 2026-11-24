@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 
 from fecompiler.resources import activate_managed_resources
+from fecompiler.utility.program import invoked, program_name
 
 _REMOVED_DIRECT_FORM = """\
 Error: the direct form `ecc-fe --design <name> --top <top> ...` has been removed.
@@ -37,7 +38,7 @@ def _run_root_cli(raw_argv: Sequence[str]) -> int:
     try:
         result = command.main(
             args=list(raw_argv),
-            prog_name="ecc-fe",
+            prog_name=program_name(),
             standalone_mode=False,
         )
     except typer.Exit as error:
@@ -83,7 +84,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         "handoff",
     }
     if _is_removed_direct_form(raw_argv, root_commands):
-        print(_REMOVED_DIRECT_FORM, file=sys.stderr, end="")
+        print(invoked(_REMOVED_DIRECT_FORM), file=sys.stderr, end="")
         return 2
     return _run_root_cli(raw_argv)
 

@@ -31,6 +31,7 @@ from fecompiler.cli.project.layout import (
     template_dir,
 )
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
+from fecompiler.utility.program import invoked
 from fecompiler.utility.workspace_lock import (
     WorkspaceBusyError,
     discard_workspace_lock,
@@ -94,7 +95,7 @@ def _require_project(context: CommandContext) -> CommandResult | None:
             error_record(
                 "project_not_found",
                 project=str(project),
-                reason="runs belong to a project created by `ecc-fe init <name>`",
+                reason=invoked("runs belong to a project created by `ecc-fe init <name>`"),
             )
         ]
     )

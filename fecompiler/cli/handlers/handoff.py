@@ -38,6 +38,7 @@ from fecompiler.tools.common.sv_module import (
     strip_sv_comments,
 )
 from fecompiler.tools.common.tool_config import config_list
+from fecompiler.utility.program import invoked
 
 HANDOFF_SCHEMA_VERSION = 1
 HANDOFF_KIND = "ecc-fe-handoff"
@@ -62,7 +63,7 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
                     error_record(
                         "workspace_not_found",
                         workspace=context.workspace_dir,
-                        remediation_cmd="ecc-fe run",
+                        remediation_cmd=invoked("ecc-fe run"),
                     )
                 ]
             )
@@ -87,7 +88,7 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
                     workspace=context.workspace_dir,
                     reason="every step must have succeeded on the current inputs",
                     blockers=blockers,
-                    remediation_cmd="ecc-fe run --resume",
+                    remediation_cmd=invoked("ecc-fe run --resume"),
                     override="--allow-incomplete",
                 )
             ]

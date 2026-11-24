@@ -78,6 +78,7 @@ from fecompiler.data.workspace import (
 )
 from fecompiler.engine.flow import EngineFlow
 from fecompiler.tools.common.rtl_inputs import prepared_inputs_current
+from fecompiler.utility.program import program_name
 from fecompiler.utility.workspace_lock import WorkspaceBusyError, workspace_lock
 
 try:
@@ -145,7 +146,7 @@ workspace_application = WorkspaceApplicationService()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ecc-fe workspace",
+        prog=f"{program_name()} workspace",
         description="Manage fecompiler workspaces with ECOS Studio CLI-compatible JSON responses.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -293,7 +294,7 @@ def _run_typer(argv: Sequence[str]) -> int:
     try:
         result = command.main(
             args=list(argv),
-            prog_name="ecc-fe workspace",
+            prog_name=f"{program_name()} workspace",
             standalone_mode=False,
         )
     except click.exceptions.Exit as exc:

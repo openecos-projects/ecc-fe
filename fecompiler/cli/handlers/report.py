@@ -19,6 +19,7 @@ from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id, resolve_
 from fecompiler.cli.core.records import error_record, failure_record, normalize_state
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
+from fecompiler.utility.program import invoked
 
 _FLOW_STEPS = step_names()
 _QOR_ARTIFACTS = {
@@ -157,7 +158,7 @@ def files(command_input: CommandInput, context: CommandContext) -> CommandResult
                 "report_files_not_found",
                 workspace=context.workspace_dir,
                 step=command_input.step,
-                remediation_cmd="ecc-fe run",
+                remediation_cmd=invoked("ecc-fe run"),
             )
         ]
     )
@@ -422,7 +423,7 @@ def lint_baseline(command_input: CommandInput, context: CommandContext) -> Comma
                     "lint_result_not_found",
                     error,
                     workspace=context.workspace_dir,
-                    remediation_cmd="ecc-fe run --to lint",
+                    remediation_cmd=invoked("ecc-fe run --to lint"),
                 )
             ]
         )
@@ -454,7 +455,7 @@ def lint_baseline(command_input: CommandInput, context: CommandContext) -> Comma
                 "path": str(destination),
                 "warnings": sum(int(entry["count"]) for entry in entries),
                 "entries": len(entries),
-                "set_cmd": f"ecc-fe param set lint.baseline {shlex.quote(setting)}",
+                "set_cmd": invoked("ecc-fe param set lint.baseline ") + shlex.quote(setting),
             }
         ]
     )

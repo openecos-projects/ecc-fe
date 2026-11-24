@@ -37,6 +37,7 @@ from fecompiler.cli.project.params import (
     run_parameter_records,
 )
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
+from fecompiler.utility.program import invoked
 
 _FLOW_STEPS = set(step_names())
 
@@ -193,7 +194,8 @@ def _fixed_run_parameters(
                 project=project,
                 reason="a project run keeps the parameters it was created with",
                 new_run_cmd=(
-                    f"ecc-fe run --project {shlex.quote(project)} "
+                    invoked("ecc-fe run --project ")
+                    + f"{shlex.quote(project)} "
                     f"--run-id <new-run> --set {schema.param}=<value>"
                 ),
             )
@@ -493,4 +495,4 @@ def _init_target_cmd(context: CommandContext) -> str:
     if context.workspace_mode:
         return disclosure_cmd("ecc-fe init", context.workspace_dir)
     target = context.project or context.project_dir
-    return f"ecc-fe init {shlex.quote(target)}"
+    return invoked("ecc-fe init ") + shlex.quote(target)
