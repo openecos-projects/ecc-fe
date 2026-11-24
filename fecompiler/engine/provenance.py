@@ -16,7 +16,11 @@ from fecompiler.utility.json import json_read
 
 
 _SCHEMA_VERSION = 1
-_COMMON_STEP_SOURCE_FILES = ("analysis/qor.py",)
+_COMMON_STEP_SOURCE_FILES = (
+    "analysis/qor.py",
+    "analysis/scoring.py",
+    "analysis/scoring_policy.json",
+)
 
 
 def build_step_provenance(

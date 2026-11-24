@@ -209,7 +209,12 @@ def compare(command_input: CommandInput, context: CommandContext) -> CommandResu
                 "run_quality": _quality(run_qor),
                 "base_score": base_score,
                 "run_score": run_score,
-                "score_delta": _delta(base_score, run_score),
+                # Scores of different scoring versions are on different scales.
+                "score_delta": (
+                    _delta(base_score, run_score)
+                    if _scoring_version(base_qor) == _scoring_version(run_qor)
+                    else None
+                ),
                 # False when the two results were produced from different
                 # inputs or configuration, so their numbers measure different things.
                 "same_inputs": (
@@ -308,6 +313,11 @@ def _comparison_key(qor: dict[str, object] | None) -> object:
 
 def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _scoring_version(qor: dict[str, object] | None) -> object:
+    score = _summary(qor).get("score")
+    return score.get("scoring_version") if isinstance(score, dict) else None
 
 
 def _delta(base: object, run: object) -> object:

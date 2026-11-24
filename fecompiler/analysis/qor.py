@@ -14,7 +14,10 @@ from pathlib import Path
 from subprocess import SubprocessError, run as run_subprocess
 from typing import Any
 
-from fecompiler.tools.common.rtl_ownership import user_rtl_ownership
+from fecompiler.allflow.steps import find_step_definition
+from fecompiler.analysis import scoring
+from fecompiler.analysis.scoring import scoring_policy
+from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, user_rtl_ownership
 from fecompiler.tools.verilator.runner import (
     effective_sim_cflags,
     effective_sim_ldflags,
@@ -430,6 +433,7 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
     ):
         return None
 
+    policy = scoring_policy()["prepare"]
     rtl_total = int(sources["rtl_total"])
     rtl_resolved = int(sources["rtl_resolved"])
     incdir_total = int(sources["include_dir_total"])
@@ -440,16 +444,19 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
         or incdir_resolved > incdir_total
     ):
         return None
-    source_earned = 20 * rtl_resolved / rtl_total
-    source_earned += 10 if incdir_total == 0 else 10 * incdir_resolved / incdir_total
+    # A design without include directories has none to resolve: full credit.
+    source_possible = policy["rtl_sources"] + policy["include_directories"]
+    source_earned = policy["rtl_sources"] * rtl_resolved / rtl_total
+    source_earned += policy["include_directories"] * (
+        1 if incdir_total == 0 else incdir_resolved / incdir_total
+    )
 
     top_required = bool(top["required"])
     top_definitions = int(top["definitions"])
     top_source_in_inputs = bool(top["source_in_inputs"])
-    top_earned = (
-        20
-        if not top_required
-        else (15 if top_definitions == 1 else 0) + (5 if top_source_in_inputs else 0)
+    top_possible = policy["top_defined_once"] + policy["top_in_inputs"]
+    top_earned = (policy["top_defined_once"] if top_definitions == 1 else 0) + (
+        policy["top_in_inputs"] if top_source_in_inputs else 0
     )
 
     interface_applicable = bool(interface["applicable"])
@@ -472,15 +479,17 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
         )
     ):
         return None
+    interface_possible = policy["interface_ports"] + policy["interface_no_extra_ports"]
+    interface_earned = 0.0
     if not interface_applicable:
-        interface_earned = 40.0
-        interface_summary = "Interface contract is not required for this workspace."
+        interface_summary = "Not evaluated: this design has no interface contract to meet."
     elif not interface_verified:
-        interface_earned = 0.0
-        interface_summary = "No expected CPU interface contract was available to verify."
+        interface_summary = (
+            "Not evaluated: no expected CPU interface contract was available to verify."
+        )
     else:
-        interface_earned = 35 * matched_ports / expected_ports
-        interface_earned += 5 if extra_ports == 0 else 0
+        interface_earned = policy["interface_ports"] * matched_ports / expected_ports
+        interface_earned += policy["interface_no_extra_ports"] if extra_ports == 0 else 0
         interface_summary = (
             f"{matched_ports} of {expected_ports} required ports matched; "
             f"{extra_ports} unexpected."
@@ -489,44 +498,46 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
     fingerprint_recorded = bool(reproducibility["input_fingerprint"])
     merged_filelist = bool(reproducibility["merged_filelist"])
     prepared_manifest = bool(reproducibility["prepared_manifest"])
-    reproducibility_earned = (
-        (5 if fingerprint_recorded else 0)
-        + (2.5 if merged_filelist else 0)
-        + (2.5 if prepared_manifest else 0)
+    reproducibility_parts = (
+        ("input_fingerprint", fingerprint_recorded),
+        ("merged_filelist", merged_filelist),
+        ("prepared_manifest", prepared_manifest),
     )
     components = [
-        _score_component(
+        scoring.component(
             "source_resolution",
             "Source resolution",
             source_earned,
-            30,
+            source_possible,
             f"{rtl_resolved} of {rtl_total} RTL sources and "
             f"{incdir_resolved} of {incdir_total} include directories resolved.",
         ),
-        _score_component(
+        scoring.component(
             "top_resolution",
             "Top resolution",
             top_earned,
-            20,
+            top_possible,
             (
-                "Top-module validation is not required for this workspace."
+                "Not evaluated: top-module validation is not required for this workspace."
                 if not top_required
                 else f"{top_definitions} matching definition found; "
                 f"source {'is' if top_source_in_inputs else 'is not'} in prepared inputs."
             ),
+            evaluated=top_required,
         ),
-        _score_component(
+        scoring.component(
             "interface_contract",
             "Interface contract",
             interface_earned,
-            40,
+            interface_possible,
             interface_summary,
+            evaluated=interface_applicable and interface_verified,
         ),
-        _score_component(
+        scoring.component(
             "reproducibility",
             "Reproducibility",
-            reproducibility_earned,
-            10,
+            sum(policy[name] for name, present in reproducibility_parts if present),
+            sum(policy[name] for name, _ in reproducibility_parts),
             (
                 f"Input snapshot {'tracked' if fingerprint_recorded else 'not tracked'}; "
                 f"normalized input manifest and file list "
@@ -534,38 +545,35 @@ def _prepare_readiness_score(value: Any) -> dict[str, Any] | None:
             ),
         ),
     ]
-    return {
-        "label": "Preparation readiness",
-        "value": _round_score(sum(component["earned"] for component in components)),
-        "maximum": 100,
-        "scoring_version": 1,
-        "components": components,
-    }
+    return scoring.score("Preparation readiness", components)
+
+
+def _rtl_lines(step: Any, workspace: dict[str, Any], *, user_owned: bool) -> int:
+    """Count the lines of the prepared RTL, all of it or the part the user owns.
+
+    A bundled core is third-party code: its user owns none of it and the
+    count is 0.
+    """
+    ownership = user_rtl_ownership(workspace)
+    owners = rtl_ownership_map(workspace)
+    if not owners:
+        # The record handed to analysis does not always name the manifest.
+        manifest = Path(step.directory).parent / "prepare_fe" / "output" / "prepared_inputs.json"
+        owners = rtl_ownership_map({**workspace, "prepared_manifest": str(manifest)})
+    lines = 0
+    for path, owner in owners.items():
+        if user_owned and owner != ownership:
+            continue
+        try:
+            with open(path, "rb") as stream:
+                lines += sum(1 for _ in stream)
+        except OSError:
+            continue
+    return lines
 
 
 def _valid_readiness_counts(value: dict[str, Any], fields: tuple[str, ...]) -> bool:
     return bool(value) and all(_is_count(value.get(field)) for field in fields)
-
-
-def _score_component(
-    component_id: str,
-    label: str,
-    earned: float,
-    possible: float,
-    summary: str,
-) -> dict[str, Any]:
-    return {
-        "id": component_id,
-        "label": label,
-        "earned": _round_score(earned),
-        "possible": possible,
-        "summary": summary,
-    }
-
-
-def _round_score(value: float) -> int | float:
-    rounded = round(float(value), 1)
-    return int(rounded) if rounded.is_integer() else rounded
 
 
 def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -746,48 +754,42 @@ def _rtl_review_score(
     precheck: dict[str, Any],
     precheck_state: str,
 ) -> dict[str, Any] | None:
+    if not _valid_count_fields(summary, ("actionable_errors", "actionable_warnings")):
+        return None
+    policy = scoring_policy()["review"]
     thresholds = _record(precheck.get("risk_thresholds"))
-    structural_fields = ("max_fanout", "max_fanin", "max_comb_depth")
-    if (
-        not _valid_count_fields(
-            summary, ("actionable_errors", "actionable_warnings")
-        )
-        or not _valid_count_fields(structural, structural_fields)
-        or not _valid_count_fields(thresholds, structural_fields)
-        or any(int(thresholds[field]) <= 0 for field in structural_fields)
-    ):
+    headroom_parts = tuple(policy["structural_headroom"].items())
+    structural_fields = tuple(field for field, _ in headroom_parts)
+    # The precheck is evaluated when Yosys ran: it then passed or failed.
+    precheck_evaluated = precheck_state in {"pass", "failed"}
+    headroom_available = (
+        precheck_state == "pass"
+        and _valid_count_fields(structural, structural_fields)
+        and _valid_count_fields(thresholds, structural_fields)
+        and all(int(thresholds[field]) > 0 for field in structural_fields)
+    )
+    if precheck_state == "pass" and not headroom_available:
         return None
 
     errors = int(summary["actionable_errors"])
     warnings = int(summary["actionable_warnings"])
-    precheck_earned = 30 if precheck_state == "pass" else 0
-    error_earned = max(0, 30 - errors * 10)
-    warning_earned = max(0, 15 - warnings * 3)
-
-    headroom_parts = (
-        ("max_fanout", 8.3),
-        ("max_fanin", 8.3),
-        ("max_comb_depth", 8.4),
-    )
-    headroom_available = precheck_state == "pass"
+    lines = int(summary["total_lines"]) if _is_count(summary.get("total_lines")) else 0
+    headroom_possible = sum(possible for _, possible in headroom_parts)
     headroom_earned = (
         sum(
             possible
-            * min(
-                1.0,
-                int(thresholds[field]) / max(int(structural[field]), 1),
-            )
+            * min(1.0, int(thresholds[field]) / max(int(structural[field]), 1))
             for field, possible in headroom_parts
         )
         if headroom_available
         else 0
     )
     components = [
-        _score_component(
+        scoring.component(
             "structural_precheck",
             "Structural precheck",
-            precheck_earned,
-            30,
+            policy["structural_precheck"] if precheck_state == "pass" else 0,
+            policy["structural_precheck"],
             (
                 (
                     "Yosys completed the design structural precheck."
@@ -795,45 +797,47 @@ def _rtl_review_score(
                     else "Yosys completed the CPU-only structural precheck."
                 )
                 if precheck_state == "pass"
-                else f"Yosys precheck state is {precheck_state}."
+                else (
+                    "Yosys reported a structural problem."
+                    if precheck_state == "failed"
+                    else "Not evaluated: the Yosys structural precheck did not run."
+                )
             ),
+            evaluated=precheck_evaluated,
         ),
-        _score_component(
+        scoring.component(
             "actionable_errors",
             "Actionable errors",
-            error_earned,
-            30,
+            max(0, policy["actionable_errors"] - errors * policy["points_per_error"]),
+            policy["actionable_errors"],
             f"{errors} actionable RTL error{'s' if errors != 1 else ''} reported.",
         ),
-        _score_component(
+        scoring.component(
             "warning_hygiene",
             "Warning hygiene",
-            warning_earned,
-            15,
-            f"{warnings} actionable RTL warning{'s' if warnings != 1 else ''} reported.",
+            scoring.density_credit(
+                warnings, lines, policy["warning_hygiene"], policy["warnings_per_kloc_for_zero"]
+            ),
+            policy["warning_hygiene"],
+            scoring.density_summary(warnings, lines, "actionable RTL warning"),
         ),
-        _score_component(
+        scoring.component(
             "structural_headroom",
             "Structural headroom",
             headroom_earned,
-            25,
+            headroom_possible,
             (
                 f"Fanout {structural['max_fanout']}/{thresholds['max_fanout']}, "
                 f"fanin {structural['max_fanin']}/{thresholds['max_fanin']}, "
                 f"depth {structural['max_comb_depth']}/{thresholds['max_comb_depth']} "
-                "(measured/target)."
+                "(measured/target); clock and reset nets are not counted as fanout."
                 if headroom_available
-                else "Structural headroom is unavailable because the precheck did not pass."
+                else "Not evaluated: structural measurements need a passing Yosys precheck."
             ),
+            evaluated=headroom_available,
         ),
     ]
-    return {
-        "label": "RTL review quality",
-        "value": _round_score(sum(component["earned"] for component in components)),
-        "maximum": 100,
-        "scoring_version": 1,
-        "components": components,
-    }
+    return scoring.score("RTL review quality", components)
 
 
 def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -938,7 +942,9 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
             report, "elaboration_diagnostic", "report/elab_summary.json"
         )
     )
-    result.score = _elaboration_score(report, summary)
+    result.score = _elaboration_score(
+        report, summary, _rtl_lines(step, workspace, user_owned=False)
+    )
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -949,7 +955,7 @@ def _elab_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
 
 
 def _elaboration_score(
-    report: dict[str, Any], summary: dict[str, Any]
+    report: dict[str, Any], summary: dict[str, Any], lines: int
 ) -> dict[str, Any] | None:
     compiler = _record(report.get("compiler"))
     status = str(report.get("status", "")).strip().lower()
@@ -985,35 +991,44 @@ def _elaboration_score(
     if status == "fail" and returncode == 0 and errors == 0:
         return None
 
-    compiler_earned = 25 if compiler_passed else 0
-    error_earned = max(0, 30 - errors * 10)
-    hierarchy_earned = max(0, 20 - unresolved * 5) if compiler_passed else 0
-    top_earned = 15 if compiler_passed and summary["top_found"] is True else 0
-    warning_earned = max(0, 10 - warnings * 2)
+    policy = scoring_policy()["elab"]
+    compiler_earned = policy["compiler_execution"] if compiler_passed else 0
+    error_earned = max(0, policy["diagnostic_errors"] - errors * policy["points_per_error"])
+    hierarchy_earned = (
+        max(0, policy["hierarchy_closure"] - unresolved * policy["points_per_unresolved_module"])
+        if compiler_passed
+        else 0
+    )
+    top_earned = (
+        policy["top_resolution"] if compiler_passed and summary["top_found"] is True else 0
+    )
+    warning_earned = scoring.density_credit(
+        warnings, lines, policy["warning_hygiene"], policy["warnings_per_kloc_for_zero"]
+    )
     components = [
-        _score_component(
+        scoring.component(
             "compiler_execution",
             "Compiler execution",
             compiler_earned,
-            25,
+            policy["compiler_execution"],
             (
                 "Slang completed an authoritative full elaboration."
                 if compiler_passed
                 else f"Slang full elaboration failed with return code {returncode}."
             ),
         ),
-        _score_component(
+        scoring.component(
             "diagnostic_errors",
             "Diagnostic errors",
             error_earned,
-            30,
+            policy["diagnostic_errors"],
             f"{errors} compiler error{'s' if errors != 1 else ''} reported.",
         ),
-        _score_component(
+        scoring.component(
             "hierarchy_closure",
             "Hierarchy closure",
             hierarchy_earned,
-            20,
+            policy["hierarchy_closure"],
             (
                 f"{unresolved} unresolved module{'s' if unresolved != 1 else ''} "
                 "in the authoritative compiler result."
@@ -1021,32 +1036,26 @@ def _elaboration_score(
                 else "Hierarchy closure is unproven because full elaboration did not pass."
             ),
         ),
-        _score_component(
+        scoring.component(
             "top_resolution",
             "Top resolution",
             top_earned,
-            15,
+            policy["top_resolution"],
             (
                 f"Top module {summary.get('top_module') or '<unknown>'} resolved by Slang."
                 if compiler_passed and summary["top_found"] is True
                 else "Top resolution is unproven by a successful full elaboration."
             ),
         ),
-        _score_component(
+        scoring.component(
             "warning_hygiene",
             "Warning hygiene",
             warning_earned,
-            10,
-            f"{warnings} compiler warning{'s' if warnings != 1 else ''} reported.",
+            policy["warning_hygiene"],
+            scoring.density_summary(warnings, lines, "compiler warning"),
         ),
     ]
-    return {
-        "label": "Elaboration quality",
-        "value": _round_score(sum(component["earned"] for component in components)),
-        "maximum": 100,
-        "scoring_version": 1,
-        "components": components,
-    }
+    return scoring.score("Elaboration quality", components)
 
 
 def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -1131,7 +1140,9 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in diagnostics
     )
-    result.score = _lint_score(report, summary, workspace)
+    result.score = _lint_score(
+        report, summary, workspace, _rtl_lines(step, workspace, user_owned=True)
+    )
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(
@@ -1145,7 +1156,7 @@ def _lint_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
 
 
 def _lint_score(
-    report: dict[str, Any], summary: dict[str, Any], workspace: dict[str, Any]
+    report: dict[str, Any], summary: dict[str, Any], workspace: dict[str, Any], lines: int
 ) -> dict[str, Any] | None:
     raw_diagnostics = report.get("diagnostics")
     diagnostics = _records(raw_diagnostics)
@@ -1216,51 +1227,60 @@ def _lint_score(
             if str(item["code"]).strip()
         }
     )
-    execution_earned = 25 if analysis_completed else 0
-    error_earned = max(0, 40 - owned_errors * 20) if analysis_completed else 0
-    warning_earned = max(0, 25 - owned_warnings * 2.5) if analysis_completed else 0
-    rule_earned = max(0, 10 - rule_count * 2) if analysis_completed else 0
+    policy = scoring_policy()["lint"]
+    execution_earned = policy["analysis_execution"] if analysis_completed else 0
+    error_earned = (
+        max(0, policy["errors"] - owned_errors * policy["points_per_error"])
+        if analysis_completed
+        else 0
+    )
+    warning_earned = (
+        scoring.density_credit(
+            owned_warnings, lines, policy["warnings"], policy["warnings_per_kloc_for_zero"]
+        )
+        if analysis_completed
+        else 0
+    )
+    rule_earned = (
+        max(0, policy["rule_breadth"] - rule_count * policy["points_per_rule"])
+        if analysis_completed
+        else 0
+    )
     components = [
-        _score_component(
+        scoring.component(
             "analysis_execution",
             "Analysis execution",
             execution_earned,
-            25,
+            policy["analysis_execution"],
             (
                 "Verilator completed and produced classified lint diagnostics."
                 if analysis_completed
                 else f"Verilator analysis did not complete; {ownership_label} cleanliness is unproven."
             ),
         ),
-        _score_component(
+        scoring.component(
             f"{ownership}_errors",
             f"{ownership_label} errors",
             error_earned,
-            40,
+            policy["errors"],
             f"{owned_errors} actionable {ownership_label} error{'s' if owned_errors != 1 else ''} reported.",
         ),
-        _score_component(
+        scoring.component(
             f"{ownership}_warnings",
             f"{ownership_label} warnings",
             warning_earned,
-            25,
-            f"{owned_warnings} actionable {ownership_label} warning{'s' if owned_warnings != 1 else ''} reported.",
+            policy["warnings"],
+            scoring.density_summary(owned_warnings, lines, f"actionable {ownership_label} warning"),
         ),
-        _score_component(
+        scoring.component(
             f"{ownership}_rule_breadth",
             f"{ownership_label} rule breadth",
             rule_earned,
-            10,
+            policy["rule_breadth"],
             f"{rule_count} distinct lint rule{'s' if rule_count != 1 else ''} affecting {ownership_label}-owned RTL.",
         ),
     ]
-    return {
-        "label": f"{ownership_label} lint quality",
-        "value": _round_score(sum(component["earned"] for component in components)),
-        "maximum": 100,
-        "scoring_version": 1,
-        "components": components,
-    }
+    return scoring.score(f"{ownership_label} lint quality", components)
 
 
 def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -1498,7 +1518,6 @@ def _simulation_score(
 ) -> dict[str, Any] | None:
     suite = report.get("suite")
     run_id = report.get("run_id")
-    regression = report.get("regression")
     case_names = [str(item.get("name", "")) for item in cases]
     if (
         report.get("schema_version") != 1
@@ -1509,14 +1528,12 @@ def _simulation_score(
         or not cases
         or len(set(case_names)) != len(case_names)
         or not all(_valid_scored_sim_case(item, suite, run_id) for item in cases)
-        or not _valid_sim_regression(regression, cases)
     ):
         return None
 
+    policy = scoring_policy()["sim"]
     total = len(cases)
     passed = sum(item["ok"] is True for item in cases)
-    pass_rate = passed / total
-    case_earned = 50 * pass_rate
 
     difftest_cases = [
         _record(_record(item["metrics"]).get("difftest"))
@@ -1526,138 +1543,44 @@ def _simulation_score(
     difftest_passed = sum(
         str(item.get("status", "")).lower() == "passed" for item in difftest_cases
     )
-    if difftest_cases:
-        difftest_earned = 20 * difftest_passed / len(difftest_cases)
-        difftest_summary = (
-            f"{difftest_passed} of {len(difftest_cases)} Difftest-enabled cases "
-            "matched the architectural reference."
-        )
-    else:
-        difftest_earned = 10 * pass_rate
-        difftest_summary = (
-            "Difftest was not enabled; half credit reflects self-checking test outcomes only."
-        )
-
     measured_cases = sum(
         item["ok"] is True and _is_count(_record(item["metrics"]).get("cycles"))
         for item in cases
     )
-    telemetry_earned = 15 * measured_cases / total
-
-    regression_record = _record(regression)
-    has_baseline = regression_record["has_baseline"] is True
-    new_failures = _string_list(regression_record.get("new_failures"))
-    removed_cases = _string_list(regression_record.get("removed"))
-    if has_baseline:
-        regression_earned = 10 if not new_failures and not removed_cases else 0
-        regression_summary = (
-            f"{len(new_failures)} new failures and {len(removed_cases)} removed cases "
-            "relative to the previous run."
-        )
-    else:
-        regression_earned = 5 if passed == total else 0
-        regression_summary = (
-            "This run establishes the first passing baseline; stability is not proven yet."
-            if passed == total
-            else "A passing regression baseline was not established."
-        )
-
-    cycle_changes = _records(regression_record.get("cycle_changes"))
-    incomparable_cases = {
-        *_string_list(regression_record.get("new_failures")),
-        *_string_list(regression_record.get("persistent_failures")),
-        *_string_list(regression_record.get("fixed")),
-    }
-    added_cases = set(_string_list(regression_record.get("added")))
-    comparable_cycle_changes = [
-        item
-        for item in cycle_changes
-        if item.get("name") not in incomparable_cases
-        and item.get("name") not in added_cases
-        and item.get("delta_percent") is not None
-    ]
-    eligible_cycle_cases = {
-        str(item["name"])
-        for item in cases
-        if item["ok"] is True
-        and item["name"] not in incomparable_cases
-        and item["name"] not in added_cases
-    }
-    if has_baseline and comparable_cycle_changes:
-        positive_changes = [
-            float(item["delta_percent"])
-            for item in comparable_cycle_changes
-            if float(item["delta_percent"]) > 0
-        ]
-        largest_increase = max(positive_changes, default=0.0)
-        coverage = min(
-            1.0,
-            len(comparable_cycle_changes) / len(eligible_cycle_cases),
-        )
-        cycle_earned = max(0, 5 - min(largest_increase, 10) * 0.5) * coverage
-        cycle_summary = (
-            f"Largest measured cycle increase versus the previous run: {largest_increase:.1f}%."
-        )
-        if coverage < 1:
-            cycle_summary += (
-                f" Comparable cycle coverage: {len(comparable_cycle_changes)} of "
-                f"{len(eligible_cycle_cases)} eligible cases."
-            )
-    elif has_baseline:
-        cycle_earned = 0
-        cycle_summary = "No comparable cycle measurements were available in the baseline."
-    else:
-        cycle_earned = 2.5 if passed == total and measured_cases == total else 0
-        cycle_summary = (
-            "Cycle stability will be scored after a comparable rerun."
-            if cycle_earned
-            else "A passing run with complete cycle telemetry is required for a baseline."
-        )
-
+    # The score describes this run only. How it compares with an earlier run
+    # is reported under ``regression`` and plays no part here.
     components = [
-        _score_component(
+        scoring.component(
             "required_cases",
             "Required cases",
-            case_earned,
-            50,
+            policy["required_cases"] * passed / total,
+            policy["required_cases"],
             f"{passed} of {total} required simulation cases passed.",
         ),
-        _score_component(
+        scoring.component(
             "difftest_confidence",
             "Difftest confidence",
-            difftest_earned,
-            20,
-            difftest_summary,
+            policy["difftest_confidence"] * difftest_passed / len(difftest_cases)
+            if difftest_cases
+            else 0,
+            policy["difftest_confidence"],
+            (
+                f"{difftest_passed} of {len(difftest_cases)} Difftest-enabled cases "
+                "matched the architectural reference."
+                if difftest_cases
+                else "Not evaluated: Difftest was not enabled for this run."
+            ),
+            evaluated=bool(difftest_cases),
         ),
-        _score_component(
+        scoring.component(
             "cycle_telemetry",
             "Cycle telemetry",
-            telemetry_earned,
-            15,
+            policy["cycle_telemetry"] * measured_cases / total,
+            policy["cycle_telemetry"],
             f"{measured_cases} of {total} cases passed and reported a cycle count.",
         ),
-        _score_component(
-            "regression_stability",
-            "Regression stability",
-            regression_earned,
-            10,
-            regression_summary,
-        ),
-        _score_component(
-            "cycle_stability",
-            "Cycle stability",
-            cycle_earned,
-            5,
-            cycle_summary,
-        ),
     ]
-    return {
-        "label": "Simulation verification",
-        "value": _round_score(sum(component["earned"] for component in components)),
-        "maximum": 100,
-        "scoring_version": 1,
-        "components": components,
-    }
+    return scoring.score("Simulation verification", components)
 
 
 def _metric(
@@ -2962,83 +2885,6 @@ def _valid_scored_sim_case(value: dict[str, Any], suite: str, run_id: str) -> bo
     )
 
 
-def _valid_sim_regression(value: Any, cases: list[dict[str, Any]]) -> bool:
-    if not isinstance(value, dict) or not isinstance(value.get("has_baseline"), bool):
-        return False
-    baseline_run_id = value.get("baseline_run_id")
-    list_fields = ("new_failures", "persistent_failures", "fixed", "added", "removed")
-    if not isinstance(baseline_run_id, str) or any(
-        not isinstance(value.get(field), list)
-        or not all(isinstance(item, str) and bool(item) for item in value[field])
-        or len(set(value[field])) != len(value[field])
-        for field in list_fields
-    ):
-        return False
-
-    by_name = {str(item["name"]): item for item in cases}
-    failed_names = {name for name, item in by_name.items() if item["ok"] is False}
-    passed_names = set(by_name) - failed_names
-    new_failures = set(value["new_failures"])
-    persistent_failures = set(value["persistent_failures"])
-    if (
-        (
-            value["has_baseline"] is True
-            and (
-                new_failures | persistent_failures != failed_names
-                or not new_failures.isdisjoint(persistent_failures)
-            )
-        )
-        or not set(value["fixed"]).issubset(passed_names)
-        or not set(value["added"]).issubset(by_name)
-    ):
-        return False
-
-    raw_changes = value.get("cycle_changes")
-    changes = _records(raw_changes)
-    if not isinstance(raw_changes, list) or len(changes) != len(raw_changes):
-        return False
-    change_names: set[str] = set()
-    for item in changes:
-        name = item.get("name")
-        image_sha256 = item.get("image_sha256")
-        previous = item.get("previous")
-        current = item.get("current")
-        delta = item.get("delta")
-        delta_percent = item.get("delta_percent")
-        if (
-            not isinstance(name, str)
-            or name not in by_name
-            or name in change_names
-            or not isinstance(image_sha256, str)
-            or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None
-            or image_sha256 != by_name[name].get("image_sha256")
-            or not _is_count(previous)
-            or not _is_count(current)
-            or not isinstance(delta, int)
-            or isinstance(delta, bool)
-        ):
-            return False
-        expected_percent = (current - previous) / previous * 100 if previous else None
-        if (
-            current != _record(by_name[name].get("metrics")).get("cycles")
-            or delta != current - previous
-            or (expected_percent is None and delta_percent is not None)
-            or (
-                expected_percent is not None
-                and (
-                    not _is_number(delta_percent)
-                    or not math.isclose(float(delta_percent), expected_percent)
-                )
-            )
-        ):
-            return False
-        change_names.add(name)
-
-    if value["has_baseline"] is False:
-        return not baseline_run_id and all(not value[field] for field in list_fields) and not changes
-    return bool(baseline_run_id)
-
-
 def _valid_sim_metrics(value: Any) -> bool:
     if value is None:
         return True
@@ -3174,13 +3020,7 @@ _STEP_BUILDERS: dict[str, Callable[[Any, dict[str, Any]], _QorResult]] = {
 
 
 def _step_qor_source_path(step: Any) -> Path | None:
-    step_name = str(step.name)
-    if step_name == "prepare":
-        return Path(step.report["step"])
-    report_name = {
-        "review": "rtl_review.json",
-        "elab": "elab_summary.json",
-        "lint": "lint_summary.json",
-        "sim": "cases.json",
-    }.get(step_name)
-    return Path(step.report["dir"]) / report_name if report_name else None
+    definition = find_step_definition(str(step.name))
+    if definition is None:
+        return None
+    return Path(step.report["dir"]) / definition.qor_report

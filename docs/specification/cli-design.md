@@ -623,6 +623,9 @@ hotspots, but does not synthesize an undefined cross-step total or backend
 physical-design area, timing, and power metrics. `--output` writes the aggregate
 as JSON.
 
+How state, quality and score relate, and how each score is put together, is
+specified in [quality-scoring.md](quality-scoring.md).
+
 `report files` recursively lists regular, non-symlink files in the selected
 step `report/` and `analysis/` directories. Each record includes its section,
 absolute path, workspace-relative path, byte size, format, and a shell-safe

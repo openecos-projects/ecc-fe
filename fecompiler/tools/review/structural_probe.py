@@ -1102,13 +1102,25 @@ def _module_graph_summary(module_name: str, module: dict[str, Any]) -> dict[str,
         cell_outputs[cell_name] = outputs
         if _is_sequential_cell(cell_type):
             seq_cells.add(cell_name)
-        else:
+        elif cell_type.startswith("$"):
             comb_cells.add(cell_name)
+        # Anything else is an instance of another module. What happens between
+        # its inputs and outputs is that module's business, so it is neither a
+        # combinational cell here nor part of a path or a cycle through it.
 
     max_fanout = 0
     high_fanout: list[dict[str, Any]] = []
     for bit, sinks in consumers.items():
-        fanout = len([sink for sink, _ in sinks if not sink.startswith("port:")])
+        # A clock or reset reaches every register by design; counting those
+        # pins would make the register count the fanout of every module.
+        fanout = len(
+            [
+                sink
+                for sink, port in sinks
+                if not sink.startswith("port:")
+                and not (sink in seq_cells and port.lstrip("\\").upper() in _CLOCK_RESET_PORTS)
+            ]
+        )
         if fanout > max_fanout:
             max_fanout = fanout
         if fanout >= _HIGH_FANOUT_THRESHOLD:
@@ -1235,6 +1247,23 @@ def _infer_port_direction(cell_type: str, port: str) -> str:
     if name in {"Y", "Q", "O", "OUT", "C"}:
         return "output"
     return "input"
+
+
+# Clock, reset and set pins of Yosys register and memory cells.
+_CLOCK_RESET_PORTS = frozenset(
+    {
+        "CLK",
+        "ARST",
+        "SRST",
+        "ALOAD",
+        "SET",
+        "CLR",
+        "RD_CLK",
+        "WR_CLK",
+        "RD_ARST",
+        "RD_SRST",
+    }
+)
 
 
 def _is_sequential_cell(cell_type: str) -> bool:
@@ -1729,11 +1758,15 @@ def _issues_from_probe(
         ))
 
     if metrics.get("comb_cycle_modules"):
+        # Cells are whole words here, so a bus whose bits feed one another
+        # looks like a loop. It is a place to look, not a finding: a real
+        # loop is reported by Yosys `check` as a diagnostic of its own.
         issues.append(_issue(
-            "error",
+            "warning",
             "combinational",
             "Combinational cycle candidate in structural graph",
-            "The Yosys netlist graph could not be fully topologically ordered.",
+            "The word-level netlist graph could not be fully ordered. Bits of one "
+            "bus feeding other bits of it look the same as a loop at this level.",
             evidence={"modules": metrics.get("comb_cycle_modules")},
             recommendation="Check ready/valid feedback and combinational dependencies in the reported modules.",
         ))

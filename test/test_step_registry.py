@@ -124,7 +124,12 @@ def test_tool_identity_follows_the_registry() -> None:
         assert set(identity["executables"]) == set(definition.executables)
         assert set(identity["runner_sources"]) == {
             f"fecompiler/{relative}"
-            for relative in (*definition.source_files, "analysis/qor.py")
+            for relative in (
+                *definition.source_files,
+                "analysis/qor.py",
+                "analysis/scoring.py",
+                "analysis/scoring_policy.json",
+            )
         }
 
 
