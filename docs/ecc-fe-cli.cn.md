@@ -334,7 +334,10 @@ CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修�
 几点说明：
 
 - 仿真程序是增量构建的：编译参数和源文件列表没变时，只重编变了的部分。
-- 整套 cpu-tests 的时间主要花在编译 35 个测试程序上，它们现在并行编译。
+- 整套 cpu-tests 的时间主要花在编译 35 个测试程序上。它们并行编译，并且没变的不再
+  重编：程序源文件、公共运行库、编译选项、编译器都没变时直接用上次的镜像，
+  `report/build_programs.log.txt` 里记为 `up to date`。想强制全部重编，删掉
+  `sim_verilator/output/cases/` 即可。
 - 不需要看波形时把 `sim.dump_waveform` 设为 `false`：整套 cpu-tests 的波形约 500 MB。
 - 用例运行参数里显式写了 `--wave <文件>` 的，始终照写。
 - 波形只有 VCD 格式：SoC 外壳的 C++ 驱动只支持 VCD。

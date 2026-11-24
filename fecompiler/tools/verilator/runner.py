@@ -24,6 +24,7 @@ from fecompiler.tools.common.rtl_inputs import (
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 
+from fecompiler.tools.verilator import program_build
 from fecompiler.tools.verilator.build_stamp import (
     record_build,
     same_command,
@@ -1284,11 +1285,17 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         out_dir = out_dir_of(src)
         return out_dir / f".session_{src.stem}" if jobs > 1 else out_dir
 
+    # What every program depends on is the same for all of them: hash it once.
+    shared = program_build.shared_inputs(build_script, env)
+
     def build(src: Path) -> tuple[list[str], Path, bool]:
         name = src.stem
         out_dir = out_dir_of(src)
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = _build_program_command(build_script, src, name, out_dir)
+        img = out_dir / f"{name}.soc.bin"
+        if program_build.is_current(img, cmd, src, shared):
+            return [f"[build_program] name={name} up to date src={src}"], img, True
         try:
             result = run_tool(
                 cmd,
@@ -1310,9 +1317,11 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         report = [f"[build_program] name={name} rc={rc} src={src}"]
         if output:
             report.append(output)
-        img = out_dir / f"{name}.soc.bin"
         built = rc == 0 and img.exists()
-        if not built:
+        if built:
+            program_build.record(img, cmd, src, shared)
+        else:
+            program_build.record_path(img).unlink(missing_ok=True)
             report.append(f"[build_program] missing image: {img}")
         return report, img, built
 
