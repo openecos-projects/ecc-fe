@@ -169,6 +169,14 @@ class HandoffInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class ReportExportInput(CommandInput):
+    export_format: str = ""
+    output_path: str | None = None
+    base_dir: str | None = None
+    everything: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class FlowShowInput(CommandInput):
     step: str = ""
 

@@ -27,7 +27,7 @@ ecc-fe config
 ecc-fe resource list|status|install|update|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
-ecc-fe report qor|files|compare|lint-baseline
+ecc-fe report qor|files|compare|lint-baseline|export
 ecc-fe runs list|delete
 ecc-fe flow list|show
 ecc-fe handoff
@@ -650,6 +650,45 @@ record per metric whose value differs (`--all` includes the unchanged ones).
 The command exits `0` when the comparison was made. With
 `--fail-on-regression` it exits `1` when `regressed` is not zero. A run that
 does not exist is `run_not_found`.
+
+### CI Export
+
+`report export --format sarif|junit [-o file]` writes a result the flow has
+already produced in a format CI systems read. Nothing is run again, and the
+command exits `0` whatever the result says; the verdict of the flow is the
+exit status of `run`.
+
+| Format | Made from | Default file |
+| --- | --- | --- |
+| `sarif` | the diagnostics of `lint` (`lint_summary.json`) | `lint.sarif` |
+| `junit` | the cases of `sim` (`cases.json`) | `sim.junit.xml` |
+
+It writes one `report_export` record: `format`, `step`, `state` (of that
+step), `path`, `bytes`, and for SARIF `results`, `errors`, `warnings`,
+`left_out`, `base_dir`; for JUnit `tests`, `failures`, `errors`.
+
+SARIF is version 2.1.0 with one run whose tool is Verilator. Each diagnostic
+is a result with `ruleId`, `level` (`error` or `warning`), the message, and a
+location with line and column when they are known. A file below `--base-dir`
+(default: the current directory) is written relative to it under the base id
+`SRCROOT`; any other file keeps an absolute `file:` URI. By default the log
+carries the diagnostics in the user's own sources and every error; `--all`
+adds warnings in sources the user does not own, and `left_out` counts the
+ones not carried. With a lint baseline, `baselineState` is `unchanged` for a
+known warning and `new` otherwise.
+
+JUnit has one `testsuite` named after the suite and one `testcase` per case,
+with `classname` `<design>.<suite>`. A case that did not pass has a `failure`
+whose `type` and `message` are the failure kind and message of the case and
+whose text is the first error and the end of its log. When the step failed
+and no case did, for example because a build failed before any case ran, one
+`testcase` named `sim` carries an `error`, so that a report without cases is
+not read as a pass. Durations are not recorded per case and are not written.
+
+| Error | When |
+| --- | --- |
+| `unknown_export_format` | `--format` is not `sarif` or `junit`; exit status `2`. |
+| `lint_result_not_found` / `sim_result_not_found` | The step has no report to export; `remediation_cmd` runs the flow up to it. |
 
 ## Lint And Elaboration Settings
 

@@ -25,6 +25,7 @@ from fecompiler.cli.core.inputs import (
     ParamShowInput,
     ParamUnsetInput,
     ReportCompareInput,
+    ReportExportInput,
     ReportFilesInput,
     ReportLintBaselineInput,
     ReportQorInput,
@@ -945,6 +946,61 @@ def build_app() -> typer.Typer:
                 fail_on_regression=fail_on_regression,
             ),
             report_handlers.compare,
+        )
+
+    @report_app.command(
+        "export",
+        help="Write lint diagnostics as SARIF, or simulation cases as JUnit XML, for CI.",
+    )
+    def report_export_command(
+        export_format: Annotated[
+            str,
+            typer.Option("--format", "-f", help="sarif (lint) or junit (sim)"),
+        ],
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        output_path: Annotated[
+            str | None,
+            typer.Option(
+                "--output", "-o", help="File to write (default: lint.sarif or sim.junit.xml)"
+            ),
+        ] = None,
+        base_dir: Annotated[
+            str | None,
+            typer.Option(
+                "--base-dir",
+                help="SARIF: write file paths relative to this directory, "
+                "normally the repository root (default: the current directory)",
+            ),
+        ] = None,
+        everything: Annotated[
+            bool,
+            typer.Option(
+                "--all",
+                help="SARIF: include warnings in sources that are not yours, "
+                "such as the SoC harness",
+            ),
+        ] = False,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "report.export",
+            ReportExportInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                export_format=export_format,
+                output_path=output_path,
+                base_dir=base_dir,
+                everything=everything,
+            ),
+            report_handlers.export,
         )
 
     @report_app.command(
