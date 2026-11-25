@@ -126,7 +126,11 @@ def test_tool_identity_follows_the_registry() -> None:
             f"fecompiler/{relative}"
             for relative in (
                 *definition.source_files,
-                "analysis/qor.py",
+                f"analysis/qor/{definition.name}.py",
+                "analysis/qor/__init__.py",
+                "analysis/qor/common.py",
+                "analysis/qor/fingerprint.py",
+                "analysis/qor/store.py",
                 "analysis/scoring.py",
                 "analysis/scoring_policy.json",
             )
@@ -221,3 +225,21 @@ def test_sim_run_setup_forces_a_rerun_only_for_a_named_suite(monkeypatch) -> Non
         "coremark-options",
         ("CoreMark", "selected", ["add"]),
     ]
+
+
+def test_every_step_has_a_qor_module_and_the_package_has_no_other() -> None:
+    package = Path(provenance.__file__).parents[1] / "analysis" / "qor"
+    shared = {"__init__", "common", "fingerprint", "store"}
+
+    assert {path.stem for path in package.glob("*.py")} == shared | set(step_names())
+    for name in step_names():
+        assert (package.parent.parent / provenance.step_qor_source_file(name)).is_file()
+
+
+def test_no_source_named_in_a_signature_is_missing() -> None:
+    root = Path(provenance.__file__).parents[1]
+    for definition in step_definitions():
+        identity = provenance._tool_identity(definition.name, definition.tool)
+        missing = [name for name, digest in identity["runner_sources"].items() if not digest]
+        assert missing == [], f"{definition.name}: {missing}"
+        assert all((root.parent / name).is_file() for name in identity["runner_sources"])

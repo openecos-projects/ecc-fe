@@ -511,7 +511,11 @@ def test_successful_step_records_reproducible_provenance(tmp_path):
     assert len(provenance["config_fingerprint"]) == 64
     assert len(provenance["tool_fingerprint"]) == 64
     assert len(provenance["output_fingerprint"]) == 64
-    assert "fecompiler/analysis/qor.py" in provenance["tools"]["runner_sources"]
+    sources = provenance["tools"]["runner_sources"]
+    assert "fecompiler/analysis/qor/store.py" in sources
+    # A step is tied to its own QoR module, not to those of the other steps.
+    assert f"fecompiler/analysis/qor/{FIRST_STEP}.py" in sources
+    assert not [name for name in sources if name.endswith("/qor/sim.py")]
     assert provenance["started_at"]
     assert provenance["finished_at"]
     assert engine.get_step("review", "fe")["state"] == StateEnum.Unstart.value

@@ -17,11 +17,21 @@ from fecompiler.utility.json import json_read
 
 
 _SCHEMA_VERSION = 1
+# What every step's quality records are built with. The step's own QoR
+# module (``analysis/qor/<step>.py``) is added to these.
 _COMMON_STEP_SOURCE_FILES = (
-    "analysis/qor.py",
+    "analysis/qor/__init__.py",
+    "analysis/qor/common.py",
+    "analysis/qor/fingerprint.py",
+    "analysis/qor/store.py",
     "analysis/scoring.py",
     "analysis/scoring_policy.json",
 )
+
+
+def step_qor_source_file(step_name: str) -> str:
+    """The module that judges and scores one step, relative to the package."""
+    return f"analysis/qor/{step_name}.py"
 
 
 def build_step_provenance(
@@ -158,6 +168,7 @@ def _tool_identity(step_name: str, tool: str) -> dict[str, Any]:
         root / "fecompiler" / relative
         for relative in (
             *(definition.source_files if definition else ()),
+            *((step_qor_source_file(step_name),) if definition else ()),
             *_COMMON_STEP_SOURCE_FILES,
         )
     ]

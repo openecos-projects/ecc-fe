@@ -348,7 +348,8 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 注册表里 `prepares_inputs` 标出产生"已准备输入"的那一步（prepare），其余步骤在输入
 过期时会先自动重跑它。
 新增一个步骤需要：在注册表加一条定义，在 `allflow/profile.py` 把它列入
-相应 profile，在 `analysis/qor.py` 提供对应的 QoR 构建函数，并把它的处理模块写进
+相应 profile，在 `analysis/qor/<步骤名>.py` 提供对应的 QoR 构建函数（并登记到
+`analysis/qor/store.py` 的 `_STEP_BUILDERS`），并把它的处理模块写进
 `ecc-fe.spec` 的 `HIDDENIMPORTS`（处理模块按名字导入，打包时不会被自动发现；
 `test/test_packaging_handlers.py` 会检查这一点）。
 
@@ -376,7 +377,8 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | 覆盖率数据的合并与汇总（`sim.coverage` / `testbench.coverage`） | `fecompiler/tools/verilator/coverage.py` |
 | RTL 设计用自己的 testbench 仿真 | `fecompiler/tools/verilator/testbench.py` |
 | review（步骤入口、源码检查、Yosys 结构预检查） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
-| 门禁、质量结论、分数 | `fecompiler/analysis/qor.py`、`scoring.py`、`scoring_policy.json` |
+| 门禁、质量结论、分数 | `fecompiler/analysis/qor/`（每个步骤一个模块，另有 `common.py`、`store.py`）、`scoring.py`、`scoring_policy.json` |
+| 结果的可比性指纹（编译链接参数、C++ 依赖、输入的规范化） | `fecompiler/analysis/qor/fingerprint.py` |
 | 结果签名与过期判断 | `fecompiler/engine/provenance.py` |
 | 交接清单 | `fecompiler/cli/handlers/handoff.py` |
 | 各工具的设置读取 | `fecompiler/tools/common/tool_config.py` |
