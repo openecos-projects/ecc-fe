@@ -133,6 +133,7 @@ def test_manifest_describes_the_design_by_reference(project, rtl, capsys) -> Non
         "frontend_defines": ["SYNTHESIS"], "default_timescale": "1ns/1ps",
     }
     assert manifest["standalone_check"]["status"] == "skipped"
+    assert manifest["constraints"] == {"sdc": None}
 
 
 def test_manifest_records_what_the_flow_concluded(project, capsys) -> None:
@@ -363,3 +364,86 @@ def test_includes_are_followed_through_headers(tmp_path) -> None:
 
     assert sorted(headers) == [first, second]
     assert unresolved == []
+
+
+# --- timing constraints -----------------------------------------------------
+
+
+def _sdc(tmp_path: Path, text: str = "create_clock -period 10 [get_ports clk]\n") -> Path:
+    return _write(tmp_path / "src" / "constraints" / "design.sdc", text)
+
+
+def test_constraints_named_at_handoff_are_described_by_reference(project, tmp_path, capsys) -> None:
+    sdc = _sdc(tmp_path)
+
+    exit_code, records = _call(capsys, "handoff", "--project", str(project), "--sdc", str(sdc))
+
+    assert exit_code == 0
+    assert records[0]["sdc"] == str(sdc)
+    described = _manifest(project, "handoff", "default")["constraints"]["sdc"]
+    assert described["path"] == str(sdc)
+    assert len(described["sha256"]) == 64
+    assert not (project / "handoff" / "default" / "constraints").exists()
+    # The field of schema version 1 keeps its documented value.
+    assert _manifest(project, "handoff", "default")["design"]["sdc"] is None
+
+
+def test_a_bundle_takes_the_constraints_along(project, tmp_path, capsys) -> None:
+    sdc = _sdc(tmp_path)
+    out = tmp_path / "out"
+
+    exit_code, records = _call(
+        capsys, "handoff", "--project", str(project), "--bundle", "--sdc", str(sdc),
+        "--output", str(out),
+    )
+
+    assert exit_code == 0
+    assert records[0]["sdc"] == "constraints/design.sdc"
+    described = json.loads((out / "handoff.json").read_text(encoding="utf-8"))["constraints"]["sdc"]
+    assert described["path"] == "constraints/design.sdc"
+    assert (out / "constraints" / "design.sdc").read_text(encoding="utf-8") == sdc.read_text(encoding="utf-8")
+
+    # Without constraints the next handoff does not keep the old copy.
+    assert _call(capsys, "handoff", "--project", str(project), "--bundle", "--output", str(out))[0] == 0
+    assert json.loads((out / "handoff.json").read_text(encoding="utf-8"))["constraints"]["sdc"] is None
+    assert not (out / "constraints").exists()
+
+
+def test_the_runs_own_setting_is_used_and_resolved_from_the_project(project, tmp_path, capsys) -> None:
+    sdc = _write(project / "constraints.sdc", "create_clock -period 5 [get_ports clk]\n")
+    parameters_path = project / "runs" / "default" / "home" / "parameters.json"
+    parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
+    parameters["design_sdc"] = "constraints.sdc"
+    parameters_path.write_text(json.dumps(parameters), encoding="utf-8")
+
+    exit_code, records = _call(capsys, "handoff", "--project", str(project))
+
+    assert exit_code == 0
+    assert records[0]["sdc"] == str(sdc)
+
+    # The option given now wins over the setting.
+    other = _sdc(tmp_path, "create_clock -period 2 [get_ports clk]\n")
+    _, records = _call(capsys, "handoff", "--project", str(project), "--sdc", str(other))
+    assert records[0]["sdc"] == str(other)
+
+
+def test_missing_constraints_are_refused_before_anything_is_written(project, tmp_path, capsys) -> None:
+    exit_code, records = _call(
+        capsys, "handoff", "--project", str(project), "--sdc", str(tmp_path / "gone.sdc")
+    )
+
+    assert exit_code == 1
+    assert records[0]["error"] == "handoff_sdc_not_found"
+    assert records[0]["reason"] == "named by --sdc"
+    assert not (project / "handoff" / "default" / "handoff.json").exists()
+
+
+def test_design_sdc_is_a_parameter_no_step_depends_on(project, capsys) -> None:
+    from fecompiler.allflow.steps import step_definitions
+
+    exit_code, records = _call(
+        capsys, "param", "set", "design.sdc", "constraints.sdc", "--project", str(project)
+    )
+
+    assert exit_code == 0, records
+    assert all("design_sdc" not in definition.config_fields for definition in step_definitions())

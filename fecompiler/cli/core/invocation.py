@@ -19,7 +19,7 @@ from fecompiler.cli.project.layout import (
     resolve_run_dir,
     template_dir,
 )
-from fecompiler.cli.project.relocate import relocate_project
+from fecompiler.cli.project.relocate import relocate_project, relocate_workspace
 from fecompiler.cli.rendering.render import render_result
 from fecompiler.utility.program import program_name
 
@@ -116,6 +116,14 @@ def execute_command(
         if workspace_mode
         else os.path.abspath(os.path.expanduser(workspace_dir))
     )
+    if workspace_mode:
+        # A project is relocated as a whole; a direct workspace on its own.
+        moved = relocate_workspace(resolved_workspace_dir)
+        if moved is not None:
+            print(
+                f"{program_name()}: workspace moved from {moved['from']}; updated its paths",
+                file=sys.stderr,
+            )
     context = CommandContext(
         workspace_dir=resolved_workspace_dir,
         output_mode=command_input.output_mode,

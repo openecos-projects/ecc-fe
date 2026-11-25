@@ -151,7 +151,8 @@ cd counter && ecc-fe run
 - `init` 会先检查 filelist 和文件是否存在、top 模块是否恰好定义一次，不满足时不会
   创建任何东西。
 - 这类工程的 `check` 不要求 RISC-V 工具链；没有 testbench 时也不要求 C++ 编译器和
-  Make，并且 `run --only sim` 之类会直接报 `step_not_in_flow`。`param list` 不显示
+  Make，并且 `run --only sim` 之类会直接报 `step_not_in_flow`。如果只是因为这个 run 建得比
+  testbench 的设置早，报错里会说明并给出新建 run 的命令。`param list` 不显示
   CPU 的 `sim.*` 参数。
 
 工程类型记录在 `ecc-fe.toml` 的 `[design].kind`（`cpu` 或 `rtl`），创建后不能改。
@@ -216,6 +217,9 @@ endmodule
 工程目录可以整体移动或复制。下一条命令会发现位置变了，把工程内部的路径（包括放在
 工程目录里的 RTL 和 filelist）改写成新位置，并在 stderr 提示一行。放在工程目录之外的
 输入仍按原来的绝对路径引用。移动后已有 run 的结果会被判为过期，下次运行会重跑。
+
+用 `--workspace` 的直接工作区同样可以移动或复制，处理方式相同：下一条命令改写工作区
+内部的路径并提示一行，已有结果会过期。
 
 ## 工作区版本
 
@@ -619,6 +623,10 @@ ecc-fe handoff --bundle -o ./export    # 把 RTL 一起复制进去，目录可�
 - 默认还会用 slang 只凭清单内容把设计单独编译一遍，确认它离开前端环境也成立；
   不成立时报 `handoff_design_incomplete`，日志在 `standalone_check.log`。
 - `--allow-incomplete` 可以强行生成，清单里会标明 `incomplete` 和原因。
+- 时序约束：`ecc-fe handoff --sdc ./constraints/top.sdc` 把一份 SDC 随设计一起交接，
+  也可以事先用 `ecc-fe param set design.sdc <文件>` 记在工程里（对之后新建的 run
+  生效）。前端流程不读取它，只在清单的 `constraints.sdc` 里记下路径和哈希，
+  `--bundle` 时复制到 `constraints/` 下。文件不存在时报 `handoff_sdc_not_found`。
 
 清单的字段见 `docs/specification/handoff-manifest.md`。
 

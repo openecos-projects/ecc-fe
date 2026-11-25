@@ -61,6 +61,38 @@ def relocate_project(project_dir: str) -> dict[str, object] | None:
     return {"from": str(previous), "to": str(project), "workspaces": rewritten}
 
 
+def relocate_workspace(workspace_dir: str) -> dict[str, object] | None:
+    """Rewrite a direct workspace's own paths if its directory was moved.
+
+    A direct workspace keeps no location record: where it was is read from
+    the path it stores to its own parameters file. Returns ``{"from", "to",
+    "workspaces"}`` when something was rewritten. Never raises.
+    """
+    workspace = Path(workspace_dir).resolve()
+    try:
+        previous = _workspace_location(workspace)
+        if previous is None or previous == workspace:
+            return None
+        if not _rewrite_workspace(workspace, previous, workspace):
+            return None
+    except (OSError, ValueError, TypeError):
+        return None
+    return {"from": str(previous), "to": str(workspace), "workspaces": [str(workspace)]}
+
+
+def _workspace_location(workspace: Path) -> Path | None:
+    """Derive the directory a workspace's stored paths were written for."""
+    try:
+        home = json.loads((workspace / "home" / "home.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    recorded = home.get("parameters") if isinstance(home, dict) else None
+    suffix = os.sep + str(Path("home") / "parameters.json")
+    if isinstance(recorded, str) and recorded.endswith(suffix):
+        return Path(recorded[: -len(suffix)])
+    return None
+
+
 def _write_location(project: Path) -> None:
     path = project / LOCATION_RELATIVE
     if path.parent.is_dir():

@@ -45,6 +45,14 @@ PARAMETERS = (
         advanced=True,
     ),
     ParameterSchema(
+        "design.sdc",
+        "design_sdc",
+        "string",
+        "",
+        "",
+        "Timing constraints (SDC) of the design; handed off with it, not read by the flow.",
+    ),
+    ParameterSchema(
         "elab.extra_args",
         "elab_extra_args",
         "string_list",
