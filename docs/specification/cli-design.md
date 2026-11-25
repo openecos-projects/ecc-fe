@@ -305,6 +305,42 @@ Install order is dependency-first. An installation is published only after:
 5. atomic directory replacement and atomic manifest write.
 
 On failure, the prior installed directory and manifest entry remain available.
+
+### Downloads
+
+Everything fetched is held to the size and SHA256 the registry gives, so
+where the bytes come from does not have to be trusted. On that rests:
+
+- **Continuing.** An archive is downloaded to
+  `$XDG_CACHE_HOME/ecos-studio/downloads/<name>-<version>-<sha256 prefix>.archive.part`
+  and renamed without `.part` once its size and checksum are right. A later
+  attempt, in the same command or the next one, asks the server for the bytes
+  after those on disk (`Range`); a server that does not support that sends
+  the whole file again. A partial file whose continuation fails the checksum
+  is discarded and fetched from the start.
+- **Retrying.** After a network error or a 5xx answer the same address is
+  tried again, `ECOS_DOWNLOAD_ATTEMPTS` times in all (default 4), waiting 1,
+  3, 10 and 30 seconds. 400, 401, 403, 404 and 410 are not retried.
+  `ECOS_DOWNLOAD_TIMEOUT` is the seconds one read may take (default 60).
+- **Mirrors.** `ECOS_RESOURCE_MIRRORS` holds `prefix=replacement` rules
+  separated by whitespace or commas. An address that starts with a prefix is
+  tried with the prefix replaced first, then as it is.
+- **Cache.** A complete archive already in the cache is used without a
+  request. The archive is removed after the install has succeeded and kept
+  when a later step of the install fails, so the retry does not download it
+  again.
+- **Local archive.** `resource install <id> --archive <file>` uses a copy of
+  the archive that is already on the machine, after the same size and
+  checksum test; it cannot be combined with `--required`.
+- **Registry.** `ECOS_REGISTRY_URL` may name a local file. Each registry read
+  over the network is saved as `downloads/registry.json`; when the registry
+  cannot be read, that copy is used and a line on stderr says so.
+- **Release metadata** (`metadata_url`) that cannot be read does not stop an
+  install; metadata that disagrees with the registry's lock still does.
+
+Progress events (`resource_progress`) have the phases `downloading`,
+`resuming`, `retrying` (with `attempt`, `of`, `after_s`, `reason`), `mirror`,
+`cached`, `verifying` and `done`; in text mode they are lines on stderr.
 Explicit environment variables take precedence over managed resources. Healthy
 managed resources take precedence over tools found later on `PATH`.
 

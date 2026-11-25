@@ -89,7 +89,7 @@ from fecompiler.resources import (
     tool_entry_health,
 )
 from fecompiler.utility.atomic_write import atomic_write_json
-from fecompiler.utility.program import invoked
+from fecompiler.utility.program import invoked, program_name
 from fecompiler.utility.workspace_lock import workspace_lock_owner
 
 _FLOW_STEPS = step_names()
@@ -1641,10 +1641,12 @@ def resource_list(
     command_input: CommandInput, context: CommandContext
 ) -> CommandResult:
     assert isinstance(command_input, ResourceListInput)
+    manager = ResourceManager()
     try:
-        records = ResourceManager().list_resources()
+        records = manager.list_resources()
     except ResourceManagerError as error:
         return CommandResult.err([failure_record("resource_failed", error)])
+    _print_registry_note(manager)
     if command_input.installed_only:
         records = [record for record in records if record.get("installed_version")]
     return CommandResult.ok(records)
@@ -1770,6 +1772,16 @@ def resource_install(
             ],
             exit_code=2,
         )
+    if command_input.archive and command_input.required:
+        return CommandResult.err(
+            [
+                error_record(
+                    "invalid_resource_selection",
+                    reason="--archive is the archive of one resource; name the resource",
+                )
+            ],
+            exit_code=2,
+        )
     manager = ResourceManager()
     try:
         records = (
@@ -1779,9 +1791,15 @@ def resource_install(
                 str(command_input.resource_id),
                 version=command_input.version,
                 progress=_print_resource_progress,
+                archive=(
+                    Path(command_input.archive).expanduser().resolve()
+                    if command_input.archive
+                    else None
+                ),
             )
         )
     except ResourceManagerError as error:
+        _print_registry_note(manager)
         return CommandResult.err(
             [
                 failure_record(
@@ -1791,8 +1809,14 @@ def resource_install(
                 )
             ]
         )
+    _print_registry_note(manager)
     activate_managed_resources()
     return CommandResult.ok(records)
+
+
+def _print_registry_note(manager: ResourceManager) -> None:
+    if manager.registry_note:
+        print(f"{program_name()}: {manager.registry_note}", file=sys.stderr, flush=True)
 
 
 def resource_env(command_input: CommandInput, context: CommandContext) -> CommandResult:
@@ -2079,8 +2103,15 @@ def _print_resource_progress(record: dict[str, object]) -> None:
     resource_id = str(record.get("resource_id", "resource"))
     phase = str(record.get("phase", "working"))
     progress = record.get("progress")
-    if isinstance(progress, (int, float)) and phase == "downloading":
+    if isinstance(progress, (int, float)) and phase in {"downloading", "resuming"}:
         label = f" {round(progress * 100):d}%"
+    elif phase == "retrying":
+        label = (
+            f" (attempt {record.get('attempt')} of {record.get('of')} "
+            f"in {record.get('after_s'):g}s: {record.get('reason')})"
+        )
+    elif phase == "mirror":
+        label = f" {record.get('url')}"
     else:
         label = ""
     print(f"{resource_id}: {phase}{label}", file=sys.stderr, flush=True)

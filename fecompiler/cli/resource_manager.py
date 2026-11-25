@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -17,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from fecompiler.cli import resource_download
+from fecompiler.cli.resource_download import DownloadError
 from fecompiler.resources import (
     MANIFEST_SCHEMA_VERSION,
     current_registry_platform,
@@ -62,6 +63,9 @@ class RegistryVersion:
 
 ProgressCallback = Callable[[dict[str, object]], None]
 
+# The registry as it was last read, for when the network cannot be reached.
+REGISTRY_CACHE_NAME = "registry.json"
+
 
 class ResourceManager:
     def __init__(
@@ -78,21 +82,49 @@ class ResourceManager:
         self.manifest_path = manifest_path or resource_manifest_path()
         self.tools_dir = tools_dir or managed_tools_dir()
         self.cache_dir = cache_dir or xdg_cache_home() / "ecos-studio" / "downloads"
+        # Set when the registry could not be read and the saved copy was used.
+        self.registry_note: str | None = None
 
     def registry(self) -> dict[str, Any]:
+        """Read the registry; without a network, the copy saved the last time.
+
+        ``ECOS_REGISTRY_URL`` may also name a local file. Everything taken
+        from a registry is checked against the size and SHA256 it gives, so a
+        saved copy is as safe as a fresh one; it may only be older.
+        """
+        location = self.registry_url
+        saved = self.cache_dir / REGISTRY_CACHE_NAME
+        local = Path(location).expanduser() if "://" not in location else None
         try:
-            with urllib.request.urlopen(self.registry_url, timeout=30) as response:
-                value = json.load(response)
+            if local is not None:
+                value = json.loads(local.read_text(encoding="utf-8"))
+            else:
+                with urllib.request.urlopen(location, timeout=30) as response:
+                    value = json.load(response)
         except (OSError, ValueError) as error:
-            raise ResourceManagerError(
-                f"Unable to read resource registry {self.registry_url}: {error}"
-            ) from error
-        if not isinstance(value, dict) or value.get("schema_version") != 2:
-            raise ResourceManagerError(
-                "Unsupported or invalid resource registry schema"
+            if local is not None or not saved.is_file():
+                raise ResourceManagerError(
+                    f"Unable to read resource registry {location}: {error}"
+                ) from error
+            try:
+                value = json.loads(saved.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise ResourceManagerError(
+                    f"Unable to read resource registry {location}: {error}"
+                ) from error
+            self.registry_note = (
+                f"the resource registry could not be read ({error}); "
+                f"using the copy saved at {saved}"
             )
-        if not isinstance(value.get("tools"), list):
-            raise ResourceManagerError("Resource registry tools field must be an array")
+        else:
+            self.registry_note = None
+        _check_registry(value)
+        if local is None and self.registry_note is None:
+            try:
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(saved, value)
+            except OSError:
+                pass
         return value
 
     def list_resources(
@@ -184,8 +216,15 @@ class ResourceManager:
         version: str | None = None,
         registry: dict[str, Any] | None = None,
         progress: ProgressCallback | None = None,
+        archive: Path | None = None,
         _visiting: set[str] | None = None,
     ) -> list[dict[str, object]]:
+        """Install a resource and what it requires.
+
+        *archive* is a copy of the resource's archive that is already on this
+        machine; it is used for the named resource instead of downloading,
+        after the same size and checksum test.
+        """
         source = registry or self.registry()
         normalized = _normalize_resource_id(resource_id)
         name = normalized.removeprefix("tool:")
@@ -206,7 +245,9 @@ class ResourceManager:
                         _visiting=visiting,
                     )
                 )
-            records.append(self._install_one(name, selected, progress=progress))
+            records.append(
+                self._install_one(name, selected, progress=progress, archive=archive)
+            )
         finally:
             visiting.remove(normalized)
         return _dedupe_install_records(records)
@@ -294,8 +335,9 @@ class ResourceManager:
         selected: RegistryVersion,
         *,
         progress: ProgressCallback | None,
+        archive: Path | None = None,
     ) -> dict[str, object]:
-        asset = self._resolve_metadata(selected.asset)
+        asset = self._resolve_metadata(selected.asset, unreachable_ok=True)
         manifest = read_resource_manifest(self.manifest_path, strict=True)
         existing = installed_tool_entries(manifest).get(name)
         if (
@@ -310,27 +352,41 @@ class ResourceManager:
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.tools_dir.mkdir(parents=True, exist_ok=True)
-        archive_path = (
-            self.cache_dir / f"{name}-{selected.version}-{uuid.uuid4().hex}.download"
-        )
+        # Named by content, so an interrupted download is found again and a
+        # complete one is not fetched twice.
+        archive_path = self.cache_dir / f"{name}-{selected.version}-{asset.sha256[:16]}.archive"
+        installed = False
         extract_parent = self.tools_dir / name
         extract_parent.mkdir(parents=True, exist_ok=True)
         stage_path = extract_parent / f".extract-{selected.version}-{uuid.uuid4().hex}"
         destination = extract_parent / selected.version
         backup_path = extract_parent / f".backup-{selected.version}-{uuid.uuid4().hex}"
-        _publish(progress, name, "downloading", 0.0)
         try:
-            self._download(
-                asset.url,
-                archive_path,
-                expected_size=asset.size,
-                progress=progress,
-                resource_name=name,
-            )
-            _publish(progress, name, "verifying", 0.0)
-            _verify_sha256(archive_path, asset.sha256)
+            if archive is not None:
+                _publish(progress, name, "verifying", 0.0)
+                if not archive.is_file():
+                    raise ResourceManagerError(f"Archive not found: {archive}")
+                if not resource_download.is_complete(
+                    archive, size=asset.size, sha256=asset.sha256
+                ):
+                    raise ResourceManagerError(
+                        f"{archive} is not the archive of {name} {selected.version}: "
+                        f"the registry names {asset.size} bytes with SHA256 {asset.sha256}"
+                    )
+                source_archive = archive
+            else:
+                _publish(progress, name, "downloading", 0.0)
+                self._download(
+                    asset.url,
+                    archive_path,
+                    expected_size=asset.size,
+                    sha256=asset.sha256,
+                    progress=progress,
+                    resource_name=name,
+                )
+                source_archive = archive_path
             stage_path.mkdir(parents=True)
-            _extract_archive(archive_path, stage_path)
+            _extract_archive(source_archive, stage_path)
             payload = _payload_root(stage_path, asset.strip_prefix)
             self._install_supplemental_assets(payload, asset.supplemental_assets)
             self._run_post_install(payload, asset.post_install)
@@ -370,9 +426,14 @@ class ResourceManager:
             if backup_path.exists():
                 shutil.rmtree(backup_path)
             _publish(progress, name, "done", 1.0)
+            installed = True
             return _install_record(name, selected.version, "installed", destination)
         finally:
-            archive_path.unlink(missing_ok=True)
+            # A downloaded archive is kept until the install has succeeded, so
+            # a failure after the download does not cost the download again.
+            if installed:
+                archive_path.unlink(missing_ok=True)
+                archive_path.with_name(archive_path.name + ".part").unlink(missing_ok=True)
             if stage_path.exists():
                 shutil.rmtree(stage_path)
             if backup_path.exists():
@@ -381,13 +442,27 @@ class ResourceManager:
                 else:
                     os.replace(backup_path, destination)
 
-    def _resolve_metadata(self, asset: RegistryAsset) -> RegistryAsset:
+    def _resolve_metadata(
+        self, asset: RegistryAsset, *, unreachable_ok: bool = False
+    ) -> RegistryAsset:
+        """Check the registry's lock against the release's own metadata.
+
+        With *unreachable_ok*, metadata that cannot be read is skipped: the
+        archive is still held to the registry's size and SHA256, and an
+        install has to work without a network.
+        """
         if not asset.metadata_url:
             return asset
         try:
             with urllib.request.urlopen(asset.metadata_url, timeout=30) as response:
                 metadata = json.load(response)
-        except (OSError, ValueError) as error:
+        except OSError as error:
+            if unreachable_ok:
+                return asset
+            raise ResourceManagerError(
+                f"Unable to read release metadata: {error}"
+            ) from error
+        except ValueError as error:
             raise ResourceManagerError(
                 f"Unable to read release metadata: {error}"
             ) from error
@@ -409,32 +484,37 @@ class ResourceManager:
         destination: Path,
         *,
         expected_size: int | None,
+        sha256: str,
         progress: ProgressCallback | None = None,
         resource_name: str = "",
     ) -> None:
-        received = 0
-        last_reported = 0
-        try:
-            with (
-                urllib.request.urlopen(url, timeout=60) as response,
-                destination.open("wb") as output,
-            ):
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-                    received += len(chunk)
-                    if progress and resource_name and expected_size:
-                        percent = min(100, received * 100 // expected_size)
-                        if percent >= last_reported + 10 or percent == 100:
-                            last_reported = percent
-                            _publish(
-                                progress, resource_name, "downloading", percent / 100
-                            )
-        except OSError as error:
-            raise ResourceManagerError(f"Download failed for {url}: {error}") from error
-        if expected_size is not None and received != expected_size:
-            raise ResourceManagerError(
-                f"Download size mismatch for {url}: expected {expected_size}, received {received}"
+        """Fetch *url* to *destination*, checked against its size and SHA256."""
+
+        def notify(phase: str, fields: dict[str, object]) -> None:
+            if not progress or not resource_name:
+                return
+            total = fields.get("total")
+            received = fields.get("received")
+            done = (
+                float(received) / float(total)
+                if isinstance(received, int) and isinstance(total, int) and total
+                else 0.0
             )
+            event: dict[str, object] = {
+                "kind": "resource_progress",
+                "resource_id": f"tool:{resource_name}",
+                "phase": phase,
+                "progress": round(min(1.0, done), 2),
+            }
+            event.update({key: value for key, value in fields.items() if key not in event})
+            progress(event)
+
+        try:
+            resource_download.fetch(
+                url, destination, size=expected_size, sha256=sha256, notify=notify
+            )
+        except DownloadError as error:
+            raise ResourceManagerError(str(error)) from error
 
     def _install_supplemental_assets(
         self,
@@ -450,8 +530,7 @@ class ResourceManager:
                 raise ResourceManagerError("Invalid supplemental asset declaration")
             destination = root.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            self._download(url, destination, expected_size=size)
-            _verify_sha256(destination, sha256)
+            self._download(url, destination, expected_size=size, sha256=sha256)
 
     def _run_post_install(self, root: Path, steps: tuple[dict[str, Any], ...]) -> None:
         for step in steps:
@@ -535,6 +614,13 @@ class ResourceManager:
             atomic_write_json(self.manifest_path, manifest)
 
 
+def _check_registry(value: object) -> None:
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
+        raise ResourceManagerError("Unsupported or invalid resource registry schema")
+    if not isinstance(value.get("tools"), list):
+        raise ResourceManagerError("Resource registry tools field must be an array")
+
+
 def _normalize_resource_id(resource_id: str) -> str:
     value = resource_id.strip()
     if not value:
@@ -573,20 +659,6 @@ def _publish(
                 "phase": phase,
                 "progress": value,
             }
-        )
-
-
-def _verify_sha256(path: Path, expected: str) -> None:
-    if not _valid_sha256(expected.lower()):
-        raise ResourceManagerError("Invalid SHA256 checksum in resource registry")
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-    actual = digest.hexdigest()
-    if actual.lower() != expected.lower():
-        raise ResourceManagerError(
-            f"SHA256 verification failed for {path.name}: expected {expected}, received {actual}"
         )
 
 
