@@ -145,6 +145,14 @@ PARAMETERS = (
         advanced=True,
     ),
     ParameterSchema(
+        "testbench.coverage",
+        "testbench_coverage",
+        "boolean",
+        False,
+        "sim",
+        "Collect line and toggle coverage of the design while the testbench runs.",
+    ),
+    ParameterSchema(
         "sim.build_jobs",
         "sim_build_jobs",
         "integer",
@@ -172,6 +180,14 @@ PARAMETERS = (
         True,
         "sim",
         "Write a VCD waveform for every case (CoreMark never does).",
+    ),
+    ParameterSchema(
+        "sim.coverage",
+        "sim_coverage",
+        "boolean",
+        False,
+        "sim",
+        "Collect line and toggle coverage, merged over the cases of the suite.",
     ),
     ParameterSchema(
         "sim.history_limit",

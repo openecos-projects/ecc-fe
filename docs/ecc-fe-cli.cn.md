@@ -190,7 +190,8 @@ ecc-fe param set testbench.fail_pattern 'FAIL|ERROR'
 
 没有设置任何正则而通过时，日志最后一行会说明这次只按退出码判定。失败时最后一行是
 失败原因。其余参数：`testbench.plusargs`（传给仿真的 `+arg`）和
-`testbench.extra_args`（额外的 Verilator 编译参数）。
+`testbench.extra_args`（额外的 Verilator 编译参数），以及 `testbench.coverage`
+（收集设计的覆盖率，见"覆盖率"一节）。
 
 `design.parameters` 通过 testbench 作用于仿真。仿真的顶层是 testbench，而工具只能
 覆盖顶层模块的参数，所以规则是：testbench 模块自己声明了同名 `parameter` 的那些
@@ -343,6 +344,7 @@ CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修�
 | `sim.build_jobs` | `0` | 编译仿真程序和测试程序的并行数；`0` 表示用上所有核 |
 | `sim.case_jobs` | `1` | 同时运行的用例数 |
 | `sim.dump_waveform` | `true` | 每个用例是否写出 `wave.vcd`（CoreMark 始终不写） |
+| `sim.coverage` | `false` | 是否收集行覆盖率和翻转覆盖率，见下文"覆盖率" |
 | `sim.history_limit` | `20` | `report/runs/` 下保留最近多少次运行 |
 
 几点说明：
@@ -420,6 +422,42 @@ ecc-fe report compare default faster-sim --fail-on-regression  # 变差时退出
 或 `regressed`，没有方向的只标 `changed`。汇总里的 `parameter_changes` 列出两个
 run 之间不同的参数。某个步骤标出"inputs or settings differ"时，表示两边的输入
 或设置不同，数字不能直接当作同一条件下的对比。
+
+### 覆盖率
+
+```bash
+ecc-fe param set sim.coverage true         # CPU 工程
+ecc-fe param set testbench.coverage true   # RTL 设计（用自己的 testbench 仿真）
+ecc-fe run --run-id cov
+ecc-fe report coverage --run-id cov
+```
+
+打开后，仿真程序带行覆盖率和翻转覆盖率构建，每个用例的数据合并成一份：某个
+覆盖点只要有一个用例覆盖到就算覆盖。结果在两个文件里：
+
+- `sim_verilator/report/coverage.json`：汇总，按总体、按源文件归属（`cpu`、
+  `design`、`soc` 等）、按文件三个角度给出 `covered / total / percent`；
+- `sim_verilator/output/coverage.dat`：合并后的原始数据，可以交给
+  `verilator_coverage --annotate <目录>` 生成逐行标注的源码。
+
+```text
+$ ecc-fe report coverage --ownership cpu --limit 3
+  line 65.4% (117/179)  toggle 74.9% (5345/7134)  branch 63.4% (293/462)  rtl/core.v  [cpu]
+```
+
+`report coverage` 先给总数，再按覆盖率从低到高列出文件；`--ownership` 只看某一类
+源文件，CPU 工程里通常只关心自己的 CPU，而不是 SoC 外壳。
+
+几点说明：
+
+- 种类有 `line`、`toggle`，以及 Verilator 归在行覆盖率里的 `branch`。
+- RTL 设计的 testbench 自己的文件不计入。
+- 单个用例的数据合并后就删除（一个 SoC 规模的设计每个用例约 10 MB）。
+- CPU 的覆盖率要靠 SoC 的仿真外壳把数据写出来。外壳太旧时，仿真照常进行，报告里
+  `status` 为 `unavailable` 并说明原因，执行 `ecc-fe resource update` 更新 SoC 资源
+  即可。
+- 开销：实测一次整套 cpu-tests（35 个用例、8 个并行）从 32 秒变为 37 秒。
+- 覆盖率目前不参与评分，也不在 `report compare` 里比较。
 
 ### 导出给 CI：SARIF 和 JUnit
 

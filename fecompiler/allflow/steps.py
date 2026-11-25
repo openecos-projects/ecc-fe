@@ -162,6 +162,7 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
             "tools/verilator/build_stamp.py",
             "tools/verilator/program_build.py",
             "tools/verilator/testbench.py",
+            "tools/verilator/coverage.py",
             "tools/verilator/command.py",
         ),
         executables=("verilator",),

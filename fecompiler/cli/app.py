@@ -25,6 +25,7 @@ from fecompiler.cli.core.inputs import (
     ParamShowInput,
     ParamUnsetInput,
     ReportCompareInput,
+    ReportCoverageInput,
     ReportExportInput,
     ReportFailureInput,
     ReportFilesInput,
@@ -956,6 +957,42 @@ def build_app() -> typer.Typer:
                 fail_on_regression=fail_on_regression,
             ),
             report_handlers.compare,
+        )
+
+    @report_app.command(
+        "coverage",
+        help="Show the line and toggle coverage a simulation collected.",
+    )
+    def report_coverage_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        ownership: Annotated[
+            str | None,
+            typer.Option(
+                "--ownership", help="Only the files of one owner, e.g. cpu or design"
+            ),
+        ] = None,
+        limit: Annotated[
+            int, typer.Option("--limit", help="How many files to list, least covered first")
+        ] = 20,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "report.coverage",
+            ReportCoverageInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                limit=limit,
+                ownership=ownership,
+            ),
+            report_handlers.coverage,
         )
 
     @report_app.command(

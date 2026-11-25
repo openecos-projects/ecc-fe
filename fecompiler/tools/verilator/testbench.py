@@ -34,8 +34,10 @@ from fecompiler.tools.common.tool_config import (
     config_text,
     design_parameter_overrides,
 )
+from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.fe.subflow import update_substep_ok
+from fecompiler.tools.verilator import coverage
 from fecompiler.tools.verilator.command import verilator_cmd
 from fecompiler.tools.verilator.subflow import SimSubFlowEnum, init_sim_subflow
 from fecompiler.utility.json import json_read, json_write
@@ -95,6 +97,8 @@ def testbench_settings(workspace: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "parameters": applied,
         "parameters_not_applied": not_applied,
+        "coverage": str(config_text(workspace, "testbench_coverage")).strip().lower()
+        in {"1", "true", "yes", "on"},
         "plusargs": config_list(workspace, "testbench_plusargs"),
         "extra_args": config_list(workspace, "testbench_extra_args"),
         **patterns,
@@ -201,6 +205,11 @@ class TestbenchSimStep(BaseStep):
             program = self._compile(step, workspace, settings, case)
             if program is not None:
                 self._simulate(step, program, settings, case)
+        report_coverage: dict[str, Any] | None = None
+        if case["failure"] is None or case["failure"]["kind"] not in {"settings", "compile"}:
+            report_coverage = self._coverage(step, workspace, settings)
+        if report_coverage is None:
+            (report_dir / coverage.REPORT_NAME).unlink(missing_ok=True)
         if case["failure"] is not None and case["failure"]["kind"] in {"settings", "compile"}:
             update_substep_ok(
                 step, SimSubFlowEnum.simulate.value, False, info={"skipped": "not compiled"}
@@ -212,6 +221,7 @@ class TestbenchSimStep(BaseStep):
                 "kind": REPORT_KIND,
                 "suite": REPORT_KIND,
                 "cases": [case],
+                **({"coverage": report_coverage} if report_coverage is not None else {}),
             },
         )
         json_write(
@@ -257,6 +267,7 @@ class TestbenchSimStep(BaseStep):
             "--timing",
             "--trace",
             "-Wno-fatal",
+            *(coverage.BUILD_ARGS if settings["coverage"] else ()),
             "-j",
             "0",
             *verilator_incdir_args(workspace),
@@ -315,9 +326,15 @@ class TestbenchSimStep(BaseStep):
         case: dict[str, Any],
     ) -> None:
         timeout = tool_timeout("sim_case")
+        coverage_args: list[str] = []
+        if settings["coverage"]:
+            data = _coverage_data(program)
+            data.unlink(missing_ok=True)
+            # The program Verilator builds writes its coverage where this says.
+            coverage_args = [f"+verilator+coverage+file+{data}"]
         try:
             result = run_tool(
-                [str(program), *settings["plusargs"]],
+                [str(program), *settings["plusargs"], *coverage_args],
                 log_path=Path(case["log"]),
                 timeout=timeout,
                 session_dir=Path(step.log["dir"]),
@@ -370,6 +387,36 @@ class TestbenchSimStep(BaseStep):
             failure is None,
             info={"returncode": returncode, **({"error": failure["message"]} if failure else {})},
         )
+
+
+    def _coverage(
+        self,
+        step: WorkspaceStep,
+        workspace: dict[str, Any],
+        settings: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not settings["coverage"]:
+            return None
+        output_dir = Path(step.output["dir"])
+        data = _coverage_data(output_dir / f"{settings['top']}_sim")
+        ownership = rtl_ownership_map(workspace)
+        report_dir = Path(step.report["dir"])
+        return coverage.brief(
+            coverage.write_report(
+                [data],
+                report_dir=report_dir,
+                merged_path=output_dir / coverage.MERGED_NAME,
+                ownership_of=lambda source: rtl_source_ownership(workspace, source, ownership),
+                # The testbench is not the design whose coverage is asked for.
+                exclude=settings["sources"],
+                cases=1,
+            ),
+            report_dir,
+        )
+
+
+def _coverage_data(program: Path) -> Path:
+    return program.with_name(program.name + ".coverage.dat")
 
 
 def _first_error(output: str) -> str:

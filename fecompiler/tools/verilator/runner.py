@@ -15,6 +15,8 @@ from typing import Any
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.common.build_policy import clean_build_requested
+from fecompiler.tools.common.rtl_ownership import rtl_ownership_map, rtl_source_ownership
+from fecompiler.tools.verilator import coverage
 from fecompiler.tools.common.process import run_tool, stop_session, tool_timeout
 from fecompiler.tools.common.tool_config import tool_config
 from fecompiler.tools.common.rtl_inputs import (
@@ -1093,6 +1095,10 @@ def _apply_case_wave_arg(
     return _apply_wave_arg(args, default_wave)
 
 
+def _coverage_requested(workspace: dict[str, Any]) -> bool:
+    return _bool_workspace_value(tool_config(workspace).get("sim_coverage"), False)
+
+
 def _setting_int(workspace: dict[str, Any], key: str, default: int, *, minimum: int) -> int:
     try:
         value = int(tool_config(workspace).get(key, default))
@@ -1478,6 +1484,7 @@ class VerilatorSimStep(BaseStep):
             "-Wno-fatal",
             "--timing",
             "--trace",
+            *(coverage.BUILD_ARGS if _coverage_requested(workspace) else ()),
             *verilator_incdir_args(workspace),
             *verilator_library_args(workspace),
             *verilator_define_args(workspace),
@@ -1638,6 +1645,15 @@ class VerilatorSimStep(BaseStep):
 
         settings = tool_config(workspace)
         dump_waveform = _bool_workspace_value(settings.get("sim_dump_waveform"), True)
+        collect_coverage = _coverage_requested(workspace)
+        # The model only counts; the harness has to write the counts out.
+        coverage_unavailable = ""
+        if collect_coverage and not coverage.harness_writes_coverage(sim_cpp_sources(workspace)):
+            collect_coverage = False
+            coverage_unavailable = (
+                "the simulation harness of this SoC does not write coverage data; "
+                "update the SoC resource"
+            )
         case_jobs = min(_setting_int(workspace, "sim_case_jobs", 1, minimum=1), max(len(cases), 1))
 
         def run_case(case: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -1651,6 +1667,10 @@ class VerilatorSimStep(BaseStep):
                 logs["output_dir"] / "wave.vcd",
                 dump=dump_waveform,
             )
+            coverage_data = logs["output_dir"] / coverage.MERGED_NAME
+            if collect_coverage:
+                coverage_data.unlink(missing_ok=True)
+                run_args = [*run_args, "--coverage", str(coverage_data)]
 
             if image and not Path(image).exists():
                 output = f"image not found: {image}\n"
@@ -1702,6 +1722,9 @@ class VerilatorSimStep(BaseStep):
                 "wave": wave,
                 "run_id": run_id,
             }
+            if collect_coverage and coverage_data.is_file():
+                # Until the cases are merged; the report keeps only the sum.
+                case_report["coverage_data"] = str(coverage_data)
             if validation:
                 case_report["validation"] = validation
             if metrics:
@@ -1742,6 +1765,31 @@ class VerilatorSimStep(BaseStep):
             "cases": cases_report,
             "regression": regression,
         }
+        report_dir = Path(step.report["dir"])
+        if collect_coverage:
+            ownership = rtl_ownership_map(workspace)
+            cases_payload["coverage"] = coverage.brief(
+                coverage.write_report(
+                    [
+                        case.pop("coverage_data")
+                        for case in cases_report
+                        if case.get("coverage_data")
+                    ],
+                    report_dir=report_dir,
+                    merged_path=Path(step.output["dir"]) / coverage.MERGED_NAME,
+                    ownership_of=lambda source: rtl_source_ownership(workspace, source, ownership),
+                    cases=len(cases_report),
+                ),
+                report_dir,
+            )
+        elif coverage_unavailable:
+            cases_payload["coverage"] = coverage.brief(
+                coverage.write_unavailable(report_dir, coverage_unavailable), report_dir
+            )
+            summary_text += f"ecc-fe: coverage not collected: {coverage_unavailable}\n"
+            sim_log.write_text(summary_text, encoding="utf-8")
+        else:
+            (report_dir / coverage.REPORT_NAME).unlink(missing_ok=True)
         json_write(str(cases_json), cases_payload)
         json_write(str(run_root / "cases.json"), cases_payload)
         _prune_run_history(runs_root, _setting_int(workspace, "sim_history_limit", 20, minimum=1))

@@ -373,6 +373,7 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | CPU 仿真（SoC 外壳、测试程序、用例、回归记录） | `fecompiler/tools/verilator/runner.py` |
 | 仿真程序的构建记录与复用判断 | `fecompiler/tools/verilator/build_stamp.py` |
 | 测试程序的构建记录（没变就不重编） | `fecompiler/tools/verilator/program_build.py` |
+| 覆盖率数据的合并与汇总（`sim.coverage` / `testbench.coverage`） | `fecompiler/tools/verilator/coverage.py` |
 | RTL 设计用自己的 testbench 仿真 | `fecompiler/tools/verilator/testbench.py` |
 | review（步骤入口、源码检查、Yosys 结构预检查） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
 | 门禁、质量结论、分数 | `fecompiler/analysis/qor.py`、`scoring.py`、`scoring_policy.json` |
