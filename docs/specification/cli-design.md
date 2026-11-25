@@ -409,6 +409,22 @@ Progress events (`resource_progress`) have the phases `downloading`,
 Explicit environment variables take precedence over managed resources. Healthy
 managed resources take precedence over tools found later on `PATH`.
 
+The variables of one tool belong together and are taken from its managed
+installation as a group or not at all:
+
+| Tool | Set from the managed installation | Left alone when the user set |
+| --- | --- | --- |
+| Verilator | `ECOS_VERILATOR`, `VERILATOR_ROOT` | either of them to something else, or `VERILATOR` |
+| slang | `ECOS_SLANG` | it to something else, or `SLANG` |
+| Yosys | `CHIPCOMPILER_OSS_CAD_DIR`, `ECOS_ELECTRON_OSS_CAD_DIR` | either of them to something else, or `YOSYS`, `ECOS_YOSYS`, `ECOS_OSS_CAD_BIN` |
+| RISC-V toolchain | `RISCV`, `RISCV_TOOLCHAIN`, `RISCV_PREFIX` | any of them to something else |
+
+So a Verilator named with `ECOS_VERILATOR` runs with its own data directory,
+not with the `VERILATOR_ROOT` of the managed one. A variable that names the
+managed installation itself, also through a symbolic link, counts as the
+managed tool. The managed tools' `bin` directories stay on `PATH`, which is
+only consulted when nothing names a tool.
+
 ## Project Config Contract
 
 `ecc-fe init <name>` creates a project-level `ecc-fe.toml`, a `runs/` container,

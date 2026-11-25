@@ -89,6 +89,7 @@ jobs:
             test/test_resource_safety.py \
             test/test_run_parameter_view.py \
             test/test_resources.py \
+            test/test_resource_env_groups.py \
             test/test_rtl_review.py \
             test/test_run_progress.py \
             test/test_output_contract.py \
