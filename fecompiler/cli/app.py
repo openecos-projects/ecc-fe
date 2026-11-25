@@ -34,6 +34,8 @@ from fecompiler.cli.core.inputs import (
     ResourceEnvInput,
     ResourceInstallInput,
     ResourceListInput,
+    ResourcePruneInput,
+    ResourceUninstallInput,
     RunInput,
     RunsDeleteInput,
     StatusInput,
@@ -642,6 +644,52 @@ def build_app() -> typer.Typer:
     ) -> None:
         install_or_update(
             "resource.update", resource_id, required, None, json_output, jsonl, plain
+        )
+
+    @resource_app.command(
+        "uninstall", help="Remove one installed resource: its entry and its files."
+    )
+    def resource_uninstall_command(
+        resource_id: Annotated[str, typer.Argument(help="Resource id, for example slang")],
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "resource.uninstall",
+            ResourceUninstallInput(
+                workspace=None,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                resource_id=resource_id,
+            ),
+            commands.resource_uninstall,
+        )
+
+    @resource_app.command(
+        "prune",
+        help="List old versions, leftovers of killed installs and unfinished downloads; "
+        "remove them with --apply.",
+    )
+    def resource_prune_command(
+        apply: Annotated[
+            bool, typer.Option("--apply", help="Remove what is listed")
+        ] = False,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "resource.prune",
+            ResourcePruneInput(
+                workspace=None,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                apply=apply,
+            ),
+            commands.resource_prune,
         )
 
     @resource_app.command("env", help="Print the shell environment for the installed resources.")

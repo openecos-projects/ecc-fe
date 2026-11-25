@@ -27,6 +27,8 @@ from fecompiler.cli.core.inputs import (
     ResourceEnvInput,
     ResourceInstallInput,
     ResourceListInput,
+    ResourcePruneInput,
+    ResourceUninstallInput,
     RunInput,
     StatusInput,
 )
@@ -1643,13 +1645,89 @@ def resource_list(
     assert isinstance(command_input, ResourceListInput)
     manager = ResourceManager()
     try:
-        records = manager.list_resources()
+        # What is installed is known from the manifest; no registry is asked.
+        records = (
+            manager.list_installed()
+            if command_input.installed_only
+            else manager.list_resources()
+        )
     except ResourceManagerError as error:
         return CommandResult.err([failure_record("resource_failed", error)])
+    except (OSError, ValueError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
+                )
+            ]
+        )
     _print_registry_note(manager)
-    if command_input.installed_only:
-        records = [record for record in records if record.get("installed_version")]
     return CommandResult.ok(records)
+
+
+def resource_uninstall(
+    command_input: CommandInput, context: CommandContext
+) -> CommandResult:
+    assert isinstance(command_input, ResourceUninstallInput)
+    try:
+        record = ResourceManager().uninstall(command_input.resource_id)
+    except ResourceManagerError as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "resource_uninstall_failed", error, resource_id=command_input.resource_id
+                )
+            ]
+        )
+    except (OSError, ValueError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
+                )
+            ]
+        )
+    if record.get("required"):
+        # ECC-FE needs it: say how to get it back.
+        record["reinstall_cmd"] = invoked("ecc-fe resource install ") + shlex.quote(
+            str(record["resource_id"]).removeprefix("tool:")
+        )
+    activate_managed_resources()
+    return CommandResult.ok([record])
+
+
+def resource_prune(
+    command_input: CommandInput, context: CommandContext
+) -> CommandResult:
+    assert isinstance(command_input, ResourcePruneInput)
+    try:
+        items = ResourceManager().prune(apply=command_input.apply)
+    except (OSError, ValueError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
+                )
+            ]
+        )
+
+    def total(*statuses: str) -> int:
+        return sum(int(item["bytes"]) for item in items if item["status"] in statuses)
+
+    failed = [item for item in items if item["status"] == "failed"]
+    summary: dict[str, object] = {
+        "kind": "resource_prune_summary",
+        "applied": command_input.apply,
+        "items": len(items),
+        "removed_bytes": total("removed"),
+        "removable_bytes": total("would_remove"),
+        "kept_recent": sum(item["status"] == "kept_recent" for item in items),
+        "failed": len(failed),
+    }
+    if not command_input.apply and summary["removable_bytes"]:
+        summary["apply_cmd"] = invoked("ecc-fe resource prune --apply")
+    records = [summary, *items]
+    return CommandResult.err(records) if failed else CommandResult.ok(records)
 
 
 def resource_status(

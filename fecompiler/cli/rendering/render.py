@@ -160,7 +160,16 @@ def _coverage_line(record: dict[str, object]) -> str:
     return "  ".join(show(kind) for kind in kinds) + f"  {record.get('file')}{owner}"
 
 
+def _prune_line(record: dict[str, object]) -> str:
+    size = int(record.get("bytes") or 0)
+    return (
+        f"{str(record.get('status')):<12}  {str(record.get('category')):<11}  "
+        f"{size / 1e6:8.1f} MB  {record.get('path')}"
+    )
+
+
 _COMPACT_TEXT = {
+    "resource.prune": _prune_line,
     "report.coverage": _coverage_line,
     "report.failure": _failure_line,
     "runs.list": _run_line,
