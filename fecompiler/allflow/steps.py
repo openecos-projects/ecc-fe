@@ -159,6 +159,12 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
         source_files=(
             "tools/verilator/sim.py",
             "tools/verilator/runner.py",
+            "tools/verilator/sim_settings.py",
+            "tools/verilator/programs.py",
+            "tools/verilator/cases.py",
+            "tools/verilator/coremark.py",
+            "tools/verilator/regression.py",
+            "tools/verilator/parallel.py",
             "tools/verilator/build_stamp.py",
             "tools/verilator/program_build.py",
             "tools/verilator/testbench.py",

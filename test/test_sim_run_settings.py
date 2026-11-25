@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from fecompiler.engine.provenance import build_step_provenance
-from fecompiler.tools.verilator import runner
+from fecompiler.tools.verilator import cases as verilator_cases
+from fecompiler.tools.verilator import parallel as verilator_parallel
+from fecompiler.tools.verilator import regression as verilator_regression
 
 
 def _wave(tmp_path: Path, args: list[str], *, name: str = "add.soc", dump: bool = True):
-    return runner._apply_case_wave_arg(
+    return verilator_cases._apply_case_wave_arg(
         name, f"/images/{name}.bin", args, tmp_path / "wave.vcd", dump=dump
     )
 
@@ -46,7 +48,7 @@ def test_only_the_newest_runs_are_kept(tmp_path) -> None:
         (tmp_path / name / "cases.json").write_text("{}", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("not a run", encoding="utf-8")
 
-    runner._prune_run_history(tmp_path, 2)
+    verilator_regression._prune_run_history(tmp_path, 2)
 
     assert sorted(path.name for path in tmp_path.iterdir()) == [
         "20260102_000000_000001",
@@ -67,7 +69,7 @@ def test_results_keep_the_order_of_the_items(jobs) -> None:
             release.set()
         return item * 10
 
-    assert runner._map_in_order([0, 1, 2, 3], work, jobs, lambda item: Path(str(item))) == [
+    assert verilator_parallel._map_in_order([0, 1, 2, 3], work, jobs, lambda item: Path(str(item))) == [
         0,
         10,
         20,
@@ -77,7 +79,7 @@ def test_results_keep_the_order_of_the_items(jobs) -> None:
 
 def test_tools_still_running_are_stopped_when_one_item_fails(monkeypatch, tmp_path) -> None:
     stopped: list[Path] = []
-    monkeypatch.setattr(runner, "stop_session", stopped.append)
+    monkeypatch.setattr(verilator_parallel, "stop_session", stopped.append)
 
     def work(item: str) -> str:
         if item == "b":
@@ -85,7 +87,7 @@ def test_tools_still_running_are_stopped_when_one_item_fails(monkeypatch, tmp_pa
         return item
 
     with pytest.raises(RuntimeError, match="build failed"):
-        runner._map_in_order(["a", "b", "c"], work, 2, lambda item: tmp_path / item)
+        verilator_parallel._map_in_order(["a", "b", "c"], work, 2, lambda item: tmp_path / item)
 
     assert stopped == [tmp_path / "a", tmp_path / "b", tmp_path / "c"]
 

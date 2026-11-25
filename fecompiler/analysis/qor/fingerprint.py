@@ -22,10 +22,7 @@ from fecompiler.analysis.qor.common import (
     _records,
     _string_list,
 )
-from fecompiler.tools.verilator.runner import (
-    effective_sim_cflags,
-    sim_cpp_sources,
-)
+from fecompiler.tools.verilator.sim_settings import effective_sim_cflags, sim_cpp_sources
 
 _HDL_INCLUDE_SUFFIXES = frozenset({".h", ".inc", ".orig", ".sv", ".svh", ".v", ".vh"})
 

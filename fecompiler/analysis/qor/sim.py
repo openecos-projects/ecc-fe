@@ -33,10 +33,7 @@ from fecompiler.analysis.qor.fingerprint import (
     _simulation_harness_sources,
 )
 from fecompiler.analysis.scoring import scoring_policy
-from fecompiler.tools.verilator.runner import (
-    effective_sim_cflags,
-    effective_sim_ldflags,
-)
+from fecompiler.tools.verilator.sim_settings import effective_sim_cflags, effective_sim_ldflags
 
 
 def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:

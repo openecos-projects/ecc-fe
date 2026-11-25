@@ -371,7 +371,13 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | Slang elaboration | `fecompiler/tools/slang/runner.py` |
 | Verilator lint（设置、诊断解析、baseline 门禁） | `fecompiler/tools/verilator/lint.py` |
 | sim 步骤的入口（按设计选择下面两种之一） | `fecompiler/tools/verilator/sim.py` |
-| CPU 仿真（SoC 外壳、测试程序、用例、回归记录） | `fecompiler/tools/verilator/runner.py` |
+| CPU 仿真步骤（编译仿真程序、调度测试程序构建和用例运行、写报告） | `fecompiler/tools/verilator/runner.py` |
+| CPU 仿真的配置（外壳源文件、编译链接参数、运行参数、SoC 根目录、difftest 策略） | `fecompiler/tools/verilator/sim_settings.py` |
+| 测试程序的构建和镜像查找 | `fecompiler/tools/verilator/programs.py` |
+| 用例规划和单个用例的结果判定 | `fecompiler/tools/verilator/cases.py` |
+| CoreMark 的构建设置和结果解析 | `fecompiler/tools/verilator/coremark.py` |
+| 与上一次运行的回归对比、运行历史 | `fecompiler/tools/verilator/regression.py` |
+| 并行执行（测试程序构建、用例运行） | `fecompiler/tools/verilator/parallel.py` |
 | 仿真程序的构建记录与复用判断 | `fecompiler/tools/verilator/build_stamp.py` |
 | 测试程序的构建记录（没变就不重编） | `fecompiler/tools/verilator/program_build.py` |
 | 覆盖率数据的合并与汇总（`sim.coverage` / `testbench.coverage`） | `fecompiler/tools/verilator/coverage.py` |
