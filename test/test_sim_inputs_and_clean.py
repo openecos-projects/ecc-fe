@@ -23,7 +23,8 @@ from fecompiler.tools.common.process import ToolResult
 from fecompiler.tools.common.sv_includes import included_files
 from fecompiler.tools.common.sv_module import module_parameter_names
 from fecompiler.tools.fe.builder import build_step, build_step_space
-from fecompiler.tools.verilator import program_build, runner, testbench
+from fecompiler.tools.verilator import program_build, testbench
+from fecompiler.tools.verilator import programs as verilator_programs
 from fecompiler.tools.verilator.sim import SimStep
 
 
@@ -360,17 +361,17 @@ def _program_build(monkeypatch, tmp_path: Path):
         built.append(name)
         return ToolResult(0, "", False)
 
-    monkeypatch.setattr(runner, "run_tool", run_tool)
-    monkeypatch.setattr(runner, "_program_sources_to_build", lambda _workspace: sources)
-    monkeypatch.setattr(runner, "_build_test_script", lambda _workspace: soc / "scripts" / "build_test.sh")
-    monkeypatch.setattr(runner, "_explicit_soc_tests_out_dir", lambda _workspace: None)
-    monkeypatch.setattr(runner, "_sim_images", lambda _workspace: [])
+    monkeypatch.setattr(verilator_programs, "run_tool", run_tool)
+    monkeypatch.setattr(verilator_programs, "_program_sources_to_build", lambda _workspace: sources)
+    monkeypatch.setattr(verilator_programs, "_build_test_script", lambda _workspace: soc / "scripts" / "build_test.sh")
+    monkeypatch.setattr(verilator_programs, "_explicit_soc_tests_out_dir", lambda _workspace: None)
+    monkeypatch.setattr(verilator_programs, "_sim_images", lambda _workspace: [])
     monkeypatch.setenv("PATH", os.environ["PATH"])
     log = tmp_path / "build.log"
 
     def prepare() -> tuple[list[str], str]:
         built.clear()
-        images, ok = runner._prepare_sim_images(
+        images, ok = verilator_programs._prepare_sim_images(
             {"directory": str(tmp_path), "sim_build_jobs": 2},
             build_log_path=log,
             case_output_root=tmp_path / "cases",
