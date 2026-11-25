@@ -25,6 +25,7 @@ from fecompiler.cli.core.inputs import CommandInput, FlowShowInput
 from fecompiler.cli.core.records import disclosure_cmd, error_record
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.handlers.param import load_parameters
+from fecompiler.cli.project.config import next_run_parameters
 from fecompiler.cli.project.params import PARAMETERS
 
 
@@ -139,10 +140,14 @@ def show_step(command_input: CommandInput, context: CommandContext) -> CommandRe
 def _profile(
     command_input: CommandInput, context: CommandContext
 ) -> tuple[FrontendFlowProfile, dict[str, object]] | CommandResult:
-    loaded = load_parameters(context, of_run=_of_run(command_input, context))
+    of_run = _of_run(command_input, context)
+    loaded = load_parameters(context, of_run=of_run)
     if isinstance(loaded, CommandResult):
         return loaded
-    _, parameters, _ = loaded
+    _, parameters, config = loaded
+    if not context.workspace_mode and not of_run:
+        # The next run gets the template's values with the project's own applied.
+        parameters = next_run_parameters(parameters, config)
     try:
         return flow_profile(parameters), parameters
     except ValueError as error:

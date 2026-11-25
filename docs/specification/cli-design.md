@@ -375,7 +375,10 @@ Commands follow the flow of the design:
   not have, `ecc-fe.toml` does not record defaults for them, and `param show`
   and `param set` refuse them with `parameter_not_applicable` (exit status 2).
 - `run --only/--from/--to <step>` with a step the flow does not have fails
-  with `step_not_in_flow` (exit status 2) and lists the steps it has.
+  with `step_not_in_flow` (exit status 2) and lists the steps it has. When
+  the run lacks the step only because it was created before the project's
+  settings added it, `reason` says so and `new_run_cmd` creates a run that
+  has it.
 
 ### Simulating An RTL Design
 
@@ -444,6 +447,16 @@ Limits of this form: one testbench and one run per flow, no test lists. The
 `sim.*`
 parameters configure the programs a CPU runs and do not apply to an RTL
 design, as `testbench.*` do not apply to a CPU.
+
+### Moving A Direct Workspace
+
+A direct workspace keeps no location record. Where it was is read from the
+path it stores to its own `home/parameters.json`; when a command finds it
+somewhere else, the paths below the old location are rewritten in
+`home/*.json` and in the generated filelists in `origin/`, and one line on
+stderr says so. A copy is repaired the same way and the original is left as
+it is. As for a project, paths outside the workspace are kept and existing
+results become stale.
 
 ### Moving A Project
 
@@ -843,7 +856,7 @@ reported as `error=tool_too_old` with `minimum_version`.
 ## Handoff
 
 `ecc-fe handoff [--run-id <id>] [--output <dir>] [--bundle]
-[--allow-incomplete] [--no-check]` writes the handoff manifest of a run: the
+[--allow-incomplete] [--no-check] [--sdc <file>]` writes the handoff manifest of a run: the
 user's design with everything needed to compile it, and what the flow
 concluded. It is the only interface a consumer such as ECC uses; its content
 and readiness rules are specified in
@@ -855,7 +868,8 @@ and readiness rules are specified in
 and of the flow profile a design's parameters select. They report what the
 flow is made of, not what it has done (`status`). They describe the same
 parameters as `param list`: a direct workspace, the run named by `--run-id`,
-or otherwise the next new run of the project.
+or otherwise the next new run of the project: the template's values with the
+project's `[params]` applied.
 
 `flow list` writes a `flow` record (`design_kind`, `describes` =
 `workspace` | `run` | `next_run`, `project`, `run`, `workspace`, `steps` in

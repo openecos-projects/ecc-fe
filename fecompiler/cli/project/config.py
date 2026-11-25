@@ -234,6 +234,22 @@ def apply_project_overrides(
     return config, changed
 
 
+def next_run_parameters(
+    parameters: dict[str, object], config: "ProjectConfig | None"
+) -> dict[str, object]:
+    """Return the stored parameters a new run of the project would get.
+
+    These are the template's values with the project's ``[params]`` applied,
+    which is what creating a run does.
+    """
+    effective = dict(parameters)
+    for key, value in (config.overrides if config else {}).items():
+        schema = lookup_parameter(key)
+        if schema is not None:
+            effective[schema.parameter_key] = value
+    return effective
+
+
 def pending_project_overrides(
     directory: str,
     *,

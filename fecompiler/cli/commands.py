@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fecompiler.allflow.profile import flow_steps as profile_flow_steps
 from fecompiler.allflow.steps import find_step_definition, step_directory, step_names
 from fecompiler.application.events import workspace_event_sink
 from fecompiler.application.workspace_service import workspace_application
@@ -43,6 +44,7 @@ from fecompiler.cli.project.config import (
     ProjectConfig,
     ProjectConfigError,
     apply_project_overrides,
+    next_run_parameters,
     create_project_config,
     load_project_config,
     load_run_parameter_overrides,
@@ -1910,12 +1912,37 @@ def _step_outside_flow(
                         "step_not_in_flow",
                         step=step,
                         expected=list(flow_steps),
-                        reason="this design's flow does not include the step",
+                        **_step_outside_reason(step, context),
                     )
                 ],
                 exit_code=2,
             )
     return None
+
+
+def _step_outside_reason(step: str, context: CommandContext) -> dict[str, object]:
+    """Say why a run lacks a step, and what to do when a new run would have it."""
+    fields: dict[str, object] = {"reason": "this design's flow does not include the step"}
+    if context.workspace_mode or not context.template_dir:
+        return fields
+    try:
+        if not (Path(context.workspace_dir) / "home" / "flow.json").is_file():
+            return fields
+        template = read_json_object(Path(context.template_dir) / "home" / "parameters.json")
+        config = load_project_config(context.config_dir)
+        steps = [name for name, _ in profile_flow_steps(next_run_parameters(template, config))]
+    except (OSError, TypeError, ValueError):
+        return fields
+    if step in steps:
+        # A run keeps the flow it was created with; the project has moved on.
+        fields["reason"] = (
+            f"run {context.run_id or 'default'} was created before the project's "
+            f"settings added the {step} step; a new run has it"
+        )
+        fields["new_run_cmd"] = disclosure_cmd(
+            "ecc-fe run --run-id <new-run>", project=context.project
+        )
+    return fields
 
 
 # Verilator 5 introduced --timing, which the simulation build relies on.

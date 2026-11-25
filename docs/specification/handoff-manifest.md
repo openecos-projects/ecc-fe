@@ -77,6 +77,7 @@ Top-level fields:
 | `created_at` | string | UTC, ISO 8601. |
 | `source` | object | `project`, `run`, `workspace` the manifest was made from. Informational. |
 | `design` | object | See below. |
+| `constraints` | object | `sdc`: `null`, or `path` and `sha256` of the timing constraints handed off with the design. See below. Absent in manifests written before it was added. |
 | `rtl` | object | See below. |
 | `excluded` | object | What was left out and why; `soc_harness` for a CPU project. |
 | `standalone_check` | object | `status` (`pass`, `fail`, `skipped`), and `tool`, `errors`, `log`, `defines` or `reason`. |
@@ -95,7 +96,17 @@ Top-level fields:
 | `clock_port_source` | `parameter` (set for the project), `detected` (the only clock-named input of `top`), or `null`. |
 | `frequency_mhz` | Target clock frequency. |
 | `parameters` | Top-level parameter overrides, `NAME=value`. |
-| `sdc` | Always `null` in version 1; ECC-FE takes no constraints yet. |
+| `sdc` | Always `null` in version 1. Constraints are described by the top-level `constraints`. |
+
+`constraints`:
+
+The flow does not read timing constraints; it passes a file on. The file is
+the one given to `handoff --sdc <file>`, otherwise the run's `design.sdc`
+parameter (a path relative to the project is resolved from it). `sdc.path` is
+absolute, or `constraints/<file name>` beside the manifest in a bundle.
+`handoff` fails with `handoff_sdc_not_found` when the file named does not
+exist. Nothing checks that the constraints agree with `design.clock_port` or
+`design.frequency_mhz`; that is for the consumer to decide.
 
 `rtl`:
 

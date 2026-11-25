@@ -37,13 +37,15 @@ from fecompiler.tools.common.sv_module import (
     module_port_contract_from_files,
     strip_sv_comments,
 )
-from fecompiler.tools.common.tool_config import config_list
+from fecompiler.tools.common.tool_config import config_list, config_text, resolve_config_path
 from fecompiler.utility.program import invoked
 
 HANDOFF_SCHEMA_VERSION = 1
 HANDOFF_KIND = "ecc-fe-handoff"
 MANIFEST_NAME = "handoff.json"
 FILELIST_NAME = "design.f"
+# Where a bundled handoff keeps the timing constraints.
+CONSTRAINTS_DIR = "constraints"
 # Defines the frontend adds itself when it elaborates and lints.
 FRONTEND_DEFINES = ("SYNTHESIS",)
 # Time scale the frontend gives modules that do not declare one.
@@ -101,6 +103,20 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
             [failure_record("handoff_inputs_unavailable", error, workspace=context.workspace_dir)]
         )
 
+    constraints = _constraints_file(command_input, workspace)
+    if constraints is not None and not constraints.is_file():
+        return CommandResult.err(
+            [
+                error_record(
+                    "handoff_sdc_not_found",
+                    path=str(constraints),
+                    reason="named by --sdc"
+                    if command_input.sdc
+                    else "named by design.sdc of this run",
+                )
+            ]
+        )
+
     destination = _destination(command_input, context)
     try:
         destination.mkdir(parents=True, exist_ok=True)
@@ -114,6 +130,11 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
         (destination / FILELIST_NAME).write_text(_filelist_text(rtl), encoding="utf-8")
         rtl["filelist"] = FILELIST_NAME
         design = _design(parameters, workspace, design_inputs)
+        handed_constraints = {
+            "sdc": _handed_off_constraints(
+                constraints, destination, bundle=command_input.bundle
+            )
+        }
         check = (
             {"status": "skipped", "reason": "--no-check"}
             if not command_input.check
@@ -146,6 +167,8 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
                 "workspace": context.workspace_dir,
             },
             "design": design,
+            # Added within schema version 1; `design.sdc` stays null there.
+            "constraints": handed_constraints,
             "rtl": rtl,
             "standalone_check": check,
             "excluded": design_inputs["excluded"],
@@ -185,6 +208,7 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
                 "headers": len(rtl["headers"]),
                 "unresolved_includes": len(rtl["unresolved_includes"]),
                 "standalone_check": check["status"],
+                "sdc": (handed_constraints["sdc"] or {}).get("path"),
                 "view_cmd": f"cat {shlex.quote(str(path))}",
             }
         ]
@@ -421,9 +445,34 @@ def _design(
         "clock_port_source": clock_source,
         "frequency_mhz": frequency,
         "parameters": config_list(workspace, "design_parameters"),
-        # ECC-FE does not take constraints as an input yet.
+        # Always null in schema version 1; see the manifest's `constraints`.
         "sdc": None,
     }
+
+
+def _constraints_file(command_input: HandoffInput, workspace: dict[str, Any]) -> Path | None:
+    """The SDC to hand off: the one given now, else the run's ``design.sdc``."""
+    if command_input.sdc:
+        return Path(command_input.sdc).expanduser().resolve()
+    configured = config_text(workspace, "design_sdc").strip()
+    return resolve_config_path(workspace, configured) if configured else None
+
+
+def _handed_off_constraints(
+    constraints: Path | None, destination: Path, *, bundle: bool
+) -> dict[str, str] | None:
+    """Describe the constraints file; the flow passes it on without reading it."""
+    directory = destination / CONSTRAINTS_DIR
+    if directory.exists():
+        shutil.rmtree(directory)
+    if constraints is None:
+        return None
+    if not bundle:
+        return {"path": str(constraints), "sha256": _sha256(constraints)}
+    directory.mkdir(parents=True)
+    target = directory / constraints.name
+    shutil.copy2(constraints, target)
+    return {"path": (Path(CONSTRAINTS_DIR) / constraints.name).as_posix(), "sha256": _sha256(target)}
 
 
 def _clock_port(

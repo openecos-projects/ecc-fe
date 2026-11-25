@@ -503,6 +503,13 @@ def build_app() -> typer.Typer:
                 help="Elaborate the design from the manifest alone (default: on)",
             ),
         ] = True,
+        sdc: Annotated[
+            str | None,
+            typer.Option(
+                "--sdc",
+                help="Timing constraints to hand off (default: the run's design.sdc)",
+            ),
+        ] = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -520,6 +527,7 @@ def build_app() -> typer.Typer:
                 bundle=bundle,
                 allow_incomplete=allow_incomplete,
                 check=check,
+                sdc=sdc,
             ),
             handoff_handlers.handoff,
         )

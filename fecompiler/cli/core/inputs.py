@@ -167,6 +167,7 @@ class HandoffInput(CommandInput):
     bundle: bool = False
     allow_incomplete: bool = False
     check: bool = True
+    sdc: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
