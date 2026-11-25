@@ -10,13 +10,15 @@ import urllib.request
 import uuid
 import zipfile
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from fecompiler.cli import resource_download
+from fecompiler.cli import resource_cleanup, resource_download
+from fecompiler.cli.resource_cleanup import CleanupError
 from fecompiler.cli.resource_download import DownloadError
 from fecompiler.resources import (
     MANIFEST_SCHEMA_VERSION,
@@ -65,6 +67,7 @@ ProgressCallback = Callable[[dict[str, object]], None]
 
 # The registry as it was last read, for when the network cannot be reached.
 REGISTRY_CACHE_NAME = "registry.json"
+LIST_METADATA_TIMEOUT = 10.0
 
 
 class ResourceManager:
@@ -134,24 +137,26 @@ class ResourceManager:
         manifest = read_resource_manifest(self.manifest_path, strict=True)
         installed = installed_tool_entries(manifest)
         records: list[dict[str, object]] = []
-        for tool in source.get("tools", []):
-            if not isinstance(tool, dict):
-                continue
+        tools = [tool for tool in source.get("tools", []) if isinstance(tool, dict)]
+
+        def resolve(tool: dict[str, Any]) -> tuple[RegistryVersion | None, str | None]:
             name = str(tool.get("name", ""))
-            entry = installed.get(name)
-            availability_error: str | None = None
             try:
                 latest = self.resolve_version(source, name) if name else None
                 if latest and latest.asset.metadata_url:
-                    latest = RegistryVersion(
-                        version=latest.version,
-                        requires=latest.requires,
-                        asset=self._resolve_metadata(latest.asset),
-                        platform=latest.platform,
-                    )
+                    # A listing waits less for one answer than an install does.
+                    self._resolve_metadata(latest.asset, timeout=LIST_METADATA_TIMEOUT)
             except ResourceManagerError as error:
-                latest = None
-                availability_error = str(error)
+                return None, str(error)
+            return latest, None
+
+        # Each tool may need a request for its release metadata; one slow
+        # answer must not hold up the others.
+        with ThreadPoolExecutor(max_workers=8, thread_name_prefix="ecc-fe-registry") as pool:
+            resolved = list(pool.map(resolve, tools))
+        for tool, (latest, availability_error) in zip(tools, resolved, strict=True):
+            name = str(tool.get("name", ""))
+            entry = installed.get(name)
             health = tool_entry_health(entry) if entry else {"status": "missing"}
             update_available = bool(
                 entry
@@ -189,6 +194,57 @@ class ResourceManager:
                 }
             )
         return records
+
+    def list_installed(self) -> list[dict[str, object]]:
+        """List what is installed from the manifest alone, without a network.
+
+        Whether a newer version exists is not known here; ``list_resources``
+        asks the registry for that.
+        """
+        manifest = read_resource_manifest(self.manifest_path, strict=True)
+        records: list[dict[str, object]] = []
+        for name, entry in installed_tool_entries(manifest).items():
+            health = tool_entry_health(entry)
+            records.append(
+                {
+                    "kind": "resource",
+                    "resource_id": f"tool:{name}",
+                    "name": name,
+                    "display_name": name,
+                    "status": "installed" if health.get("status") == "ok" else str(health.get("status")),
+                    "installed_version": entry.get("version"),
+                    "available_version": None,
+                    "platform": current_registry_platform(),
+                    "path": entry.get("path"),
+                    "requires": [],
+                    "missing_markers": health.get("missing_markers", []),
+                    "availability_error": None,
+                }
+            )
+        return records
+
+    def uninstall(self, resource_id: str) -> dict[str, object]:
+        """Remove one installed resource; see ``resource_cleanup.uninstall``."""
+        name = _normalize_resource_id(resource_id).removeprefix("tool:")
+        try:
+            return resource_cleanup.uninstall(
+                name,
+                manifest_path=self.manifest_path,
+                tools_dir=self.tools_dir,
+                lock=_manifest_lock,
+            )
+        except CleanupError as error:
+            raise ResourceManagerError(str(error)) from error
+
+    def prune(self, *, apply: bool) -> list[dict[str, object]]:
+        """Report, and with *apply* remove, old versions and leftovers."""
+        with _manifest_lock(self.manifest_path):
+            return resource_cleanup.prune(
+                manifest_path=self.manifest_path,
+                tools_dir=self.tools_dir,
+                cache_dir=self.cache_dir,
+                apply=apply,
+            )
 
     def required_resources(
         self, *, registry: dict[str, Any] | None = None
@@ -340,6 +396,14 @@ class ResourceManager:
         asset = self._resolve_metadata(selected.asset, unreachable_ok=True)
         manifest = read_resource_manifest(self.manifest_path, strict=True)
         existing = installed_tool_entries(manifest).get(name)
+        # An install of this tool that was killed may have left the installed
+        # directory moved aside; put that right before judging its health.
+        resource_cleanup.recover_staging(
+            self.tools_dir / name,
+            installed_path=(
+                Path(str(existing.get("path"))) if existing and existing.get("path") else None
+            ),
+        )
         if (
             existing
             and str(existing.get("version")) == selected.version
@@ -443,7 +507,11 @@ class ResourceManager:
                     os.replace(backup_path, destination)
 
     def _resolve_metadata(
-        self, asset: RegistryAsset, *, unreachable_ok: bool = False
+        self,
+        asset: RegistryAsset,
+        *,
+        unreachable_ok: bool = False,
+        timeout: float = 30,
     ) -> RegistryAsset:
         """Check the registry's lock against the release's own metadata.
 
@@ -454,7 +522,7 @@ class ResourceManager:
         if not asset.metadata_url:
             return asset
         try:
-            with urllib.request.urlopen(asset.metadata_url, timeout=30) as response:
+            with urllib.request.urlopen(asset.metadata_url, timeout=timeout) as response:
                 metadata = json.load(response)
         except OSError as error:
             if unreachable_ok:

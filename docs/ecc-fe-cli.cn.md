@@ -257,6 +257,9 @@ ecc-fe resource status
 ecc-fe resource install --required
 ecc-fe resource install slang
 ecc-fe resource update --required
+ecc-fe resource list --installed     # 只看已安装的，不联网
+ecc-fe resource uninstall slang      # 卸载一个资源
+ecc-fe resource prune                # 列出可以清理的东西；加 --apply 才真正删除
 ecc-fe resource env --shell zsh
 ```
 
@@ -273,6 +276,27 @@ CLI 与桌面端共用以下目录，不需要重复安装：
 
 可用 `XDG_STATE_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME` 覆盖。registry 地址可
 用 `ECOS_REGISTRY_URL` 覆盖，也可以指向一个本地文件。
+
+### 卸载和清理
+
+- `resource list --installed` 只读本地清单，不发任何网络请求。
+- `resource uninstall <id>` 删除清单里的条目和它的安装目录。目录不是资源管理器
+  装的（例如手工登记的路径）时只删条目、不删文件。卸载的是 ECC-FE 必需的资源时，
+  输出里会给出重新安装的命令。
+- 安装新版本后旧版本目录不会自动删除。`resource prune` 列出三类可以清理的东西：
+  旧版本目录、安装被杀后留下的临时目录、下载缓存里的压缩包和未完成的下载。
+  默认只列出，确认后加 `--apply` 删除：
+
+  ```text
+  $ ecc-fe resource prune
+    would_remove  old_version      19.9 MB  ~/.local/share/ecos-studio/tools/verilator/5.040
+    would_remove  download          3.0 MB  ~/.cache/ecos-studio/downloads/yosys-....archive.part
+    kept_recent   staging           0.0 MB  ~/.local/share/ecos-studio/tools/verilator/.extract-...
+  ```
+
+  不到一小时的临时目录和下载会保留（可能有安装正在使用）；已安装的版本不会被动。
+- 安装过程被强行终止后，再次安装同一个资源会先自动修复：把被挪到一边的已安装目录
+  放回去，并清掉过期的临时目录。
 
 ### 网络不好时
 

@@ -183,7 +183,8 @@ def test_a_partial_file_of_something_else_is_discarded(server, tmp_path) -> None
 
     _fetch(f"{server.url}/tool.tar.gz", target)
 
-    # Continued from 1000 foreign bytes the checksum is wrong; the retry is clean.
+    # Continued from 1000 foreign bytes the checksum is wrong; the retry is clean
+    # and immediate.
     assert target.read_bytes() == CONTENT
     assert [header for _, header in server.requests] == ["bytes=1000-", None]
 
@@ -222,7 +223,19 @@ def test_wrong_content_is_refused_and_nothing_is_kept(server, tmp_path) -> None:
         _fetch(f"{server.url}/tool.tar.gz", target, sha256="0" * 64)
 
     assert not target.exists() and not target.with_name("tool.archive.part").exists()
-    assert len(server.requests) == 4
+    # Asking again would bring the same bytes: it is fetched once.
+    assert len(server.requests) == 1
+
+
+def test_wrong_content_after_a_cut_is_fetched_whole_once_more(server, tmp_path) -> None:
+    server.cut_after["/tool.tar.gz"] = [300_000]
+    target = tmp_path / "tool.archive"
+
+    with pytest.raises(DownloadError, match="SHA256 verification failed"):
+        _, waits = _fetch(f"{server.url}/tool.tar.gz", target, sha256="0" * 64)
+
+    # The cut, the continuation, then one complete download to be sure.
+    assert [header for _, header in server.requests] == [None, "bytes=300000-", None]
 
 
 def test_the_number_of_attempts_can_be_set(server, tmp_path) -> None:

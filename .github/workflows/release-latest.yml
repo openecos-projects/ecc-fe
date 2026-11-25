@@ -85,6 +85,7 @@ jobs:
             test/test_qor_analysis.py \
             test/test_resource_manager.py \
             test/test_resource_download.py \
+            test/test_resource_cleanup.py \
             test/test_run_parameter_view.py \
             test/test_resources.py \
             test/test_rtl_review.py \

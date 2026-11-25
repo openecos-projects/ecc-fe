@@ -24,7 +24,7 @@ ecc-fe run
 ecc-fe status
 ecc-fe log
 ecc-fe config
-ecc-fe resource list|status|install|update|env
+ecc-fe resource list|status|install|update|uninstall|prune|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
 ecc-fe report qor|files|compare|lint-baseline|export|failure|coverage
@@ -320,7 +320,9 @@ where the bytes come from does not have to be trusted. On that rests:
   is discarded and fetched from the start.
 - **Retrying.** After a network error or a 5xx answer the same address is
   tried again, `ECOS_DOWNLOAD_ATTEMPTS` times in all (default 4), waiting 1,
-  3, 10 and 30 seconds. 400, 401, 403, 404 and 410 are not retried.
+  3, 10 and 30 seconds. 400, 401, 403, 404 and 410 are not retried, and
+  neither is a file that arrived whole with the wrong checksum: the next
+  address, if there is one, is tried instead.
   `ECOS_DOWNLOAD_TIMEOUT` is the seconds one read may take (default 60).
 - **Mirrors.** `ECOS_RESOURCE_MIRRORS` holds `prefix=replacement` rules
   separated by whitespace or commas. An address that starts with a prefix is
@@ -337,6 +339,43 @@ where the bytes come from does not have to be trusted. On that rests:
   cannot be read, that copy is used and a line on stderr says so.
 - **Release metadata** (`metadata_url`) that cannot be read does not stop an
   install; metadata that disagrees with the registry's lock still does.
+
+### Listing, Removing And Cleaning Up
+
+`resource list --installed` reads the manifest only and makes no request;
+`available_version` is `null` there. `resource list` asks the registry and,
+for resources that have it, their release metadata; those requests are made
+side by side and each waits at most 10 seconds.
+
+`resource uninstall <id>` removes the resource's manifest entry, then its
+directory. The directory is removed only when the resource manager put it
+there (the entry is managed and its path is below
+`tools/<name>/`); otherwise the entry alone is dropped and the record says
+`status=unregistered`, `files=kept`. The record is `resource_uninstall` with
+`version`, `path`, `bytes`, `required`, and `reinstall_cmd` for a resource
+ECC-FE requires. A resource that is not installed is
+`resource_uninstall_failed`.
+
+`resource prune` lists what can be removed without changing what is
+installed, and removes it only with `--apply`:
+
+| `category` | What |
+| --- | --- |
+| `old_version` | A version directory of an installed tool that is not the installed version. |
+| `staging` | `.extract-*` and `.backup-*` directories an install left behind. |
+| `download` | Archives and partial downloads in the download cache. |
+
+It writes a `resource_prune_summary` (`applied`, `items`, `removed_bytes`,
+`removable_bytes`, `kept_recent`, `failed`, `apply_cmd`) and one
+`resource_prune` record per item with `status` `would_remove`, `removed`,
+`kept_recent` or `failed`. Staging directories and downloads younger than an
+hour are kept, because an install may be using them. Version directories of
+a tool that has no manifest entry, or whose installed path is outside its
+tools directory, are not judged.
+
+An install first repairs what a killed install of the same tool left: a
+backup of the installed version is moved back when the installed directory
+is gone, and staging directories older than an hour are removed.
 
 Progress events (`resource_progress`) have the phases `downloading`,
 `resuming`, `retrying` (with `attempt`, `of`, `after_s`, `reason`), `mirror`,

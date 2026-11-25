@@ -87,6 +87,16 @@ class ResourceInstallInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceUninstallInput(CommandInput):
+    resource_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ResourcePruneInput(CommandInput):
+    apply: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceEnvInput(CommandInput):
     shell: str = "sh"
 

@@ -126,14 +126,21 @@ def fetch(
     for address in addresses:
         if address != url:
             tell("mirror", {"url": address})
-        for attempt in range(1, attempts + 1):
+        attempt = 0
+        while attempt < attempts:
+            attempt += 1
             try:
-                _receive(address, partial, size=size, timeout=timeout, tell=tell)
+                continued = _receive(address, partial, size=size, timeout=timeout, tell=tell)
                 actual = file_sha256(partial)
                 if actual != sha256.lower():
                     # Nothing of a file with the wrong content is worth keeping.
                     partial.unlink(missing_ok=True)
-                    raise DownloadError(
+                    if continued:
+                        # The bytes it was continued from may have been the
+                        # wrong ones: fetch it whole, once, before judging.
+                        attempt -= 1
+                        continue
+                    raise _WrongContent(
                         f"SHA256 verification failed for {address}: "
                         f"expected {sha256}, received {actual}"
                     )
@@ -162,8 +169,18 @@ def fetch(
     )
 
 
+class _WrongContent(DownloadError):
+    """A complete download whose content is not what the registry names."""
+
+
 def _is_final(error: BaseException) -> bool:
-    """An answer that trying the same address again will not change."""
+    """An answer that trying the same address again will not change.
+
+    That is a refusal by the server, and a file that arrived whole with the
+    wrong content: fetching it again would bring the same bytes.
+    """
+    if isinstance(error, _WrongContent):
+        return True
     return isinstance(error, urllib.error.HTTPError) and error.code in {400, 401, 403, 404, 410}
 
 
@@ -177,14 +194,17 @@ def _reason(error: BaseException) -> str:
 
 def _receive(
     url: str, partial: Path, *, size: int | None, timeout: float, tell: Notify
-) -> None:
-    """Bring *partial* to *size* bytes from *url*, continuing what is there."""
+) -> bool:
+    """Bring *partial* to *size* bytes from *url*, continuing what is there.
+
+    Returns whether bytes that were on disk before the call are part of it.
+    """
     have = partial.stat().st_size if partial.is_file() else 0
     if size is not None and have > size:
         partial.unlink()
         have = 0
     if size is not None and have == size:
-        return
+        return True
     request = urllib.request.Request(url)
     if have:
         request.add_header("Range", f"bytes={have}-")
@@ -217,6 +237,7 @@ def _receive(
         if have > size:
             partial.unlink(missing_ok=True)
         raise DownloadError(f"the download ended at {have} of {size} bytes")
+    return continued
 
 
 __all__ = [
