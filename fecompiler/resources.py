@@ -294,25 +294,42 @@ def activate_managed_resources(
                 runtime_tools.setdefault(capability, (executable, root))
                 path_dirs.append(str(executable.parent))
 
+    # Each tool is described by a group of variables that only make sense
+    # together. A group is filled in from the managed tool unless the user
+    # already chose another one: see ``_adopt_managed_tool``.
     if "slang" in runtime_tools:
-        env.setdefault("ECOS_SLANG", str(runtime_tools["slang"][0]))
+        _adopt_managed_tool(
+            env, {"ECOS_SLANG": str(runtime_tools["slang"][0])}, chosen_by=("SLANG",)
+        )
     if "ecc-fe" in runtime_tools:
-        env.setdefault("ECOS_FE_CLI", str(runtime_tools["ecc-fe"][0]))
+        _adopt_managed_tool(env, {"ECOS_FE_CLI": str(runtime_tools["ecc-fe"][0])})
     if "verilator" in runtime_tools:
         executable, root = runtime_tools["verilator"]
-        env.setdefault("ECOS_VERILATOR", str(executable))
-        env.setdefault("VERILATOR_ROOT", str(root / "share" / "verilator"))
+        _adopt_managed_tool(
+            env,
+            {
+                "ECOS_VERILATOR": str(executable),
+                "VERILATOR_ROOT": str(root / "share" / "verilator"),
+            },
+            chosen_by=("VERILATOR",),
+        )
     if "yosys" in runtime_tools:
         root = runtime_tools["yosys"][1]
-        env.setdefault("CHIPCOMPILER_OSS_CAD_DIR", str(root))
-        env.setdefault("ECOS_ELECTRON_OSS_CAD_DIR", str(root))
+        _adopt_managed_tool(
+            env,
+            {
+                "CHIPCOMPILER_OSS_CAD_DIR": str(root),
+                "ECOS_ELECTRON_OSS_CAD_DIR": str(root),
+            },
+            chosen_by=("YOSYS", "ECOS_YOSYS", "ECOS_OSS_CAD_BIN"),
+        )
     if "riscv-toolchain" in runtime_tools:
         executable, root = runtime_tools["riscv-toolchain"]
-        env.setdefault("RISCV", str(root))
-        env.setdefault("RISCV_TOOLCHAIN", str(root))
+        values = {"RISCV": str(root), "RISCV_TOOLCHAIN": str(root)}
         suffix = "gcc"
         if executable.name.endswith(suffix):
-            env.setdefault("RISCV_PREFIX", str(executable)[: -len(suffix)])
+            values["RISCV_PREFIX"] = str(executable)[: -len(suffix)]
+        _adopt_managed_tool(env, values)
 
     if resource_paths:
         env["ECOS_FE_RESOURCE_ROOTS"] = _merge_path_values(
@@ -321,6 +338,32 @@ def activate_managed_resources(
     if path_dirs:
         env["PATH"] = _merge_path_values(env.get("PATH", ""), path_dirs, prepend=True)
     return {key: value for key, value in env.items() if before.get(key) != value}
+
+
+def _adopt_managed_tool(
+    env: MutableMapping[str, str],
+    values: dict[str, str],
+    *,
+    chosen_by: tuple[str, ...] = (),
+) -> bool:
+    """Point the variables of one tool at its managed installation, or at nothing.
+
+    The variables of a tool belong together: an executable with the data
+    directory of another installation does not work. So when the user has
+    chosen a tool of their own, through one of these variables set to
+    something else or through one of *chosen_by*, none of them is touched.
+    Explicit settings take precedence, and they are not mixed with managed
+    ones. Returns whether the managed tool was adopted.
+    """
+    if any(env.get(name, "").strip() for name in chosen_by):
+        return False
+    for name, value in values.items():
+        current = env.get(name, "").strip()
+        if current and os.path.realpath(current) != os.path.realpath(value):
+            return False
+    for name, value in values.items():
+        env.setdefault(name, value)
+    return True
 
 
 def current_registry_platform() -> str:

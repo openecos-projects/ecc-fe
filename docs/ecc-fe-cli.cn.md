@@ -340,6 +340,12 @@ eval "$(ecc-fe resource env --shell zsh)"
 
 通常不需要执行这一步，因为 `ecc-fe` 启动时会自动读取资源清单。
 
+想用自己装的工具而不是受管版本时，设置对应的环境变量即可，例如
+`ECOS_VERILATOR=/opt/verilator/bin/verilator`。同一个工具的几个变量是成组处理的：
+只要你指定了自己的版本，这个工具的其他变量（如 `VERILATOR_ROOT`）就不会再被设成
+受管版本的路径，不会出现"可执行文件是你的、数据目录是受管版本的"这种混用。
+RISC-V 工具链的 `RISCV`、`RISCV_TOOLCHAIN`、`RISCV_PREFIX` 和 Yosys 的相关变量同理。
+
 ## 工程配置和参数
 
 `ecc-fe init <工程目录>` 会生成工程级 `ecc-fe.toml`、`runs/` 和内部的未执行
