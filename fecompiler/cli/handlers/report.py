@@ -7,9 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fecompiler.allflow.steps import step_directory, step_names
+from fecompiler.analysis.ci_export import exported_diagnostics, junit_xml, sarif_log
 from fecompiler.cli.core.inputs import (
     CommandInput,
     ReportCompareInput,
+    ReportExportInput,
     ReportFilesInput,
     ReportLintBaselineInput,
     ReportQorInput,
@@ -469,6 +471,121 @@ def lint_baseline(command_input: CommandInput, context: CommandContext) -> Comma
             }
         ]
     )
+
+
+# What each export format is made from, and the file it is written to.
+EXPORT_FORMATS = {
+    "sarif": ("lint", "lint.sarif"),
+    "junit": ("sim", "sim.junit.xml"),
+}
+
+
+def export(command_input: CommandInput, context: CommandContext) -> CommandResult:
+    """Write lint diagnostics as SARIF, or simulation cases as JUnit XML."""
+    assert isinstance(command_input, ReportExportInput)
+    selected = EXPORT_FORMATS.get(command_input.export_format)
+    if selected is None:
+        return CommandResult.err(
+            [
+                error_record(
+                    "unknown_export_format",
+                    format=command_input.export_format,
+                    expected=list(EXPORT_FORMATS),
+                )
+            ],
+            exit_code=2,
+        )
+    step, default_name = selected
+    loaded = _load_workspace(context.workspace_dir)
+    if isinstance(loaded, CommandResult):
+        return loaded
+    workspace, flow = loaded
+    report_dir = _report_directory(Path(context.workspace_dir), step)
+    properties = {
+        "design": workspace.get("design", ""),
+        "top_module": workspace.get("top_module", ""),
+        "run": None if context.workspace_mode else (context.run_id or "default"),
+    }
+    record: dict[str, object] = {
+        "kind": "report_export",
+        "format": command_input.export_format,
+        "step": step,
+        "state": _step_state(flow, step),
+    }
+    try:
+        if step == "lint":
+            summary = read_json_object(report_dir / "lint_summary.json")
+            diagnostics = summary["diagnostics"]
+            if not isinstance(diagnostics, list):
+                raise TypeError("diagnostics must be a list")
+            listed = [item for item in diagnostics if isinstance(item, dict)]
+            carried = exported_diagnostics(listed, everything=command_input.everything)
+            base_dir = Path(command_input.base_dir or Path.cwd()).expanduser()
+            content = (
+                json.dumps(
+                    sarif_log(carried, base_dir=base_dir, properties=properties),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            record.update(
+                {
+                    "results": len(carried),
+                    "errors": sum(item.get("severity") == "error" for item in carried),
+                    "warnings": sum(item.get("severity") == "warning" for item in carried),
+                    # Warnings in sources the user does not own; --all carries them.
+                    "left_out": len(listed) - len(carried),
+                    "base_dir": os.path.abspath(base_dir),
+                }
+            )
+        else:
+            payload = read_json_object(report_dir / "cases.json")
+            cases = payload.get("cases")
+            if not isinstance(cases, list):
+                raise TypeError("cases must be a list")
+            content, counts = junit_xml(
+                [case for case in cases if isinstance(case, dict)],
+                suite=str(payload.get("suite") or "sim"),
+                design=str(workspace.get("design") or ""),
+                properties=properties,
+                step_error=_step_error(record["state"], step),
+            )
+            record.update(counts)
+    except (OSError, TypeError, ValueError, KeyError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    f"{step}_result_not_found",
+                    error,
+                    workspace=context.workspace_dir,
+                    remediation_cmd=invoked(f"ecc-fe run --to {step}"),
+                )
+            ]
+        )
+    destination = Path(command_input.output_path or default_name).expanduser()
+    if not destination.is_absolute():
+        destination = (Path.cwd() / destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(content, encoding="utf-8")
+    record["path"] = str(destination)
+    record["bytes"] = len(content.encode("utf-8"))
+    return CommandResult.ok([record])
+
+
+def _step_state(flow: dict[str, object], step: str) -> str:
+    steps = flow.get("steps")
+    for raw in steps if isinstance(steps, list) else []:
+        if isinstance(raw, dict) and raw.get("name") == step:
+            return normalize_state(raw.get("state"))
+    return "unknown"
+
+
+def _step_error(state: object, step: str) -> str | None:
+    """Why a report without a failing case is still not a pass."""
+    if state in {"incomplete", "invalid"}:
+        return f"the {step} step failed; see `{invoked(f'ecc-fe log --step {step}')}`"
+    return None
 
 
 def _load_workspace(

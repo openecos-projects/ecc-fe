@@ -405,6 +405,42 @@ ecc-fe report compare default faster-sim --fail-on-regression  # 变差时退出
 run 之间不同的参数。某个步骤标出"inputs or settings differ"时，表示两边的输入
 或设置不同，数字不能直接当作同一条件下的对比。
 
+### 导出给 CI：SARIF 和 JUnit
+
+```bash
+ecc-fe report export --format sarif    # lint 诊断 -> lint.sarif
+ecc-fe report export --format junit    # 仿真用例 -> sim.junit.xml
+```
+
+这条命令只转换流程已经写好的结果，不会重新运行任何步骤；无论结果好坏退出码都
+是 0，流程通过与否看 `run` 的退出码。`-o` 指定输出文件。
+
+SARIF（2.1.0）供 GitHub code scanning 这类界面使用：
+
+- 默认只包含你自己源文件里的诊断和所有错误；SoC 外壳等不属于你的源文件里的
+  警告不带，数量记在输出的 `left_out` 里，加 `--all` 可以全部带上。
+- 位于 `--base-dir`（默认是当前目录）之下的文件写成相对路径，所以应当在仓库
+  根目录执行，或者用 `--base-dir` 指向仓库根目录；其余文件保留绝对路径。
+- 配置了 lint 基线时，已知警告标为 `unchanged`，新增警告标为 `new`。
+
+JUnit 每个仿真用例对应一个 `testcase`，未通过的带失败类型、原因和日志结尾。
+如果 sim 步骤失败但没有任何用例失败（例如测试程序编译失败），报告里会有一条
+名为 `sim` 的错误，避免"没有用例"被当成通过。用例耗时没有单独记录，所以不写。
+
+GitHub Actions 里的用法示例：
+
+```yaml
+- run: ecc-fe run --project fe
+- if: always()
+  run: |
+    ecc-fe report export --format sarif --project fe
+    ecc-fe report export --format junit --project fe
+- if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: lint.sarif
+```
+
 ## 排查问题
 
 `ecc-fe init` 失败时会列出每一条原因（`init_issue` 记录，带 `code` 和 `message`），
