@@ -3177,7 +3177,8 @@ def test_build_all_programs_emit_separate_case_images(tmp_path, monkeypatch):
     )
 
     assert ok is True
-    assert [Path(call[call.index("--name") + 1]).name for call in run_calls] == ["add", "bit"]
+    # The programs are built side by side: the order of the calls is not fixed.
+    assert sorted(Path(call[call.index("--name") + 1]).name for call in run_calls) == ["add", "bit"]
     assert all("--src" in call for call in run_calls)
     expected = {
         case_root / "add.soc" / "add.soc.bin",
@@ -3564,3 +3565,57 @@ def test_a_clean_build_does_not_reuse_the_sim_program_or_its_objects(tmp_path, m
     # Afterwards the fresh program is reused as before.
     assert engine.run_step("sim", rerun=True) == StateEnum.Success
     assert compiles() == 0
+
+
+def _coverage_sim(tmp_path, monkeypatch, *, harness_writes: bool):
+    """A sim workspace asked for coverage, whose "simulator" writes it when told to."""
+    from fecompiler.tools.verilator import coverage
+
+    engine, ws, rtl, _header, tb, _compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    ws["sim_reuse_binary"] = False
+    ws["sim_coverage"] = True
+    if harness_writes:
+        tb.write_text("int main() { contextp->coveragep()->write(path); }\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    real = __import__("fecompiler.tools.verilator.runner", fromlist=["run_tool"]).run_tool
+
+    def recording(cmd, **options):
+        command = [str(item) for item in cmd]
+        calls.append(command)
+        if "--coverage" in command:
+            target = Path(command[command.index("--coverage") + 1])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            key = f"\x01f\x02{rtl}\x01l\x021\x01t\x02line\x01o\x02block\x01h\x02chip_top"
+            coverage.write_points(target, {key: 1})
+        return real(cmd, **options)
+
+    monkeypatch.setattr("fecompiler.tools.verilator.runner.run_tool", recording)
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    report_dir = Path(ws["directory"]) / "sim_verilator" / "report"
+    return calls, json.loads((report_dir / "cases.json").read_text(encoding="utf-8")), report_dir
+
+
+def test_cpu_sim_builds_and_runs_with_coverage_when_the_harness_writes_it(tmp_path, monkeypatch):
+    calls, cases, report_dir = _coverage_sim(tmp_path, monkeypatch, harness_writes=True)
+
+    build = next(call for call in calls if _is_verilator_compile_cmd(call))
+    assert "--coverage-line" in build and "--coverage-toggle" in build
+    run = next(call for call in calls if "--coverage" in call)
+    data = run[run.index("--coverage") + 1]
+    assert data.endswith("coverage.dat")
+    assert not Path(data).exists()
+    assert "coverage_data" not in cases["cases"][0]
+    assert cases["coverage"]["status"] == "ok"
+    assert cases["coverage"]["kinds"]["line"] == {"covered": 1, "total": 1, "percent": 100.0}
+    report = json.loads((report_dir / "coverage.json").read_text(encoding="utf-8"))
+    assert (report["cases"], report["cases_with_data"]) == (1, 1)
+
+
+def test_cpu_sim_says_when_its_harness_cannot_write_coverage(tmp_path, monkeypatch):
+    calls, cases, report_dir = _coverage_sim(tmp_path, monkeypatch, harness_writes=False)
+
+    assert not [call for call in calls if "--coverage" in call]
+    assert cases["coverage"]["status"] == "unavailable"
+    assert "does not write coverage data" in cases["coverage"]["reason"]
+    assert "coverage" not in cases["cases"][0]
+    assert "coverage not collected" in (report_dir / "log.txt").read_text(encoding="utf-8")

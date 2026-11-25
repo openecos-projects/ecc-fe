@@ -170,6 +170,12 @@ class HandoffInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class ReportCoverageInput(CommandInput):
+    limit: int = 20
+    ownership: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ReportFailureInput(CommandInput):
     step: str | None = None
     limit: int = 10

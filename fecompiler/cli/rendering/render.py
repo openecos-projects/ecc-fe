@@ -148,7 +148,20 @@ def _failure_line(record: dict[str, object]) -> str:
     return line
 
 
+def _coverage_line(record: dict[str, object]) -> str:
+    def show(kind: str) -> str:
+        numbers = record.get(kind)
+        if not isinstance(numbers, dict) or not numbers.get("total"):
+            return f"{kind} -"
+        return f"{kind} {numbers.get('percent'):.1f}% ({numbers.get('covered')}/{numbers.get('total')})"
+
+    kinds = [key for key, value in record.items() if isinstance(value, dict)]
+    owner = f"  [{record['ownership']}]" if record.get("ownership") else ""
+    return "  ".join(show(kind) for kind in kinds) + f"  {record.get('file')}{owner}"
+
+
 _COMPACT_TEXT = {
+    "report.coverage": _coverage_line,
     "report.failure": _failure_line,
     "runs.list": _run_line,
     "report.compare": _compare_line,

@@ -3,6 +3,9 @@
 #include "driver/dpi_mem.h"
 #include "verilated.h"
 #include "verilated_vcd_c.h"
+#if VM_COVERAGE
+#include "verilated_cov.h"
+#endif
 
 #include <getopt.h>
 
@@ -21,6 +24,7 @@ namespace {
 struct Args {
   const char *image = nullptr;
   const char *wave = nullptr;
+  const char *coverage = nullptr;
   const char *ref = SOC_DEFAULT_REF_SO;
   uint64_t max_cycles = 2000000;
   uint32_t diff_image_offset = 0;
@@ -40,6 +44,7 @@ void print_usage(const char *prog_name) {
             << "Options:\n"
             << "  --image <file>        Boot image for flash/mrom\n"
             << "  --wave <file>         Dump VCD waveform\n"
+            << "  --coverage <file>     Write coverage data (model built with coverage)\n"
             << "  --max-cycles <n>      Stop after n cycles (default 2000000)\n"
             << "  --diff                Enable difftest\n"
             << "  --ref <file>          Reference shared object (default built into sim)\n"
@@ -67,6 +72,7 @@ ParseResult parse_args(int argc, char **argv, Args *args) {
     kOptDiffImageOffset = 1000,
     kOptDiffResetVector,
     kOptTimeoutOk,
+    kOptCoverage,
   };
   static struct option long_options[] = {
       {"image", required_argument, nullptr, 'i'},
@@ -77,6 +83,7 @@ ParseResult parse_args(int argc, char **argv, Args *args) {
       {"diff-image-offset", required_argument, nullptr, kOptDiffImageOffset},
       {"diff-reset-vector", required_argument, nullptr, kOptDiffResetVector},
       {"timeout-ok", no_argument, nullptr, kOptTimeoutOk},
+      {"coverage", required_argument, nullptr, kOptCoverage},
       {"help", no_argument, nullptr, 'h'},
       {nullptr, 0, nullptr, 0},
   };
@@ -126,6 +133,9 @@ ParseResult parse_args(int argc, char **argv, Args *args) {
       }
       case kOptTimeoutOk:
         args->timeout_ok = true;
+        break;
+      case kOptCoverage:
+        args->coverage = optarg;
         break;
       case 'h':
         print_usage(argv[0]);
@@ -212,6 +222,14 @@ int main(int argc, char **argv, char **) {
     delete tfp;
   }
   top->final();
+  if (args.coverage != nullptr) {
+#if VM_COVERAGE
+    contextp->coveragep()->write(args.coverage);
+    std::cerr << "[soc-sim] coverage: " << args.coverage << "\n";
+#else
+    std::cerr << "[soc-sim] --coverage ignored: the model was built without coverage\n";
+#endif
+  }
 
   if (trap_seen) {
     if (trap_code == 0) {

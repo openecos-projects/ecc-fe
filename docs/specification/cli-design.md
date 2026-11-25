@@ -27,7 +27,7 @@ ecc-fe config
 ecc-fe resource list|status|install|update|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
-ecc-fe report qor|files|compare|lint-baseline|export|failure
+ecc-fe report qor|files|compare|lint-baseline|export|failure|coverage
 ecc-fe runs list|delete
 ecc-fe flow list|show
 ecc-fe handoff
@@ -390,6 +390,7 @@ An RTL design is simulated with a SystemVerilog testbench of its own. The
 | `testbench.fail_pattern` | Regular expression that fails the run when the output matches. |
 | `testbench.plusargs` | Arguments for the simulation, such as `+seed=1`. |
 | `testbench.extra_args` | Additional Verilator arguments for the build. |
+| `testbench.coverage` | Collect line and toggle coverage of the design (default `false`). See Coverage. |
 
 `init --kind rtl ... --testbench <file>... --testbench-top <module>` sets the
 first two; both options are required together (`init_input_required`), the
@@ -668,6 +669,46 @@ record per metric whose value differs (`--all` includes the unchanged ones).
 The command exits `0` when the comparison was made. With
 `--fail-on-regression` it exits `1` when `regressed` is not zero. A run that
 does not exist is `run_not_found`.
+
+### Coverage
+
+`sim.coverage` (CPU) and `testbench.coverage` (RTL design), both `false` by
+default, build the simulation with Verilator line and toggle coverage
+(`--coverage-line --coverage-toggle`) and collect what the run covers. They
+change what the step produces, so they are part of its signature.
+
+Every case writes a coverage data file; the files are merged by adding the
+counts of equal points, and a point is covered when its count is above zero.
+After a run the step holds:
+
+| File | Content |
+| --- | --- |
+| `sim_verilator/report/coverage.json` | The report (below). |
+| `sim_verilator/output/coverage.dat` | The merged data, in Verilator's format; `verilator_coverage --annotate <dir>` reads it. |
+
+The data of the single cases is removed once merged. `coverage.json`
+(`schema_version` 1) has `status`, `cases`, `cases_with_data`, `data`, and
+three views of the same counts, each as `{covered, total, percent}` per
+kind: `kinds` (everything), `by_ownership` (by the owner of the source file:
+`cpu`, `design`, `soc`, `adapter`, `third_party`, ...) and `files` (per
+source file, with its `ownership`). The kinds are `line` and `toggle`, and
+`branch`, which Verilator counts as part of line coverage. `percent` is
+`null` where there is nothing to cover. A testbench's own files are left
+out. `report/cases.json` carries the totals as `coverage` (`status`,
+`report`, `kinds`, `data`).
+
+`status` is `ok`, `empty` (the simulation wrote no data) or `unavailable`
+with a `reason`. A CPU is simulated by the C++ harness of its SoC, and the
+harness has to write the data out; one that does not is `unavailable` and
+the simulation result itself is unaffected.
+
+`report coverage [--ownership <owner>] [--limit N]` writes a `coverage`
+record (the report's totals, or those of one owner, `files`, `shown`,
+`report`, `data`, `annotate_cmd`) and one `coverage_file` record per file,
+least covered first (default 20). `coverage_not_found` when the run
+collected none; `unknown_ownership` and `invalid_limit` exit with status 2.
+
+Coverage is not part of QoR scoring or of `report compare`.
 
 ### Failure Report
 

@@ -12,12 +12,14 @@ from fecompiler.analysis.failure import FAILED_STATES, diagnose
 from fecompiler.cli.core.inputs import (
     CommandInput,
     ReportCompareInput,
+    ReportCoverageInput,
     ReportExportInput,
     ReportFailureInput,
     ReportFilesInput,
     ReportLintBaselineInput,
     ReportQorInput,
 )
+from fecompiler.tools.verilator.coverage import REPORT_NAME as COVERAGE_REPORT
 from fecompiler.tools.verilator.lint import BASELINE_SCHEMA_VERSION, lint_baseline_entries
 from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id, resolve_run_dir
 from fecompiler.cli.core.records import (
@@ -478,6 +480,80 @@ def lint_baseline(command_input: CommandInput, context: CommandContext) -> Comma
             }
         ]
     )
+
+
+def coverage(command_input: CommandInput, context: CommandContext) -> CommandResult:
+    """Show the coverage a simulation collected: totals, then the least covered files."""
+    assert isinstance(command_input, ReportCoverageInput)
+    if command_input.limit < 0:
+        return CommandResult.err(
+            [error_record("invalid_limit", limit=command_input.limit, reason="must be 0 or more")],
+            exit_code=2,
+        )
+    loaded = _load_workspace(context.workspace_dir)
+    if isinstance(loaded, CommandResult):
+        return loaded
+    path = _report_directory(Path(context.workspace_dir), "sim") / COVERAGE_REPORT
+    try:
+        report = read_json_object(path)
+        files = report["files"]
+        if not isinstance(files, list) or not isinstance(report.get("kinds"), dict):
+            raise TypeError("not a coverage report")
+    except (OSError, TypeError, ValueError, KeyError) as error:
+        return CommandResult.err(
+            [
+                failure_record(
+                    "coverage_not_found",
+                    error,
+                    workspace=context.workspace_dir,
+                    reason="coverage is collected when sim.coverage (CPU) or "
+                    "testbench.coverage (RTL design) is true",
+                )
+            ]
+        )
+    owners = report.get("by_ownership") if isinstance(report.get("by_ownership"), dict) else {}
+    selected = command_input.ownership
+    if selected is not None and selected not in owners:
+        return CommandResult.err(
+            [error_record("unknown_ownership", ownership=selected, expected=sorted(owners))],
+            exit_code=2,
+        )
+    listed = [
+        item
+        for item in files
+        if isinstance(item, dict) and (selected is None or item.get("ownership") == selected)
+    ]
+    # Least covered first: that is where a missing test shows.
+    listed.sort(key=lambda item: (_percent(item, "line"), _percent(item, "toggle"), str(item.get("file"))))
+    shown = listed[: command_input.limit]
+    summary: dict[str, object] = {
+        "kind": "coverage",
+        "status": report.get("status"),
+        "reason": report.get("reason"),
+        "cases": report.get("cases"),
+        "cases_with_data": report.get("cases_with_data"),
+        "ownership": selected,
+        "kinds": owners[selected] if selected is not None else report["kinds"],
+        "by_ownership": None if selected is not None else owners,
+        "files": len(listed),
+        "shown": len(shown),
+        "report": str(path),
+        "data": report.get("data") or None,
+    }
+    if report.get("data"):
+        summary["annotate_cmd"] = (
+            f"verilator_coverage --annotate coverage-annotated {shlex.quote(str(report['data']))}"
+        )
+    return CommandResult.ok(
+        [summary, *({"kind": "coverage_file", **item} for item in shown)]
+    )
+
+
+def _percent(item: dict[str, object], kind: str) -> float:
+    numbers = item.get(kind)
+    value = numbers.get("percent") if isinstance(numbers, dict) else None
+    # A file without points of a kind is not the least covered one.
+    return float(value) if isinstance(value, (int, float)) else 101.0
 
 
 def failure(command_input: CommandInput, context: CommandContext) -> CommandResult:
