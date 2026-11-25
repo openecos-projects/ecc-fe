@@ -272,7 +272,34 @@ CLI 与桌面端共用以下目录，不需要重复安装：
 ```
 
 可用 `XDG_STATE_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME` 覆盖。registry 地址可
-用 `ECOS_REGISTRY_URL` 覆盖。
+用 `ECOS_REGISTRY_URL` 覆盖，也可以指向一个本地文件。
+
+### 网络不好时
+
+下载的每个文件都按 registry 给出的大小和 SHA256 校验，所以从哪里下载不影响安全性。
+
+- **断点续传**：下载被打断（包括进程被杀）后，再执行同一条安装命令会从已下载的位置
+  继续，stderr 里显示 `resuming 11%`。
+- **自动重试**：网络错误会自动重试，默认最多 4 次，间隔 1、3、10、30 秒。
+  `ECOS_DOWNLOAD_ATTEMPTS` 调次数，`ECOS_DOWNLOAD_TIMEOUT` 调单次读取的超时秒数。
+- **镜像**：用 `ECOS_RESOURCE_MIRRORS` 给出"前缀=替换"规则，先试镜像，失败再回到
+  原地址：
+
+  ```bash
+  export ECOS_RESOURCE_MIRRORS="https://github.com/=https://mirror.example.com/https://github.com/"
+  ```
+
+- **用已经下好的压缩包安装**：
+
+  ```bash
+  ecc-fe resource install riscv-toolchain --archive ~/Downloads/riscv.tar.gz
+  ```
+
+  压缩包必须是 registry 里登记的那一个（大小和校验和一致）。
+- **完全离线**：registry 每次成功读取后会留一份副本，读不到时自动使用副本并在
+  stderr 提示；也可以把 registry 文件拷过来，用 `ECOS_REGISTRY_URL=<文件>` 指定。
+  再配合 `--archive` 就可以不联网安装。
+- 下载完成但安装的后续步骤失败时，压缩包会留在缓存里，重试不用重新下载。
 
 `resource env` 输出可用于一次性注入当前 shell：
 

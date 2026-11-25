@@ -83,6 +83,7 @@ class ResourceInstallInput(CommandInput):
     resource_id: str | None = None
     version: str | None = None
     required: bool = False
+    archive: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

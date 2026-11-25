@@ -578,6 +578,7 @@ def build_app() -> typer.Typer:
         json_output: bool,
         jsonl: bool,
         plain: bool,
+        archive: str | None = None,
     ) -> None:
         execute_command(
             command_name,
@@ -589,6 +590,7 @@ def build_app() -> typer.Typer:
                 resource_id=resource_id,
                 version=version,
                 required=required,
+                archive=archive,
             ),
             commands.resource_install,
         )
@@ -604,6 +606,13 @@ def build_app() -> typer.Typer:
         version: Annotated[
             str | None, typer.Option("--version", help="Install a specific version")
         ] = None,
+        archive: Annotated[
+            str | None,
+            typer.Option(
+                "--archive",
+                help="Use this local copy of the resource's archive instead of downloading it",
+            ),
+        ] = None,
         json_output: JsonOption = False,
         jsonl: JsonlOption = False,
         plain: PlainOption = False,
@@ -616,6 +625,7 @@ def build_app() -> typer.Typer:
             json_output,
             jsonl,
             plain,
+            archive,
         )
 
     @resource_app.command("update", help="Update one resource, or every required one.")
