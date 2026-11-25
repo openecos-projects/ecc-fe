@@ -14,6 +14,7 @@ from typing import Any
 
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.data.workspace import WorkspaceStep
+from fecompiler.tools.common.build_policy import clean_build_requested
 from fecompiler.tools.common.process import run_tool, stop_session, tool_timeout
 from fecompiler.tools.common.tool_config import tool_config
 from fecompiler.tools.common.rtl_inputs import (
@@ -1287,6 +1288,10 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
 
     # What every program depends on is the same for all of them: hash it once.
     shared = program_build.shared_inputs(build_script, env)
+    # Read here: the builds below may run in worker threads.
+    rebuild_all = clean_build_requested()
+    if rebuild_all:
+        lines.append("[build_program] clean build requested: rebuilding every program")
 
     def build(src: Path) -> tuple[list[str], Path, bool]:
         name = src.stem
@@ -1294,7 +1299,7 @@ def _prepare_sim_images(workspace: dict[str, Any], *,
         out_dir.mkdir(parents=True, exist_ok=True)
         cmd = _build_program_command(build_script, src, name, out_dir)
         img = out_dir / f"{name}.soc.bin"
-        if program_build.is_current(img, cmd, src, shared):
+        if not rebuild_all and program_build.is_current(img, cmd, src, shared):
             return [f"[build_program] name={name} up to date src={src}"], img, True
         try:
             result = run_tool(
@@ -1485,7 +1490,10 @@ class VerilatorSimStep(BaseStep):
         build_inputs = [*files, *cpp_sources]
 
         rebuild_note = ""
-        if workspace.get("sim_reuse_binary"):
+        clean = clean_build_requested()
+        if clean:
+            rebuild_note = "clean build requested: rebuilding from scratch\n"
+        elif workspace.get("sim_reuse_binary"):
             # A program is reused only while it is what this build would produce.
             reason = stale_reason(sim_bin, obj_dir, cmd, build_inputs)
             if reason is None:
@@ -1505,7 +1513,7 @@ class VerilatorSimStep(BaseStep):
         # Objects in the build directory were made with the recorded command.
         # With the same command make rebuilds only what changed; with another
         # one (flags, sources, top) nothing in there can be trusted.
-        incremental = obj_dir.is_dir() and same_command(sim_bin, cmd)
+        incremental = not clean and obj_dir.is_dir() and same_command(sim_bin, cmd)
         if obj_dir.exists() and not incremental:
             shutil.rmtree(obj_dir)
         stamp_path(sim_bin).unlink(missing_ok=True)

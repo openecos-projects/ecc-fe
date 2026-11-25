@@ -33,6 +33,9 @@ class StepDefinition:
     config_fields: tuple[str, ...] = ()
     # Parameters naming files (one path or a list) whose content is tracked too.
     config_files: tuple[str, ...] = ()
+    # Of those, the ones naming SystemVerilog sources: the files they
+    # `include are tracked as well.
+    config_files_with_includes: tuple[str, ...] = ()
     # Every parameter whose name starts with one of these is tracked as well.
     config_prefixes: tuple[str, ...] = ()
     # Parameters under those prefixes that change how the step runs, not what
@@ -138,12 +141,14 @@ _DEFINITIONS: Final[tuple[StepDefinition, ...]] = (
         qor_report="cases.json",
         config_fields=(
             "testbench",
+            "design_parameters",
             "frequency_max",
             "Frequency max [MHz]",
             "cpu_supports_difftest",
             "soc_supports_difftest",
         ),
         config_files=("testbench_files",),
+        config_files_with_includes=("testbench_files",),
         config_prefixes=("sim_", "testbench_"),
         config_untracked=(
             "sim_build_jobs",

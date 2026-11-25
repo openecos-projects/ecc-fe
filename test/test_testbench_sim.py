@@ -417,6 +417,7 @@ def test_step_builds_the_design_with_its_testbench_and_runs_it(
                 "log": str(Path(step.report["dir"]) / "log.txt"),
                 "metrics": None,
                 "failure": None,
+                "design_parameters": {"applied": [], "not_applied": []},
                 "judged_by": ["exit_status"],
             }
         ],

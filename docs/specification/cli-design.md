@@ -423,10 +423,24 @@ by its exit status alone.
 `pass_pattern_missing`) and `failure.message`. The verdict is also the last
 line of the step log. The result is gated but not scored.
 
-Limits of this first form: one testbench and one run per flow, no test
-lists; `design.parameters` are not applied, because the testbench
-instantiates the design; a header the testbench includes is not tracked, so
-editing only such a header does not make the result stale. The `sim.*`
+`design.parameters` reach the simulation through the testbench. The
+simulated top module is the testbench, and a tool can override only the
+parameters of the top module, so an override `NAME=value` is passed (`-G`)
+when the testbench module declares a `parameter NAME`; the testbench is
+expected to pass it on to the design. An override the testbench does not
+declare is not applied. Both lists are in the case as
+`design_parameters.applied` / `design_parameters.not_applied` and are named
+in the last lines of the step log.
+
+A header listed in `testbench.files` (`.vh`, `.svh`) is not compiled; its
+directory is searched for includes. The files the testbench sources reach
+with `` `include ``, directly or through other includes, are tracked with
+the sources: editing one makes the result stale. They are looked up beside
+the including file, then in the include directories of the design; includes
+in every `` `ifdef `` branch are followed.
+
+Limits of this form: one testbench and one run per flow, no test lists. The
+`sim.*`
 parameters configure the programs a CPU runs and do not apply to an RTL
 design, as `testbench.*` do not apply to a CPU.
 
@@ -587,7 +601,11 @@ ecc-fe run --workspace path --only lint
 ```
 
 `--resume`, `--from`, and `--only` are mutually exclusive. `--force` requires
-`--only`. `--to` names the last step to execute and combines with `--resume`,
+`--only`. `--clean` makes the steps that are run again build everything
+from scratch instead of reusing what earlier executions built (for `sim`:
+the simulation program, its object directory, and the test programs). It
+requires `--only` (and then implies `--force`), `--from`, or `--rerun`;
+otherwise it is `clean_requires_rerun`. `--to` names the last step to execute and combines with `--resume`,
 `--from`, or no selector, but not with `--only`; a `--to` step before the
 `--from` step is `invalid_step_range`. The M3 `--step/--rerun` spelling remains
 an alias for `--only/--force`, and full-flow `--rerun` re-executes every step.
@@ -703,7 +721,7 @@ and a change makes the affected step stale.
 | `lint.baseline` | Baseline file for the gate described below. |
 | `lint.extra_args` | Further Verilator arguments, appended as given. |
 | `elab.extra_args` | Further slang arguments, appended as given. |
-| `design.parameters` | Top-level parameter overrides, e.g. `["WIDTH=16"]`; `-G` for both tools. Not applied to `sim`. |
+| `design.parameters` | Top-level parameter overrides, e.g. `["WIDTH=16"]`; `-G` for both tools. `sim` of an RTL design passes the ones its testbench declares. |
 
 Paths in `lint.waiver_files` and `lint.baseline` are resolved against the
 project directory (the workspace directory for a direct workspace). The

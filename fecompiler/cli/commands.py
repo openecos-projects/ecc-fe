@@ -65,6 +65,7 @@ from fecompiler.cli.project.params import (
 )
 from fecompiler.cli.rendering.progress import RunProgress
 from fecompiler.cli.resource_manager import ResourceManager, ResourceManagerError
+from fecompiler.tools.common.build_policy import clean_build
 from fecompiler.tools.common.filelist import parse_filelist
 from fecompiler.tools.common.sv_module import macro_names, module_definitions
 from fecompiler.cli.workspace_access import (
@@ -683,6 +684,8 @@ class _RunSelection:
     resume: bool = False
     # Re-execute steps that already succeeded.
     rerun: bool = False
+    # Build everything again instead of reusing what earlier runs built.
+    clean: bool = False
 
     @property
     def in_place(self) -> bool:
@@ -714,6 +717,15 @@ def _run_selection(command_input: RunInput) -> _RunSelection | CommandResult:
         command_input.resume or command_input.from_step is not None
     ):
         return usage("rerun_selector_conflict")
+    if command_input.clean and not (
+        only is not None or command_input.from_step is not None or command_input.rerun
+    ):
+        # Steps that are skipped as up to date would not be rebuilt at all.
+        return usage(
+            "clean_requires_rerun",
+            reason="--clean rebuilds the steps that are run again",
+            expected=["--only <step>", "--from <step>", "--rerun"],
+        )
     for step in (only, command_input.from_step, command_input.to_step):
         if step and step not in _FLOW_STEPS:
             return usage("unknown_step", step=step, expected=list(_FLOW_STEPS))
@@ -737,8 +749,9 @@ def _run_selection(command_input: RunInput) -> _RunSelection | CommandResult:
         rerun=(
             command_input.rerun
             if only is None
-            else command_input.force or command_input.rerun
+            else command_input.force or command_input.rerun or command_input.clean
         ),
+        clean=command_input.clean,
     )
 
 
@@ -754,7 +767,10 @@ def _execute_selection(
         if selection.to_step:
             payload["to_step"] = selection.to_step
     # Steps are reported as they start and finish, not only at the end.
-    with workspace_event_sink(RunProgress(context.output_mode)):
+    with (
+        workspace_event_sink(RunProgress(context.output_mode)),
+        clean_build(selection.clean),
+    ):
         return workspace_application.execute_payload(
             "run-step" if selection.only else "run-flow", payload, base_dir=Path.cwd()
         )

@@ -272,6 +272,14 @@ def build_app() -> typer.Typer:
             bool,
             typer.Option("--force", help="Re-execute a successful --only step"),
         ] = False,
+        clean: Annotated[
+            bool,
+            typer.Option(
+                "--clean",
+                help="With --only, --from or --rerun: build everything again "
+                "instead of reusing the simulation program and test programs",
+            ),
+        ] = False,
         param_set: Annotated[
             list[str] | None,
             typer.Option(
@@ -300,6 +308,7 @@ def build_app() -> typer.Typer:
                 to_step=to_step,
                 only=only,
                 force=force,
+                clean=clean,
                 param_set=tuple(param_set or ()),
             ),
             commands.run_flow,

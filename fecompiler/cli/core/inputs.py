@@ -51,6 +51,7 @@ class RunInput(CommandInput):
     to_step: str | None = None
     only: str | None = None
     force: bool = False
+    clean: bool = False
     param_set: tuple[str, ...] = ()
 
 
