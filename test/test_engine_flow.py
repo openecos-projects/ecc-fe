@@ -3399,7 +3399,9 @@ def test_lint_summary_marks_generic_design_diagnostics_actionable(tmp_path):
         summary_path=tmp_path / "lint_summary.json",
     )
 
-    assert summary["summary"]["cpu_warnings"] == 0
+    # An RTL design has no CPU sources: the CPU counts are not written.
+    assert "cpu_warnings" not in summary["summary"]
+    assert "cpu_errors" not in summary["summary"]
     assert summary["summary"]["design_warnings"] == 1
     assert summary["summary"]["actionable_ownership"] == "design"
     assert summary["summary"]["actionable_diagnostics"] == 1
@@ -3539,3 +3541,26 @@ def test_verilator_lint_defines_include_synthesis_without_changing_manifest_orde
         "FOO=1",
         "BAR",
     ]
+
+
+def test_a_clean_build_does_not_reuse_the_sim_program_or_its_objects(tmp_path, monkeypatch):
+    from fecompiler.tools.common.build_policy import clean_build
+
+    engine, ws, _rtl, _header, _tb, compiles = _reusable_sim_workspace(tmp_path, monkeypatch)
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 1
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 0
+    leftover = Path(ws["directory"]) / "sim_verilator" / "obj_dir" / "kept_object.o"
+    leftover.write_text("object", encoding="utf-8")
+
+    with clean_build():
+        assert engine.run_step("sim", rerun=True) == StateEnum.Success
+
+    assert compiles() == 1
+    assert not leftover.exists()
+    log = (Path(ws["directory"]) / "sim_verilator" / "log" / "log.txt").read_text(encoding="utf-8")
+    assert "clean build requested" in log
+    # Afterwards the fresh program is reused as before.
+    assert engine.run_step("sim", rerun=True) == StateEnum.Success
+    assert compiles() == 0

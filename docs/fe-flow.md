@@ -209,6 +209,9 @@ RTL 工程的 `sim_verilator` 只有 `obj_dir/`、`output/<testbench top>_sim`�
    构建日志里记为 `up to date`。构建脚本不在 SoC 的标准目录结构里时无法知道它读了
    什么，这种情况每次都重编。
 
+   `run --clean` 让这两种记录都不被采信：`obj_dir` 清空后重新构建，所有测试程序重编
+   （`fecompiler/tools/common/build_policy.py`）。
+
    需要编译的测试程序各自独立编译，`sim.build_jobs` 个同时进行；用例默认一个一个跑，
    `sim.case_jobs` 可以让多个用例同时跑。`report/runs/` 只保留最近
    `sim.history_limit` 次运行。

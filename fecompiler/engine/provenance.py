@@ -10,7 +10,8 @@ from typing import Any
 
 from fecompiler.allflow.steps import find_step_definition
 from fecompiler.resources import frontend_repo_root
-from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
+from fecompiler.tools.common.rtl_inputs import incdirs, workspace_input_fingerprint
+from fecompiler.tools.common.sv_includes import included_files
 from fecompiler.tools.common.tool_config import config_paths
 from fecompiler.utility.json import json_read
 
@@ -136,6 +137,12 @@ def _step_configuration(
             configuration[f"{field}:content"] = {
                 str(path): _file_sha256(path) for path in paths
             }
+        if paths and field in definition.config_files_with_includes:
+            included = included_files(paths, incdirs(workspace))
+            if included:
+                configuration[f"{field}:includes"] = {
+                    str(path): _file_sha256(path) for path in included
+                }
     return configuration
 
 

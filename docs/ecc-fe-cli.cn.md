@@ -101,6 +101,7 @@ ecc-fe run --resume                  # 从第一个未完成的步骤继续
 ecc-fe run --from review             # 从 review 开始重跑后面的步骤
 ecc-fe run --from review --to lint   # 只重跑 review 到 lint
 ecc-fe run --only lint --force       # 只重跑 lint
+ecc-fe run --only sim --clean        # 重跑 sim，并且全部从头构建
 ecc-fe run --run-id faster-sim --only sim
 ```
 
@@ -191,9 +192,22 @@ ecc-fe param set testbench.fail_pattern 'FAIL|ERROR'
 失败原因。其余参数：`testbench.plusargs`（传给仿真的 `+arg`）和
 `testbench.extra_args`（额外的 Verilator 编译参数）。
 
-目前的限制：一个流程只跑一个 testbench、一次仿真，没有用例列表；`design.parameters`
-不作用于仿真（设计由 testbench 例化）；testbench `include` 的头文件不被跟踪，只改
-这类头文件不会让结果过期。`sim.*` 参数是 CPU 工程用来配置测试程序的，对 RTL 设计
+`design.parameters` 通过 testbench 作用于仿真。仿真的顶层是 testbench，而工具只能
+覆盖顶层模块的参数，所以规则是：testbench 模块自己声明了同名 `parameter` 的那些
+覆盖值会传给它，由 testbench 再传给设计；testbench 没有声明的不生效。两类都会写在
+日志最后几行和 `cases.json` 的 `design_parameters` 里：
+
+```systemverilog
+module tb #(parameter WIDTH = 8);
+  fifo #(.WIDTH(WIDTH)) dut (.*);   // design.parameters 里的 WIDTH=16 经这里到达设计
+endmodule
+```
+
+头文件：`testbench.files` 里列出的 `.vh` / `.svh` 不会被当作源文件编译，只把所在
+目录加入 include 搜索路径。testbench 通过 `` `include `` 引用到的文件（包括间接
+引用的）会和 testbench 源文件一起被跟踪，改了其中任何一个，sim 的结果就会过期。
+
+目前的限制：一个流程只跑一个 testbench、一次仿真，没有用例列表。`sim.*` 参数是 CPU 工程用来配置测试程序的，对 RTL 设计
 无效；反过来 `testbench.*` 对 CPU 工程无效。
 
 ### 移动工程目录
@@ -336,8 +350,10 @@ CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修�
 - 仿真程序是增量构建的：编译参数和源文件列表没变时，只重编变了的部分。
 - 整套 cpu-tests 的时间主要花在编译 35 个测试程序上。它们并行编译，并且没变的不再
   重编：程序源文件、公共运行库、编译选项、编译器都没变时直接用上次的镜像，
-  `report/build_programs.log.txt` 里记为 `up to date`。想强制全部重编，删掉
-  `sim_verilator/output/cases/` 即可。
+  `report/build_programs.log.txt` 里记为 `up to date`。
+- 想不复用任何东西、全部从头构建时加 `--clean`：
+  `ecc-fe run --only sim --clean`。它会重建仿真程序（清空 `obj_dir`）并重编所有
+  测试程序。`--clean` 要和 `--only`、`--from` 或 `--rerun` 一起用。
 - 不需要看波形时把 `sim.dump_waveform` 设为 `false`：整套 cpu-tests 的波形约 500 MB。
 - 用例运行参数里显式写了 `--wave <文件>` 的，始终照写。
 - 波形只有 VCD 格式：SoC 外壳的 C++ 驱动只支持 VCD。

@@ -15,13 +15,25 @@ from typing import Any
 
 from fecompiler.data.workspace import WorkspaceStep
 from fecompiler.tools.common.process import run_tool, tool_timeout
+from fecompiler.tools.common.filelist import RTL_HEADER_SUFFIXES
 from fecompiler.tools.common.rtl_inputs import (
+    defines,
     rtl_files,
     verilator_define_args,
     verilator_incdir_args,
     verilator_library_args,
 )
-from fecompiler.tools.common.tool_config import config_list, config_paths, config_text
+from fecompiler.tools.common.sv_module import (
+    macro_names,
+    module_definitions,
+    module_parameter_names,
+)
+from fecompiler.tools.common.tool_config import (
+    config_list,
+    config_paths,
+    config_text,
+    design_parameter_overrides,
+)
 from fecompiler.tools.fe.base import BaseStep
 from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.verilator.command import verilator_cmd
@@ -64,13 +76,57 @@ def testbench_settings(workspace: dict[str, Any]) -> dict[str, Any]:
             raise TestbenchSettingsError(
                 f"testbench.{name} is not a valid regular expression: {error}"
             ) from error
+    try:
+        overrides = design_parameter_overrides(workspace)
+    except ValueError as error:
+        raise TestbenchSettingsError(str(error)) from error
+    sources = [str(path) for path in files if path.suffix.lower() not in RTL_HEADER_SUFFIXES]
+    if not sources:
+        raise TestbenchSettingsError(
+            "testbench.files names only headers; name the file that defines the testbench"
+        )
+    applied, not_applied = split_parameter_overrides(
+        overrides, testbench_parameters(sources, top, defines(workspace))
+    )
     return {
         "top": top,
+        # Every listed file is tracked; a header is included, not compiled.
         "files": [str(path) for path in files],
+        "sources": sources,
+        "parameters": applied,
+        "parameters_not_applied": not_applied,
         "plusargs": config_list(workspace, "testbench_plusargs"),
         "extra_args": config_list(workspace, "testbench_extra_args"),
         **patterns,
     }
+
+
+def testbench_parameters(
+    sources: list[str], top: str, defines: list[str] | None = None
+) -> list[str]:
+    """Return the parameters the testbench module *top* declares."""
+    # Verilator defines this one itself.
+    macros = macro_names(defines) | {"VERILATOR"}
+    for path in module_definitions(sources, top, defined_macros=macros):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        return module_parameter_names(text, top, defined_macros=macros)
+    return []
+
+
+def split_parameter_overrides(
+    overrides: list[str], declared: list[str]
+) -> tuple[list[str], list[str]]:
+    """Split ``design.parameters`` into what the testbench takes and the rest.
+
+    The simulated top module is the testbench, and a tool can override the
+    parameters of the top module only. An override reaches the design when
+    the testbench declares a parameter of that name and passes it on.
+    """
+    applied = [item for item in overrides if item.split("=", 1)[0].strip() in declared]
+    return applied, [item for item in overrides if item not in applied]
 
 
 def judge_run(
@@ -191,6 +247,10 @@ class TestbenchSimStep(BaseStep):
         program.unlink(missing_ok=True)
         # A testbench includes its own headers relative to where it is.
         testbench_dirs = list(dict.fromkeys(str(Path(path).parent) for path in settings["files"]))
+        case["design_parameters"] = {
+            "applied": settings["parameters"],
+            "not_applied": settings["parameters_not_applied"],
+        }
         command = [
             verilator_cmd(),
             "--binary",
@@ -203,6 +263,7 @@ class TestbenchSimStep(BaseStep):
             *(f"+incdir+{directory}" for directory in testbench_dirs),
             *verilator_library_args(workspace),
             *verilator_define_args(workspace),
+            *(f"-G{item}" for item in settings["parameters"]),
             *settings["extra_args"],
             "--top-module",
             settings["top"],
@@ -211,7 +272,7 @@ class TestbenchSimStep(BaseStep):
             "-o",
             str(program),
             *rtl_files(workspace),
-            *settings["files"],
+            *settings["sources"],
         ]
         compile_log = Path(step.log["dir"]) / "log.txt"
         compile_log.parent.mkdir(parents=True, exist_ok=True)
@@ -282,8 +343,21 @@ class TestbenchSimStep(BaseStep):
             )
         else:
             verdict = "simulation passed"
+        notes = [verdict]
+        if settings["parameters"]:
+            notes.append(
+                "design.parameters applied through the testbench: "
+                + " ".join(settings["parameters"])
+            )
+        if settings["parameters_not_applied"]:
+            notes.append(
+                "design.parameters not applied to the simulation: "
+                + " ".join(settings["parameters_not_applied"])
+                + f"; module {settings['top']} declares no parameter of that name to pass on"
+            )
         Path(case["log"]).write_text(
-            output.rstrip("\n") + f"\necc-fe: {verdict}\n", encoding="utf-8"
+            output.rstrip("\n") + "".join(f"\necc-fe: {note}" for note in notes) + "\n",
+            encoding="utf-8",
         )
         case["judged_by"] = [
             "exit_status",
@@ -310,5 +384,7 @@ __all__ = [
     "TestbenchSettingsError",
     "TestbenchSimStep",
     "judge_run",
+    "split_parameter_overrides",
+    "testbench_parameters",
     "testbench_settings",
 ]

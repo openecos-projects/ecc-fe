@@ -133,6 +133,55 @@ def module_port_contract(
     return ports
 
 
+def module_parameter_names(
+    text: str,
+    module_name: str,
+    *,
+    defined_macros: set[str] | frozenset[str] | None = None,
+) -> list[str]:
+    """Return the parameters of a module that can be overridden from outside.
+
+    These are the ``parameter`` declarations of the ``#(...)`` list and of the
+    module body; ``localparam`` is not one of them.
+    """
+    stripped = _apply_sv_conditional_directives(strip_sv_comments(text), defined_macros)
+    # A string default may hold commas and names of its own.
+    stripped = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', stripped)
+    match = _module_pattern(module_name).search(stripped)
+    if match is None:
+        return []
+    names: list[str] = []
+    index = match.end()
+    while index < len(stripped) and stripped[index].isspace():
+        index += 1
+    body_start = index
+    if stripped.startswith("#", index):
+        opening = stripped.find("(", index)
+        end = _matching_delimiter(stripped, opening, "(", ")") if opening >= 0 else None
+        if end is not None:
+            names.extend(_declared_parameters(stripped[opening + 1 : end], True))
+            body_start = end + 1
+    end_module = re.search(r"\bendmodule\b", stripped[body_start:])
+    body = stripped[body_start : body_start + end_module.start()] if end_module else stripped[body_start:]
+    for statement in re.finditer(r"\bparameter\b[^;]*;", body):
+        names.extend(_declared_parameters(statement.group(0)[:-1], False))
+    return list(dict.fromkeys(names))
+
+
+def _declared_parameters(declarations: str, overridable_by_default: bool) -> list[str]:
+    names: list[str] = []
+    overridable = overridable_by_default
+    for item in _split_top_level_sv_list(declarations):
+        keyword = re.match(r"\s*(parameter|localparam)\b", item)
+        if keyword is not None:
+            overridable = keyword.group(1) == "parameter"
+        # The name is the last identifier before the default value.
+        declared = re.findall(r"[A-Za-z_][A-Za-z0-9_$]*", re.sub(r"\[[^\]]*\]", " ", item.split("=", 1)[0]))
+        if overridable and declared and declared[-1] not in {"parameter", "localparam"}:
+            names.append(declared[-1])
+    return names
+
+
 def compare_port_contracts(
     expected: list[dict[str, Any]],
     actual: list[dict[str, Any]],

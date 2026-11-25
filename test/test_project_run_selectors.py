@@ -155,6 +155,8 @@ def test_existing_run_without_a_selector_points_to_resume(project, calls, capsys
         (["--only", "lint", "--to", "sim"], "selector_conflict"),
         (["--resume", "--from", "lint"], "selector_conflict"),
         (["--force"], "force_requires_only"),
+        (["--clean"], "clean_requires_rerun"),
+        (["--resume", "--clean"], "clean_requires_rerun"),
         (["--to", "place"], "unknown_step"),
         (["--from", "lint", "--to", "review"], "invalid_step_range"),
     ],

@@ -178,10 +178,7 @@ class VerilatorLintStep(BaseStep):
             "summary": str(lint_summary_path),
             "errors": lint_summary["summary"]["errors"],
             "warnings": lint_summary["summary"]["warnings"],
-            "cpu_errors": lint_summary["summary"]["cpu_errors"],
-            "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
-            "design_errors": lint_summary["summary"]["design_errors"],
-            "design_warnings": lint_summary["summary"]["design_warnings"],
+            **_ownership_counts(lint_summary["summary"]),
             "rules": lint_summary["summary"]["rules"],
             "files": lint_summary["summary"]["files"],
             "baseline": lint_summary["baseline"],
@@ -194,14 +191,18 @@ class VerilatorLintStep(BaseStep):
                 "summary": str(lint_summary_path),
                 "errors": lint_summary["summary"]["errors"],
                 "warnings": lint_summary["summary"]["warnings"],
-                "cpu_errors": lint_summary["summary"]["cpu_errors"],
-                "cpu_warnings": lint_summary["summary"]["cpu_warnings"],
-                "design_errors": lint_summary["summary"]["design_errors"],
-                "design_warnings": lint_summary["summary"]["design_warnings"],
+                **_ownership_counts(lint_summary["summary"]),
                 "rules": lint_summary["summary"]["rules"],
                 "files": lint_summary["summary"]["files"],
             },
         )
+
+
+_OWNERSHIP_COUNT_FIELDS = ("cpu_errors", "cpu_warnings", "design_errors", "design_warnings")
+
+
+def _ownership_counts(summary: dict[str, Any]) -> dict[str, Any]:
+    return {field: summary[field] for field in _OWNERSHIP_COUNT_FIELDS if field in summary}
 
 
 def build_lint_summary(
@@ -276,8 +277,15 @@ def build_lint_summary(
             "files": len(file_hotspots),
             "rtl_files": len(files),
             "top_module": top_module,
-            "cpu_errors": len([item for item in cpu_diagnostics if item.get("severity") == "error"]),
-            "cpu_warnings": len([item for item in cpu_diagnostics if item.get("severity") == "warning"]),
+            # A design that is not a CPU has no CPU sources to count.
+            **(
+                {
+                    "cpu_errors": len([item for item in cpu_diagnostics if item.get("severity") == "error"]),
+                    "cpu_warnings": len([item for item in cpu_diagnostics if item.get("severity") == "warning"]),
+                }
+                if user_rtl_ownership(workspace) == "cpu"
+                else {}
+            ),
             "design_errors": len([item for item in design_diagnostics if item.get("severity") == "error"]),
             "design_warnings": len([item for item in design_diagnostics if item.get("severity") == "warning"]),
             "actionable_ownership": user_rtl_ownership(workspace),
