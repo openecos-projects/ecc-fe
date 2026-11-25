@@ -7,7 +7,7 @@ this registry instead of keeping their own tables of step names.
 
 Adding a step means adding one definition here, listing it in the profiles
 that run it (``allflow/profile.py``), and giving it a QoR builder
-(``analysis/qor.py``).
+(``analysis/qor/<step>.py``, listed in ``analysis/qor/store.py``).
 
 This module imports nothing from the rest of the package, so every layer can
 depend on it; handlers are imported only when a step is about to run.

@@ -1718,14 +1718,14 @@ def test_failed_qor_publication_rolls_back_the_complete_triplet(
         },
     )
     summary_path = Path(step.analysis["qor_summary"])
-    real_replace = qor.os.replace
+    real_replace = qor.store.os.replace
 
     def fail_summary_replace(source: str | Path, destination: str | Path) -> None:
         if Path(destination) == summary_path:
             raise OSError("simulated summary publication failure")
         real_replace(source, destination)
 
-    monkeypatch.setattr(qor.os, "replace", fail_summary_replace)
+    monkeypatch.setattr(qor.store.os, "replace", fail_summary_replace)
 
     with pytest.raises(OSError, match="failed to persist QoR artifact triplet"):
         write_step_qor(step, workspace, True)
@@ -2347,7 +2347,7 @@ def test_sim_comparison_fingerprint_resolves_compiler_default_library(
     testbench.write_text("int main() { return 0; }\n", encoding="utf-8")
     monkeypatch.delenv("LIBRARY_PATH", raising=False)
     monkeypatch.setattr(
-        qor,
+        qor.fingerprint,
         "_compiler_library_file",
         lambda filenames, base_directory=None, compiler_command=None: selected_library
         if "libsim.a" in filenames
@@ -2403,7 +2403,7 @@ def test_compiler_default_library_probe_uses_verilator_link_context(
         return SimpleNamespace(returncode=0, stdout=f"{selected_library}\n")
 
     monkeypatch.setenv("CXX", "wrong-environment-c++")
-    monkeypatch.setattr(qor, "run_subprocess", fake_run)
+    monkeypatch.setattr(qor.fingerprint, "run_subprocess", fake_run)
 
     normalized = qor._normalized_shell_link_flags(
         ["-m32", "--sysroot=/sdk", "-lsim"],
@@ -2445,7 +2445,7 @@ def test_verilator_link_driver_expands_recursive_make_variables(
             ),
         )
 
-    monkeypatch.setattr(qor, "run_subprocess", fake_run)
+    monkeypatch.setattr(qor.fingerprint, "run_subprocess", fake_run)
 
     assert qor._verilator_link_driver(build_directory) == ["configured-c++"]
 
