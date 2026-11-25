@@ -634,18 +634,23 @@ def _run_workspace(
             run_id=context.run_id,
         ),
     }
-    return _run_result(record, result)
+    return _run_result(record, result, context)
 
 
-def _run_result(record: dict[str, object], result: object) -> CommandResult:
+def _run_result(
+    record: dict[str, object], result: object, context: CommandContext
+) -> CommandResult:
     """Return one `step` record per executed step, then the `run` record.
 
     The `run` record is always the last one, after any streamed progress.
     """
-    records = [*_step_result_records(getattr(result, "data", None)), record]
+    steps = _step_result_records(getattr(result, "data", None))
     if getattr(result, "response", None) == "success":
-        return CommandResult.ok(records)
-    return CommandResult.err(records)
+        return CommandResult.ok([*steps, record])
+    if any(str(step.get("state", "")).lower() in FAILED_STATES for step in steps):
+        # A step ran and failed: say where the reason is summarised.
+        record["failure_cmd"] = _target_cmd("ecc-fe report failure", context)
+    return CommandResult.err([*steps, record])
 
 
 def _result_error(data: object) -> object:
@@ -850,7 +855,7 @@ def _continue_project_run(
             context,
         ),
     }
-    return _run_result(record, result)
+    return _run_result(record, result, context)
 
 
 def _run_project(command_input: RunInput, context: CommandContext) -> CommandResult:
@@ -1026,7 +1031,7 @@ def _run_project(command_input: RunInput, context: CommandContext) -> CommandRes
         "status_cmd": _target_cmd("ecc-fe status", context),
         "log_cmd": _target_cmd("ecc-fe log", context),
     }
-    return _run_result(record, result)
+    return _run_result(record, result, context)
 
 
 def check(command_input: CommandInput, context: CommandContext) -> CommandResult:
@@ -1324,6 +1329,8 @@ def status(command_input: CommandInput, context: CommandContext) -> CommandResul
         ),
         None,
     )
+    if summary["failed_step"]:
+        summary["failure_cmd"] = _target_cmd("ecc-fe report failure", context)
     # Reading the state succeeded, so the command did: a failed or interrupted
     # flow is reported in the records, not through the exit status.
     return CommandResult.ok(records)

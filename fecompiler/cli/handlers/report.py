@@ -8,17 +8,24 @@ from pathlib import Path
 
 from fecompiler.allflow.steps import step_directory, step_names
 from fecompiler.analysis.ci_export import exported_diagnostics, junit_xml, sarif_log
+from fecompiler.analysis.failure import FAILED_STATES, diagnose
 from fecompiler.cli.core.inputs import (
     CommandInput,
     ReportCompareInput,
     ReportExportInput,
+    ReportFailureInput,
     ReportFilesInput,
     ReportLintBaselineInput,
     ReportQorInput,
 )
 from fecompiler.tools.verilator.lint import BASELINE_SCHEMA_VERSION, lint_baseline_entries
 from fecompiler.cli.project.layout import RUN_ID_RULE, is_valid_run_id, resolve_run_dir
-from fecompiler.cli.core.records import error_record, failure_record, normalize_state
+from fecompiler.cli.core.records import (
+    disclosure_cmd,
+    error_record,
+    failure_record,
+    normalize_state,
+)
 from fecompiler.cli.core.types import CommandContext, CommandResult
 from fecompiler.cli.workspace_access import load_existing_workspace, read_json_object
 from fecompiler.utility.program import invoked
@@ -470,6 +477,88 @@ def lint_baseline(command_input: CommandInput, context: CommandContext) -> Comma
                 "set_cmd": invoked("ecc-fe param set lint.baseline ") + shlex.quote(setting),
             }
         ]
+    )
+
+
+def failure(command_input: CommandInput, context: CommandContext) -> CommandResult:
+    """Say why a step failed: the first failed step, or the one named."""
+    assert isinstance(command_input, ReportFailureInput)
+    if command_input.step and command_input.step not in _FLOW_STEPS:
+        return CommandResult.err(
+            [error_record("unknown_step", step=command_input.step, expected=list(_FLOW_STEPS))],
+            exit_code=2,
+        )
+    if command_input.limit < 1:
+        return CommandResult.err(
+            [error_record("invalid_limit", limit=command_input.limit, reason="must be 1 or more")],
+            exit_code=2,
+        )
+    loaded = _load_workspace(context.workspace_dir)
+    if isinstance(loaded, CommandResult):
+        return loaded
+    _, flow = loaded
+    states = {
+        str(raw.get("name")): normalize_state(raw.get("state"))
+        for raw in (flow.get("steps") if isinstance(flow.get("steps"), list) else [])
+        if isinstance(raw, dict)
+    }
+    step = command_input.step or next(
+        (name for name, state in states.items() if state in FAILED_STATES), None
+    )
+    target: dict[str, str | None] = (
+        {"workspace": context.workspace_dir}
+        if context.workspace_mode
+        else {"project": context.project, "run_id": context.run_id}
+    )
+    if step is None:
+        return CommandResult.ok(
+            [
+                {
+                    "kind": "failure",
+                    "failed": False,
+                    "step": None,
+                    "reason": "no step of this run has failed",
+                    "states": states,
+                    "status_cmd": disclosure_cmd("ecc-fe status", **target),
+                }
+            ]
+        )
+    if step not in states:
+        return CommandResult.err(
+            [error_record("step_not_in_flow", step=step, steps=list(states))]
+        )
+    state = states[step]
+    detail_path = _report_directory(Path(context.workspace_dir), step) / "frontend_detail.json"
+    try:
+        detail = read_json_object(detail_path) if detail_path.is_file() else {}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        detail = {}
+    # The flow state is the verdict; the detail explains it.
+    diagnosis = diagnose({**detail, "step": step, "state": state})
+    causes = diagnosis["causes"]
+    shown = causes[: command_input.limit]
+    record: dict[str, object] = {
+        "kind": "failure",
+        "failed": state in FAILED_STATES,
+        "step": step,
+        "tool": detail.get("tool"),
+        "state": state,
+        "reason": diagnosis["reason"],
+        "causes": len(causes),
+        "shown": len(shown),
+        "advice": diagnosis["advice"],
+        "detail": str(detail_path) if detail else None,
+        "log_cmd": disclosure_cmd(f"ecc-fe log --step {step}", **target),
+    }
+    if state in FAILED_STATES:
+        record["rerun_cmd"] = disclosure_cmd(f"ecc-fe run --from {step}", **target)
+    if len(shown) < len(causes):
+        record["more_cmd"] = (
+            disclosure_cmd(f"ecc-fe report failure --step {step}", **target)
+            + f" --limit {len(causes)}"
+        )
+    return CommandResult.ok(
+        [record, *({"kind": "failure_cause", "step": step, **cause} for cause in shown)]
     )
 
 

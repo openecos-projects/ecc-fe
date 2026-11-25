@@ -170,6 +170,12 @@ class HandoffInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class ReportFailureInput(CommandInput):
+    step: str | None = None
+    limit: int = 10
+
+
+@dataclass(frozen=True, slots=True)
 class ReportExportInput(CommandInput):
     export_format: str = ""
     output_path: str | None = None

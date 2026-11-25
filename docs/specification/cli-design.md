@@ -27,7 +27,7 @@ ecc-fe config
 ecc-fe resource list|status|install|update|env
 ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
-ecc-fe report qor|files|compare|lint-baseline|export
+ecc-fe report qor|files|compare|lint-baseline|export|failure
 ecc-fe runs list|delete
 ecc-fe flow list|show
 ecc-fe handoff
@@ -668,6 +668,47 @@ record per metric whose value differs (`--all` includes the unchanged ones).
 The command exits `0` when the comparison was made. With
 `--fail-on-regression` it exits `1` when `regressed` is not zero. A run that
 does not exist is `run_not_found`.
+
+### Failure Report
+
+`report failure [--step <step>] [--limit N]` says why a step is not a
+success. `doctor` checks the environment; this explains a step whose tools
+ran. Without `--step` it takes the first failed step of the run. It reads
+the step's `report/frontend_detail.json` and runs nothing; a log is searched
+for its first error line only when the results name no cause. The command
+exits `0` when it produced its report, as `status` does.
+
+It writes a `failure` record: `failed`, `step`, `tool`, `state`, `reason`
+(one sentence), `causes` (how many were found), `shown`, `advice`, `detail`
+(the file read), `log_cmd`, and for a failed step `rerun_cmd`; `more_cmd`
+when the list was cut at `--limit` (default 10). Then one `failure_cause`
+record per cause, in order of importance:
+
+| `category` | From | Fields beside `message` |
+| --- | --- | --- |
+| `input` | a prepare input contract that is not usable | `detail` |
+| `tool` | what Yosys reported when the review precheck failed | `tool` |
+| `review_issue` | an unwaived review issue of severity `error` | `rule`, `source`, `line`, `column`, `advice`, `ownership` |
+| `elab_error` | a slang error, or a top module that was not found | `source`, `line`, `column` |
+| `unresolved_module` | a module instantiated but not defined | `module` |
+| `lint_error` | a Verilator error | `rule`, `source`, `line`, `column`, `ownership` |
+| `baseline` | a lint baseline that cannot be read | `source` |
+| `lint_new_warning` | a warning of the user's that the lint baseline does not know | `rule`, `source`, `line`, `column` |
+| `sim_case` | a case that did not pass | `case`, `failure`, `evidence`, `log`, `wave`, `newly_failing` |
+| `sim_build` | a testbench or test program that did not build | `case`, `failure`, `log` |
+| `gate` | a failed QoR gate, with the measured and required values | `gate` |
+| `log` | the first error line of the step's log, as a last resort | `log` |
+
+A step that did not fail yields a `failure` record with `failed=false` and a
+reason naming its state; a run without a failed step yields one with
+`step=null` and the state of every step. `status` and a failed `run` carry
+`failure_cmd`, the command that prints this report.
+
+| Error | When |
+| --- | --- |
+| `unknown_step` | `--step` is not a flow step; exit status `2`. |
+| `invalid_limit` | `--limit` is below 1; exit status `2`. |
+| `step_not_in_flow` | The step is not part of this run's flow. |
 
 ### CI Export
 

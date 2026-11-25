@@ -459,6 +459,41 @@ GitHub Actions 里的用法示例：
 
 ## 排查问题
 
+### 某一步为什么失败
+
+```bash
+ecc-fe report failure            # 第一个失败的步骤
+ecc-fe report failure --step sim # 指定步骤
+```
+
+`doctor` 检查的是环境；这条命令回答的是"工具都跑了，这一步为什么没过"。它只读取
+步骤留下的结果，不重新运行任何东西。`status` 和失败的 `run` 的输出里都带
+`failure_cmd`，照着执行即可。
+
+```text
+$ ecc-fe report failure
+  reason: the lint step failed: 2 warnings not in the lint baseline
+  advice: ["fix the new warnings, waive them (lint.waiver_files), or accept them with `ecc-fe report lint-baseline`"]
+  rerun_cmd: ecc-fe run --from lint
+  [lint_new_warning]  rtl/adder.v:2:32  WIDTHEXPAND  Operator ADD expects 8 bits on the LHS ...
+  [lint_new_warning]  rtl/adder.v:2:27  WIDTHTRUNC  Operator ASSIGNDLY expects 4 bits ...
+```
+
+每条原因带类别、位置和说明。各步骤会列出的内容：
+
+| 步骤 | 列出什么 |
+| --- | --- |
+| prepare | 不可用的输入 |
+| review | Yosys 报的原话，以及未豁免的 error 级问题和处理建议 |
+| elab | slang 的错误、未定义的模块、找不到的顶层 |
+| lint | Verilator 的错误；配了基线时，基线里没有的新警告 |
+| sim | 未通过的用例（失败类型、第一条错误、日志和波形路径），或者没编过的 testbench / 测试程序 |
+
+此外还会列出未通过的质量门禁（实际值和要求值）。结果里完全找不到原因时，才会去
+日志里取第一条错误行。默认最多列 10 条，`--limit` 可以调。
+
+### 其他
+
 `ecc-fe init` 失败时会列出每一条原因（`init_issue` 记录，带 `code` 和 `message`），
 并清掉它自己创建的目录；目录里原有的文件不会被动，修正后可以直接重新执行。
 
