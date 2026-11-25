@@ -477,6 +477,10 @@ def _load(
         )
 
 
+#: For the other handlers that describe a design by its parameters.
+load_parameters = _load
+
+
 def _reset_flow(directory: str) -> CommandResult | None:
     result = workspace_application.execute_payload(
         "reset-flow", {"directory": directory}, base_dir=Path.cwd()
