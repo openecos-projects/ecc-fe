@@ -26,6 +26,7 @@ from fecompiler.cli.core.inputs import (
     ParamUnsetInput,
     ReportCompareInput,
     ReportExportInput,
+    ReportFailureInput,
     ReportFilesInput,
     ReportLintBaselineInput,
     ReportQorInput,
@@ -955,6 +956,39 @@ def build_app() -> typer.Typer:
                 fail_on_regression=fail_on_regression,
             ),
             report_handlers.compare,
+        )
+
+    @report_app.command(
+        "failure",
+        help="Say why a step failed: the first failed step of the run, or the one named.",
+    )
+    def report_failure_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        step: Annotated[
+            str | None, typer.Option("--step", help="Explain this step")
+        ] = None,
+        limit: Annotated[
+            int, typer.Option("--limit", help="How many causes to list")
+        ] = 10,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "report.failure",
+            ReportFailureInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                step=step,
+                limit=limit,
+            ),
+            report_handlers.failure,
         )
 
     @report_app.command(

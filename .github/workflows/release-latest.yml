@@ -105,6 +105,7 @@ jobs:
             test/test_flow_commands.py \
             test/test_report_export.py \
             test/test_sim_inputs_and_clean.py \
+            test/test_failure_report.py \
             test/test_packaging_handlers.py \
             test/test_runtime_server.py \
             test/test_runtime_stdio.py \

@@ -126,7 +126,30 @@ def _flow_line(record: dict[str, object]) -> str:
     return f"-  {str(record.get('step')):<8}  not in this flow: {record.get('reason')}"
 
 
+def _failure_line(record: dict[str, object]) -> str:
+    where = str(record.get("source") or "")
+    if where and record.get("line"):
+        where += f":{record['line']}"
+        if record.get("column"):
+            where += f":{record['column']}"
+    subject = where or str(record.get("case") or record.get("gate") or record.get("module") or "")
+    parts = [f"[{record.get('category')}]"]
+    if subject:
+        parts.append(subject)
+    if record.get("rule"):
+        parts.append(str(record["rule"]))
+    if record.get("failure"):
+        parts.append(str(record["failure"]))
+    parts.append(str(record.get("message")))
+    line = "  ".join(parts)
+    for key in ("detail", "evidence", "advice", "log"):
+        if record.get(key):
+            line += f"\n      {key}: {record[key]}"
+    return line
+
+
 _COMPACT_TEXT = {
+    "report.failure": _failure_line,
     "runs.list": _run_line,
     "report.compare": _compare_line,
     "flow.list": _flow_line,
