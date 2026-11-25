@@ -306,6 +306,32 @@ Install order is dependency-first. An installation is published only after:
 
 On failure, the prior installed directory and manifest entry remain available.
 
+### Archives
+
+A tar archive may hold regular files, directories, symbolic links and hard
+links. A member whose path leaves the archive is refused. A symbolic link is
+judged from the directory it is in and a hard link from the archive root, in
+both cases after `..` is resolved: `bin/tool -> ../lib/tool` is accepted, a
+target that ends up outside the archive, or an absolute one, is refused.
+Where Python provides it, extraction also runs under the `data` filter, which
+drops set-id bits. A zip archive may hold no symbolic links.
+
+An archive whose members add up to more than `ECOS_EXTRACT_MAX_BYTES`
+(default 64 GiB) is refused before anything is written.
+
+What a `post_install` command prints goes to stderr, so the records on stdout
+stay one document; when it fails, the last lines it printed are in the error.
+
+### The Manifest
+
+A manifest that exists and cannot be used (unreadable, empty, not JSON, not
+an object, or with an `installed` field that is not an object) is
+`invalid_resource_manifest` with `path`, `reason` and `remediation`, from
+every `resource` command including `install`. Other commands read it as
+empty, which hides the installed tools, and say so in one warning line on
+stderr. `doctor` reports it under `resource_manifest` with the same
+remediation.
+
 ### Downloads
 
 Everything fetched is held to the size and SHA256 the registry gives, so

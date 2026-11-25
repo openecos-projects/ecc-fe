@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import uuid
@@ -615,12 +617,32 @@ class ResourceManager:
                 raise ResourceManagerError(
                     "Post-install working directory is outside the resource"
                 )
+            # What the command prints is not this program's result: it goes
+            # to stderr, so `--json` output stays one document.
             try:
-                subprocess.run(command, cwd=cwd, check=True)
-            except (OSError, subprocess.CalledProcessError) as error:
+                result = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    errors="replace",
+                )
+            except OSError as error:
                 raise ResourceManagerError(
-                    f"Post-install command failed: {' '.join(command)}"
+                    f"Post-install command failed: {' '.join(command)}: {error}"
                 ) from error
+            if result.stdout:
+                sys.stderr.write(result.stdout)
+                sys.stderr.flush()
+            if result.returncode != 0:
+                tail = " | ".join(result.stdout.strip().splitlines()[-3:])
+                raise ResourceManagerError(
+                    f"Post-install command failed with status {result.returncode}: "
+                    f"{' '.join(command)}" + (f": {tail}" if tail else "")
+                )
 
     def _build_entry(
         self,
@@ -730,10 +752,34 @@ def _publish(
         )
 
 
+# What an archive may unpack to at most, against archives that expand without end.
+EXTRACT_LIMIT_ENV = "ECOS_EXTRACT_MAX_BYTES"
+DEFAULT_EXTRACT_LIMIT = 64 * 1024**3
+
+
+def _extract_limit() -> int:
+    try:
+        value = int(os.environ.get(EXTRACT_LIMIT_ENV, "") or DEFAULT_EXTRACT_LIMIT)
+    except ValueError:
+        return DEFAULT_EXTRACT_LIMIT
+    return value if value > 0 else DEFAULT_EXTRACT_LIMIT
+
+
+def _check_unpacked_size(total: int) -> None:
+    limit = _extract_limit()
+    if total > limit:
+        raise ResourceManagerError(
+            f"Resource archive unpacks to {total} bytes, more than the limit of {limit} "
+            f"({EXTRACT_LIMIT_ENV})"
+        )
+
+
 def _extract_archive(archive: Path, destination: Path) -> None:
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as bundle:
-            for member in bundle.infolist():
+            members = bundle.infolist()
+            _check_unpacked_size(sum(member.file_size for member in members))
+            for member in members:
                 relative = _safe_relative_path(member.filename)
                 target = destination.joinpath(*relative.parts)
                 if member.is_dir():
@@ -753,6 +799,7 @@ def _extract_archive(archive: Path, destination: Path) -> None:
     try:
         with tarfile.open(archive, mode="r:*") as bundle:
             members = bundle.getmembers()
+            _check_unpacked_size(sum(member.size for member in members if member.isfile()))
             for member in members:
                 relative = _safe_relative_path(member.name)
                 if not (
@@ -764,15 +811,37 @@ def _extract_archive(archive: Path, destination: Path) -> None:
                     raise ResourceManagerError(
                         f"Unsupported special file in resource archive: {member.name}"
                     )
-                if member.issym() or member.islnk():
-                    link_parent = PurePosixPath(*relative.parts).parent
-                    link_target = link_parent / PurePosixPath(member.linkname)
-                    _safe_relative_path(str(link_target))
-            bundle.extractall(destination, members=members)
+                if member.issym():
+                    # A symbolic link is read from the directory it is in.
+                    _safe_link_target(member.name, relative.parent, member.linkname)
+                elif member.islnk():
+                    # A hard link names another member, from the archive root.
+                    _safe_link_target(member.name, PurePosixPath("."), member.linkname)
+            # Python's own extraction filter where it exists (3.12, and the
+            # security releases of earlier versions): it refuses the same
+            # escapes and drops set-id bits. The checks above do not depend on it.
+            if hasattr(tarfile, "data_filter"):
+                bundle.extractall(destination, members=members, filter="data")
+            else:  # pragma: no cover - interpreters before the filter existed
+                bundle.extractall(destination, members=members)
     except (tarfile.TarError, OSError) as error:
         raise ResourceManagerError(
             f"Unable to extract resource archive: {error}"
         ) from error
+
+
+def _safe_link_target(name: str, base: PurePosixPath, linkname: str) -> None:
+    """Refuse a link that leads out of the archive; ``..`` inside it is fine.
+
+    ``bin/tool -> ../lib/tool`` stays inside and is what toolchain archives
+    are full of; ``bin/tool -> ../../etc/passwd`` and absolute targets leave.
+    """
+    target = PurePosixPath(linkname)
+    resolved = posixpath.normpath(str(base / target))
+    if target.is_absolute() or resolved == ".." or resolved.startswith("../"):
+        raise ResourceManagerError(
+            f"Archive link escapes destination: {name} -> {linkname}"
+        )
 
 
 def _safe_relative_path(value: str) -> PurePosixPath:

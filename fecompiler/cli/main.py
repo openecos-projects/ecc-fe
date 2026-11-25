@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 
-from fecompiler.resources import activate_managed_resources
+from fecompiler.resources import activate_managed_resources, resource_manifest_problem
 from fecompiler.utility.program import invoked, program_name
 
 _REMOVED_DIRECT_FORM = """\
@@ -67,6 +67,14 @@ def run(argv: Sequence[str] | None = None) -> int:
         from fecompiler.cli.workspace import run as run_workspace
 
         return run_workspace(raw_argv[1:])
+    problem = resource_manifest_problem()
+    if problem is not None and raw_argv[:1] != ["resource"]:
+        # Read as empty, the manifest would silently hide every installed tool.
+        print(
+            f"{program_name()}: warning: {problem}; the tools it lists are not used. "
+            f"See `{invoked('ecc-fe resource status')}`.",
+            file=sys.stderr,
+        )
     root_commands = {
         "version",
         "init",

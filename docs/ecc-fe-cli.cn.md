@@ -277,6 +277,13 @@ CLI 与桌面端共用以下目录，不需要重复安装：
 可用 `XDG_STATE_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME` 覆盖。registry 地址可
 用 `ECOS_REGISTRY_URL` 覆盖，也可以指向一个本地文件。
 
+### 资源清单损坏时
+
+清单文件（`manifest.json`）损坏时，`resource` 的各条命令会报
+`invalid_resource_manifest`，并给出文件路径、原因和处理办法：把这个文件挪到一边，
+再执行 `ecc-fe resource install --required`。已经装好的工具目录不受影响。其他命令
+会把损坏的清单当作空清单（也就是用不到已安装的工具），并在 stderr 打一行警告。
+
 ### 卸载和清理
 
 - `resource list --installed` 只读本地清单，不发任何网络请求。

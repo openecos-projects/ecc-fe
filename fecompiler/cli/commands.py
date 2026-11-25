@@ -84,6 +84,7 @@ from fecompiler.data.workspace import (
 )
 from fecompiler.engine.flow import stale_steps
 from fecompiler.resources import (
+    ResourceManifestError,
     activate_managed_resources,
     installed_tool_entries,
     read_resource_manifest,
@@ -1164,6 +1165,11 @@ def doctor(command_input: CommandInput, context: CommandContext) -> CommandResul
                 "required": False,
                 "path": str(resource_manifest_path()),
                 "error": str(error),
+                **(
+                    {"remediation": error.remediation}
+                    if isinstance(error, ResourceManifestError)
+                    else {}
+                ),
             }
         )
 
@@ -1654,13 +1660,7 @@ def resource_list(
     except ResourceManagerError as error:
         return CommandResult.err([failure_record("resource_failed", error)])
     except (OSError, ValueError) as error:
-        return CommandResult.err(
-            [
-                failure_record(
-                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
-                )
-            ]
-        )
+        return _manifest_error(error)
     _print_registry_note(manager)
     return CommandResult.ok(records)
 
@@ -1680,13 +1680,7 @@ def resource_uninstall(
             ]
         )
     except (OSError, ValueError) as error:
-        return CommandResult.err(
-            [
-                failure_record(
-                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
-                )
-            ]
-        )
+        return _manifest_error(error)
     if record.get("required"):
         # ECC-FE needs it: say how to get it back.
         record["reinstall_cmd"] = invoked("ecc-fe resource install ") + shlex.quote(
@@ -1703,13 +1697,7 @@ def resource_prune(
     try:
         items = ResourceManager().prune(apply=command_input.apply)
     except (OSError, ValueError) as error:
-        return CommandResult.err(
-            [
-                failure_record(
-                    "invalid_resource_manifest", error, path=str(resource_manifest_path())
-                )
-            ]
-        )
+        return _manifest_error(error)
 
     def total(*statuses: str) -> int:
         return sum(int(item["bytes"]) for item in items if item["status"] in statuses)
@@ -1736,27 +1724,11 @@ def resource_status(
     try:
         manifest = read_resource_manifest(strict=True)
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        return CommandResult.err(
-            [
-                failure_record(
-                    "invalid_resource_manifest",
-                    error,
-                    path=str(resource_manifest_path()),
-                )
-            ]
-        )
+        return _manifest_error(error)
     try:
         required_resources = _manifest_required_resources(manifest)
     except TypeError as error:
-        return CommandResult.err(
-            [
-                failure_record(
-                    "invalid_resource_manifest",
-                    error,
-                    path=str(resource_manifest_path()),
-                )
-            ]
-        )
+        return _manifest_error(error)
     required_set = set(required_resources)
     installed = installed_tool_entries(manifest)
     records: list[dict[str, object]] = []
@@ -1876,6 +1848,8 @@ def resource_install(
                 ),
             )
         )
+    except ResourceManifestError as error:
+        return _manifest_error(error)
     except ResourceManagerError as error:
         _print_registry_note(manager)
         return CommandResult.err(
@@ -1890,6 +1864,14 @@ def resource_install(
     _print_registry_note(manager)
     activate_managed_resources()
     return CommandResult.ok(records)
+
+
+def _manifest_error(error: BaseException) -> CommandResult:
+    """Report a manifest that cannot be used: where it is, why, and what to do."""
+    fields: dict[str, object] = {"path": str(resource_manifest_path())}
+    if isinstance(error, ResourceManifestError):
+        fields.update(path=str(error.path), reason=error.reason, remediation=error.remediation)
+    return CommandResult.err([failure_record("invalid_resource_manifest", error, **fields)])
 
 
 def _print_registry_note(manager: ResourceManager) -> None:
