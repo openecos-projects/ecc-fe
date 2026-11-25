@@ -128,28 +128,80 @@ def empty_resource_manifest(
     }
 
 
+class ResourceManifestError(ValueError):
+    """The resource manifest exists and cannot be used.
+
+    Carries where the file is and why it was refused, so the message names
+    both instead of a bare parser error.
+    """
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"resource manifest {path} cannot be used: {reason}")
+
+    @property
+    def remediation(self) -> str:
+        return (
+            f"move {self.path} aside and install the resources again "
+            "(`ecc-fe resource install --required`); the installed tools "
+            "themselves are not touched and are replaced in place"
+        )
+
+
+def _load_resource_manifest(manifest_path: Path) -> dict[str, Any] | None:
+    """Return the manifest, ``None`` when there is none; raise when it is damaged."""
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as error:
+        raise ResourceManifestError(manifest_path, f"it cannot be read ({error})") from error
+    try:
+        value = json.loads(text)
+    except ValueError as error:
+        reason = "it is empty" if not text.strip() else f"it is not valid JSON ({error})"
+        raise ResourceManifestError(manifest_path, reason) from error
+    if not isinstance(value, dict):
+        raise ResourceManifestError(manifest_path, "its content is not a JSON object")
+    if not isinstance(value.get("installed", {}), dict):
+        raise ResourceManifestError(manifest_path, 'its "installed" field is not an object')
+    return value
+
+
 def read_resource_manifest(
     path: Path | None = None,
     *,
     environ: MutableMapping[str, str] | None = None,
     strict: bool = False,
 ) -> dict[str, Any]:
+    """Read the manifest; a missing one is empty.
+
+    A damaged one raises :class:`ResourceManifestError` when *strict*, and is
+    otherwise read as empty: see :func:`resource_manifest_problem` for telling
+    the user that this happened.
+    """
     manifest_path = path or resource_manifest_path(environ)
     try:
-        value = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict) or not isinstance(
-            value.get("installed", {}), dict
-        ):
-            raise ValueError(  # noqa: TRY004 - callers handle all manifest validation uniformly.
-                "manifest root and installed field must be objects"
-            )
-        return value
-    except FileNotFoundError:
-        return empty_resource_manifest(environ)
-    except (OSError, ValueError, json.JSONDecodeError):
+        value = _load_resource_manifest(manifest_path)
+    except ResourceManifestError:
         if strict:
             raise
         return empty_resource_manifest(environ)
+    return value if value is not None else empty_resource_manifest(environ)
+
+
+def resource_manifest_problem(
+    path: Path | None = None,
+    *,
+    environ: MutableMapping[str, str] | None = None,
+) -> ResourceManifestError | None:
+    """Return why the manifest is being read as empty, or ``None`` when it is fine."""
+    try:
+        _load_resource_manifest(path or resource_manifest_path(environ))
+    except ResourceManifestError as error:
+        return error
+    return None
 
 
 def required_tool_health_markers(name: str) -> tuple[tuple[str, str], ...]:
