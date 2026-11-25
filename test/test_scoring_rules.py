@@ -10,7 +10,7 @@ import pytest
 from fecompiler.analysis import scoring
 from fecompiler.analysis.qor import write_step_qor
 from fecompiler.tools.fe.builder import build_step, build_step_space
-from fecompiler.tools.review.structural_probe import _module_graph_summary
+from fecompiler.tools.review.netlist_graph import _module_graph_summary
 
 
 def _step(tmp_path: Path, name: str, tool: str):

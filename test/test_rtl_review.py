@@ -227,7 +227,7 @@ def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp
     cpu_filelist.write_text(f"{leaf}\n{cpu_top}\n", encoding="utf-8")
     soc_filelist.write_text(f"{soc_wrapper}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -278,7 +278,7 @@ def test_yosys_precheck_autodiscovers_same_name_local_helper_sources(tmp_path: P
     helper.write_text("module difftest_wrapper(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
     cpu_filelist.write_text(f"{cpu_top}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: True)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -320,7 +320,7 @@ def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
     rtl.write_text("module cpu(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
     filelist.write_text(f"{rtl}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         assert cmd[0] == "/usr/bin/yosys"
@@ -469,7 +469,7 @@ def test_yosys_precheck_error_blocks_review_step(tmp_path: Path, monkeypatch):
     rtl.write_text("module cpu(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
     filelist.write_text(f"{rtl}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -515,7 +515,7 @@ def test_yosys_precheck_tool_limit_does_not_block_review_step(tmp_path: Path, mo
     rtl.write_text("module cpu(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
     filelist.write_text(f"{rtl}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: True)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -567,7 +567,7 @@ def test_yosys_precheck_script_stays_frontend_only(tmp_path: Path, monkeypatch):
     rtl.write_text("module cpu(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
     filelist.write_text(f"{rtl}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -606,7 +606,7 @@ def test_yosys_precheck_prefers_slang_frontend_when_available(tmp_path: Path, mo
     rtl.write_text("module cpu(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
     filelist.write_text(f"{rtl}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: True)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -671,7 +671,7 @@ endmodule
     )
     filelist.write_text(f"{support}\n{cpu}\n", encoding="utf-8")
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: True)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: True)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])
@@ -725,7 +725,7 @@ def _netlist_path_from_script(script_text: str) -> Path:
 
 def _mock_successful_yosys_precheck(monkeypatch):
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._yosys_supports_slang", lambda yosys: False)
+    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
         script = Path(cmd[cmd.index("-s") + 1])

@@ -382,7 +382,13 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
 | 测试程序的构建记录（没变就不重编） | `fecompiler/tools/verilator/program_build.py` |
 | 覆盖率数据的合并与汇总（`sim.coverage` / `testbench.coverage`） | `fecompiler/tools/verilator/coverage.py` |
 | RTL 设计用自己的 testbench 仿真 | `fecompiler/tools/verilator/testbench.py` |
-| review（步骤入口、源码检查、Yosys 结构预检查） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
+| review（步骤入口、源码检查、Yosys 结构预检查的调度） | `fecompiler/tools/review/runner.py`、`analyzer.py`、`structural_probe.py` |
+| 结构预检查：查找 Yosys 及其能力 | `fecompiler/tools/review/yosys_env.py` |
+| 结构预检查：收集输入（源文件、宏定义、top） | `fecompiler/tools/review/probe_inputs.py` |
+| 结构预检查：生成 Yosys 脚本 | `fecompiler/tools/review/probe_script.py` |
+| 结构预检查：网表度量（单元数、扇出、扇入、逻辑深度） | `fecompiler/tools/review/netlist_graph.py` |
+| 结构预检查：日志诊断 | `fecompiler/tools/review/probe_diagnostics.py` |
+| 结构预检查：风险、质量结论、review 问题，以及判定阈值 | `fecompiler/tools/review/probe_risks.py`、`probe_common.py` |
 | 门禁、质量结论、分数 | `fecompiler/analysis/qor/`（每个步骤一个模块，另有 `common.py`、`store.py`）、`scoring.py`、`scoring_policy.json` |
 | 结果的可比性指纹（编译链接参数、C++ 依赖、输入的规范化） | `fecompiler/analysis/qor/fingerprint.py` |
 | 结果签名与过期判断 | `fecompiler/engine/provenance.py` |

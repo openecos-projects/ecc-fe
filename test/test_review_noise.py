@@ -16,12 +16,8 @@ from fecompiler.tools.review.analyzer import (
     finalize_review_report,
 )
 from fecompiler.tools.review.inputs import prepared_review_inputs
-from fecompiler.tools.review.structural_probe import (
-    _as_frontend_limits,
-    _diagnostic_blocks_review,
-    _paths_with_whitespace,
-    _quality_from_run,
-)
+from fecompiler.tools.review.probe_risks import _diagnostic_blocks_review, _quality_from_run
+from fecompiler.tools.review.probe_script import _as_frontend_limits, _paths_with_whitespace
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 
 
