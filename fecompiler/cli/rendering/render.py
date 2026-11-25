@@ -117,7 +117,20 @@ def _compare_line(record: dict[str, object]) -> str:
     return "  ".join(parts)
 
 
-_COMPACT_TEXT = {"runs.list": _run_line, "report.compare": _compare_line}
+def _flow_line(record: dict[str, object]) -> str:
+    if record.get("in_flow"):
+        return (
+            f"{int(record.get('index', 0)) + 1}  {str(record.get('step')):<8}  "
+            f"{str(record.get('tool')):<10}  {record.get('directory')}"
+        )
+    return f"-  {str(record.get('step')):<8}  not in this flow: {record.get('reason')}"
+
+
+_COMPACT_TEXT = {
+    "runs.list": _run_line,
+    "report.compare": _compare_line,
+    "flow.list": _flow_line,
+}
 
 
 def _render_fields(record: dict[str, object], target: TextIO) -> None:

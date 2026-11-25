@@ -15,6 +15,7 @@ from fecompiler.cli.core.inputs import (
     CommandInput,
     ConfigInput,
     DoctorInput,
+    FlowShowInput,
     HandoffInput,
     InitInput,
     LogInput,
@@ -50,6 +51,7 @@ from fecompiler.cli.core.version_info import (
     version_text,
 )
 from fecompiler.cli.handlers import catalog as catalog_handlers
+from fecompiler.cli.handlers import flow as flow_handlers
 from fecompiler.cli.handlers import handoff as handoff_handlers
 from fecompiler.cli.handlers import param as param_handlers
 from fecompiler.cli.handlers import report as report_handlers
@@ -87,6 +89,11 @@ def build_app() -> typer.Typer:
         help="Inspect and validate frontend catalog entries.",
         no_args_is_help=True,
         add_completion=False,
+    )
+    flow_app = typer.Typer(
+        add_completion=False,
+        help="Show the steps of the flow and what each one is made of.",
+        no_args_is_help=True,
     )
     runs_app = typer.Typer(
         add_completion=False,
@@ -972,6 +979,55 @@ def build_app() -> typer.Typer:
             report_handlers.lint_baseline,
         )
 
+    @flow_app.command("list", help="List the steps of the flow of a design, in order.")
+    def flow_list_command(
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "flow.list",
+            CommandInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+            ),
+            flow_handlers.list_flow,
+        )
+
+    @flow_app.command(
+        "show",
+        help="Show one step: its tool, its parameters, and what makes its result stale.",
+    )
+    def flow_show_command(
+        step: Annotated[str, typer.Argument(help="Step name, as `flow list` prints it")],
+        workspace: WorkspaceOption = None,
+        project: ProjectOption = None,
+        run_id: RunIdOption = None,
+        json_output: JsonOption = False,
+        jsonl: JsonlOption = False,
+        plain: PlainOption = False,
+    ) -> None:
+        execute_command(
+            "flow.show",
+            FlowShowInput(
+                workspace=workspace,
+                output_mode=output_mode(
+                    json_output=json_output, jsonl=jsonl, plain=plain
+                ),
+                project=project,
+                run_id=run_id,
+                step=step,
+            ),
+            flow_handlers.show_step,
+        )
+
     @runs_app.command("list", help="List the runs of a project with their state.")
     def runs_list_command(
         project: ProjectOption = None,
@@ -1033,6 +1089,7 @@ def build_app() -> typer.Typer:
     app.add_typer(catalog_app, name="catalog")
     app.add_typer(report_app, name="report")
     app.add_typer(runs_app, name="runs")
+    app.add_typer(flow_app, name="flow")
     return app
 
 

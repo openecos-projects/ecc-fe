@@ -29,6 +29,7 @@ ecc-fe param list|show|set|unset|diff
 ecc-fe catalog list|show|check|validate
 ecc-fe report qor|files|compare|lint-baseline
 ecc-fe runs list|delete
+ecc-fe flow list|show
 ecc-fe handoff
 ecc-fe workspace ...
 ecc-fe rpc ...
@@ -708,6 +709,41 @@ user's design with everything needed to compile it, and what the flow
 concluded. It is the only interface a consumer such as ECC uses; its content
 and readiness rules are specified in
 [handoff-manifest.md](handoff-manifest.md).
+
+## Flow Description
+
+`flow list` and `flow show <step>` are read-only views of the step registry
+and of the flow profile a design's parameters select. They report what the
+flow is made of, not what it has done (`status`). They describe the same
+parameters as `param list`: a direct workspace, the run named by `--run-id`,
+or otherwise the next new run of the project.
+
+`flow list` writes a `flow` record (`design_kind`, `describes` =
+`workspace` | `run` | `next_run`, `project`, `run`, `workspace`, `steps` in
+order, `capabilities`) and one `flow_step` record per registered step:
+`index` (position in this flow, from 0), `step`, `tool`, `directory`,
+`in_flow`. A registered step this design does not run has `in_flow=false`,
+`index=null` and a `reason`.
+
+`flow show <step>` writes one `flow_step` record with, in addition: `after`
+and `before` (neighbours in this flow), `inputs_from` (the step that prepared
+the inputs it reads), `programs`, `environment_checks` (what `doctor --step`
+checks), `parameters` (the parameters of this design that apply to the
+step), `qor_report`, `handler`, and `stale_when`, the things whose change
+makes a successful result out of date:
+
+| Field | Meaning |
+| --- | --- |
+| `inputs` | The files the step reads. |
+| `parameters` | Parameters tracked for the step. |
+| `parameters_not_tracked` | Parameters that change how the step runs, not what it produces. |
+| `design_settings` | Tracked values fixed by the design or its catalog entry. |
+| `programs` | External programs whose identity is tracked. |
+| `sources` | ECC-FE source files hashed into the step signature. |
+
+A step in the flow also carries `run_cmd`, `params_cmd` and `doctor_cmd`. An
+unknown step is `unknown_step` with exit status `2`; a missing project or run
+fails as it does for `param list`.
 
 ## Run Management
 

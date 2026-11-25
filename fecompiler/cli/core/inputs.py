@@ -169,6 +169,11 @@ class HandoffInput(CommandInput):
 
 
 @dataclass(frozen=True, slots=True)
+class FlowShowInput(CommandInput):
+    step: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class RunsDeleteInput(CommandInput):
     run_ids: tuple[str, ...] = ()
 

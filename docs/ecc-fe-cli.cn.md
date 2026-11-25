@@ -497,6 +497,46 @@ ecc-fe handoff --bundle -o ./export    # 把 RTL 一起复制进去，目录可�
 
 清单的字段见 `docs/specification/handoff-manifest.md`。
 
+## 查看流程由哪些步骤组成
+
+```bash
+ecc-fe flow list          # 这个设计的流程有哪些步骤，按顺序
+ecc-fe flow show sim      # 一个步骤的工具、参数，以及什么会让它的结果过期
+```
+
+这两条命令只读，说的是流程"由什么组成"；每一步跑没跑、结果如何看 `status`。
+和 `param list` 一样，在工程里默认描述下一次新建的 run，加 `--run-id` 描述
+已有的 run。
+
+```text
+$ ecc-fe flow list
+  1  prepare   fe          prepare_fe
+  2  review    fe          review_fe
+  3  elab      slang       elab_slang
+  4  lint      verilator   lint_verilator
+  -  sim       not in this flow: an RTL design is simulated when it names a testbench (testbench.top)
+```
+
+四列依次是顺序、步骤名、工具、步骤目录。不属于这个设计流程的步骤以 `-` 开头
+并说明原因，上面是一个没有 testbench 的 RTL 设计。
+
+`flow show <步骤>` 的主要内容：
+
+| 字段 | 含义 |
+| --- | --- |
+| `after` / `before` | 流程里的前一步和后一步 |
+| `inputs_from` | 它读的输入由哪一步准备 |
+| `programs` | 用到的外部程序 |
+| `environment_checks` | `doctor --step` 为它检查的项目 |
+| `parameters` | 这个设计里作用于该步骤的参数 |
+| `qor_report` | 质量分析读取的报告文件 |
+| `stale_when` | 哪些东西变了，已成功的结果就算过期 |
+| `run_cmd` / `params_cmd` / `doctor_cmd` | 只跑这一步、看它的参数、检查它的环境 |
+
+`stale_when` 里 `parameters` 是会让结果过期的参数，`parameters_not_tracked` 是
+只影响怎么跑、不影响结果的参数（例如 `sim.build_jobs`），`sources` 是参与步骤
+签名的 ECC-FE 源文件。
+
 ## 管理 run
 
 ```bash
