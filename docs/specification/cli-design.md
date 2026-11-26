@@ -994,6 +994,18 @@ concluded. It is the only interface a consumer such as ECC uses; its content
 and readiness rules are specified in
 [handoff-manifest.md](handoff-manifest.md).
 
+### Test cases of a CPU run
+
+`sim.cases` selects the cases of the CPU test suite a run simulates: `smoke`
+(the default) a quick selection of one case, `all` every case of the suite.
+It is part of the sim step's signature. A CPU that passed only the selection
+is not handed off: `handoff` refuses with `handoff_not_ready` and the blocker
+`ran a selection of the CPU test suite, not all of it`, naming the command
+for a run of the whole suite (`new_run_cmd` in a project, whose runs keep the
+parameters they were created with; `remediation_cmd` in a direct workspace).
+`--allow-incomplete` writes the manifest with that blocker. A design with its
+own testbench has no suite and is not affected.
+
 ## Flow Description
 
 `flow list` and `flow show <step>` are read-only views of the step registry

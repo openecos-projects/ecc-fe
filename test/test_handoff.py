@@ -327,6 +327,21 @@ def test_cpu_project_hands_off_the_cpu_and_counts_the_harness(tmp_path) -> None:
     )
 
 
+def test_a_cpu_is_handed_off_only_on_its_whole_test_suite() -> None:
+    blocker = handoff_handler._partial_suite_blocker
+    steps = [{"step": "lint"}, {"step": "sim"}]
+    cpu = {"frontend_design_kind": "cpu_core", "sim_program_names": ["add"]}
+
+    assert blocker(cpu, steps) == {
+        "step": "sim",
+        "reason": "ran a selection of the CPU test suite, not all of it",
+    }
+    assert blocker({**cpu, "sim_build_all_programs": True}, steps) is None
+    # A design with its own testbench, or without simulation, has no suite.
+    assert blocker({"frontend_design_kind": "generic_rtl"}, steps) is None
+    assert blocker(cpu, [{"step": "lint"}]) is None
+
+
 def test_cpu_workspace_without_a_cpu_filelist_cannot_be_handed_off(tmp_path) -> None:
     with pytest.raises(ValueError, match="no CPU filelist"):
         _design_inputs({"frontend_design_kind": "cpu_core", "input_filelist": str(tmp_path / "m.f")})

@@ -50,7 +50,7 @@ and none is stale, and when the design elaborates on its own:
 
 | Error | Meaning |
 | --- | --- |
-| `handoff_not_ready` | A step failed, has not run, or is stale; `blockers` lists them. |
+| `handoff_not_ready` | A step failed, has not run, or is stale; or a CPU was simulated on a selection of its test suite and not all of it (`sim.cases` is not `all`). `blockers` lists them. |
 | `handoff_design_incomplete` | The design as described does not elaborate standalone; see `standalone_check.log`. |
 | `handoff_inputs_unavailable` | The recorded filelist or a file it lists is missing. |
 

@@ -705,6 +705,11 @@ def _configure_sim_run(workspace: dict[str, Any], args: argparse.Namespace | Non
             args.sim_cpu_test_case,
         )
         return True
+    if str(tool_config(workspace).get("sim_cases", "") or "").strip().lower() == "all":
+        # Asked for by the run's own setting (sim.cases), not by this call:
+        # the result is reused like any other while nothing changed.
+        _apply_sim_test_suite(workspace, "cpu-tests", "all", None)
+        return False
     _apply_default_sim_smoke_suite(workspace)
     return False
 

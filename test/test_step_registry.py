@@ -213,6 +213,9 @@ def test_sim_run_setup_forces_a_rerun_only_for_a_named_suite(monkeypatch) -> Non
         )
 
     assert sim_config._configure_sim_run({}, None) is False
+    # The run's own setting selects the whole suite without forcing a rerun.
+    assert sim_config._configure_sim_run({"sim_cases": "all"}, None) is False
+    assert applied.pop() == ("cpu-tests", "all", None)
     assert sim_config._configure_sim_run({}, named("")) is False
     assert sim_config._configure_sim_run({}, named("Default")) is False
     assert sim_config._configure_sim_run({}, named("cpu_tests")) is True
