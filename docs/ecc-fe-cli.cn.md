@@ -178,19 +178,23 @@ ecc-fe log sim --project ./counter
 
 1. 仿真程序在时限内以退出码 0 结束。`$fatal` 和断言失败会让退出码非 0；
    testbench 一直不调用 `$finish` 会超时（时限由 `ECOS_FE_TIMEOUT_SIM_CASE` 控制）。
-2. 设置了 `testbench.fail_pattern` 时，输出不能匹配它。
+2. 输出不能匹配失败规则 `testbench.fail_pattern`。
 3. 设置了 `testbench.pass_pattern` 时，输出必须匹配它。
 
-两个正则默认都不设置。这意味着 testbench 打印了 `FAIL` 再 `$finish` 时仍会被判为
-通过，所以建议至少设一个：
+失败规则不用设置就有一条默认的：某一行以大写的 `FAIL`、`FAILED` 或 `ERROR` 开头
+（前面可以有 `TEST ` 或方括号），或者是 Verilator 自己报的 `%Error`，就判为失败。
+所以 testbench 打印 `FAIL q=3` 再正常 `$finish`，会被判为失败。计数为零的汇总行
+（`FAILED: 0`、`ERRORS: 0`、`0 errors`）不算，小写的 `failed`、`error` 也不算。
 
 ```bash
-ecc-fe param set testbench.pass_pattern 'TEST PASSED'
-ecc-fe param set testbench.fail_pattern 'FAIL|ERROR'
+ecc-fe param set testbench.fail_pattern 'MISMATCH|TIMEOUT'   # 换成自己的规则
+ecc-fe param set testbench.fail_pattern none                  # 关掉失败规则
+ecc-fe param set testbench.pass_pattern 'TEST PASSED'         # 另外要求必须打印这一句
 ```
 
-没有设置任何正则而通过时，日志最后一行会说明这次只按退出码判定。失败时最后一行是
-失败原因。其余参数：`testbench.plusargs`（传给仿真的 `+arg`）和
+`testbench.fail_pattern` 显示为空表示"没有设置"，此时用的就是默认规则。被默认规则
+判为失败时，日志最后会多一行提示怎么改或关掉。失败规则关掉、也没设通过规则时，
+日志最后一行会说明这次只按退出码判定。其余参数：`testbench.plusargs`（传给仿真的 `+arg`）和
 `testbench.extra_args`（额外的 Verilator 编译参数），以及 `testbench.coverage`
 （收集设计的覆盖率，见"覆盖率"一节）。
 

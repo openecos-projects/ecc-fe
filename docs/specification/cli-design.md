@@ -507,7 +507,7 @@ An RTL design is simulated with a SystemVerilog testbench of its own. The
 | `testbench.top` | Top module of the testbench. Setting it adds `sim` to the flow. |
 | `testbench.files` | The testbench sources. They are compiled after the design and are not part of it: they are not reviewed, linted, or handed off. |
 | `testbench.pass_pattern` | Regular expression the output must match for the run to pass. |
-| `testbench.fail_pattern` | Regular expression that fails the run when the output matches. |
+| `testbench.fail_pattern` | Regular expression that fails the run when the output matches. Not set: the default rule below. `none`: no fail rule. |
 | `testbench.plusargs` | Arguments for the simulation, such as `+seed=1`. |
 | `testbench.extra_args` | Additional Verilator arguments for the build. |
 | `testbench.coverage` | Collect line and toggle coverage of the design (default `false`). See Coverage. |
@@ -529,7 +529,8 @@ when all of these hold:
    (`ECOS_FE_TIMEOUT_SIM_CASE`); `$fatal` and a failed assertion make
    Verilator exit non-zero, a testbench that never calls `$finish` runs into
    the limit;
-2. the output does not match `testbench.fail_pattern`, when one is set;
+2. the output does not match the fail rule: `testbench.fail_pattern`, or the
+   default rule when the project sets none;
 3. the output matches `testbench.pass_pattern`, when one is set.
 
 Patterns are Python regular expressions searched in the whole output, with
@@ -537,6 +538,19 @@ Patterns are Python regular expressions searched in the whole output, with
 that prints `FAIL` and then calls `$finish` passes unless a pattern says
 otherwise, and the log then ends with a line saying that the run was judged
 by its exit status alone.
+
+The default fail rule is
+`^\s*(?:\[\s*)?(?:TEST\s+)?(?:FAIL(?:ED)?|ERROR)\b(?!\s*[:=]?\s*0\b)|^%Error`,
+applied per line: a line that opens with `FAIL`, `FAILED` or `ERROR` in
+capitals, optionally after `TEST ` or an opening bracket, unless a count of
+zero follows (`FAILED: 0`); or an error Verilator itself reports. It is a
+rule of the step, not the parameter's default value: `testbench.fail_pattern`
+stays empty in a project that sets none, which keeps projects that recorded
+an empty value valid. `none` (any case) switches a pattern off.
+
+A case judged by a fail rule has `fail_pattern_source`, `default` or
+`project`. A failure by the default rule says so in `failure.message` and
+carries `failure.hint`, which the step log repeats.
 
 `report/cases.json` records the run as one case (`kind` `testbench`) with
 `ok`, `returncode`, `judged_by` and, on failure, `failure.kind`

@@ -418,15 +418,16 @@ def test_step_builds_the_design_with_its_testbench_and_runs_it(
                 "metrics": None,
                 "failure": None,
                 "design_parameters": {"applied": [], "not_applied": []},
-                "judged_by": ["exit_status"],
+                # A project that names no rule is judged by the default one.
+                "judged_by": ["exit_status", "fail_pattern"],
+                "fail_pattern_source": "default",
             }
         ],
     }
     assert SimStep().check_result(step) is True
-    # Passing without a pattern is said where the log is read.
-    assert "passed on its exit status alone" in (
-        Path(step.report["dir"]) / "log.txt"
-    ).read_text(encoding="utf-8")
+    assert (Path(step.report["dir"]) / "log.txt").read_text(encoding="utf-8").endswith(
+        "ecc-fe: simulation passed\n"
+    )
 
 
 def test_step_fails_on_a_matching_fail_pattern(tmp_path, sources, monkeypatch) -> None:
@@ -494,3 +495,146 @@ def test_testbench_result_is_gated_and_not_scored(
     assert gates["all_required_cases_pass"] == state
     assert gates["simulation_cases_present"] == "pass"
     assert "score" not in summary
+
+
+# --- the default fail rule ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "FAIL q=3",
+        "FAILED",
+        "TEST FAILED",
+        "  [FAIL] counter overflow",
+        "[ FAILED ] 2 checks",
+        "ERROR: data mismatch at 40ns",
+        "%Error: tb.sv:12: Assertion failed in tb: q != 4",
+        "FAILED: 3",
+    ],
+)
+def test_the_default_rule_fails_a_verdict_line(line) -> None:
+    pattern = re.compile(testbench.TESTBENCH_DEFAULT_FAIL_PATTERN, re.MULTILINE)
+
+    assert pattern.search(f"starting\n{line}\ndone\n") is not None
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "TEST PASSED",
+        "FAILED: 0",
+        "FAIL = 0",
+        "FAILED 0",
+        "ERROR: 0",
+        "ERRORS: 0",
+        "0 errors, 0 failures",
+        "FAILURES: 2",
+        "ERROR_COUNT=4",
+        "checks passed, none FAILED",
+        "no ERROR found",
+        "Test failed",
+        "error: lowercase is not a verdict",
+        "- tb.sv:20: Verilog $finish",
+    ],
+)
+def test_the_default_rule_leaves_other_lines_alone(line) -> None:
+    pattern = re.compile(testbench.TESTBENCH_DEFAULT_FAIL_PATTERN, re.MULTILINE)
+
+    assert pattern.search(f"starting\n{line}\ndone\n") is None
+
+
+def test_a_testbench_that_prints_fail_and_finishes_is_failed_by_default(
+    tmp_path, sources, monkeypatch
+) -> None:
+    workspace = _workspace(tmp_path, sources)
+    _fake_tools(monkeypatch, run=(0, "checking\nFAIL q=3\n"))
+    step = _sim_step(workspace)
+
+    SimStep().run(step, workspace)
+
+    case = _report(step)["cases"][0]
+    assert case["ok"] is False
+    assert case["failure"] == {
+        "kind": "fail_pattern",
+        "message": "the output matches the default testbench.fail_pattern: FAIL q=3",
+        "hint": "set testbench.fail_pattern to a rule of your own, or to `none` to switch it off",
+    }
+    log = (Path(step.report["dir"]) / "log.txt").read_text(encoding="utf-8")
+    assert log.endswith(
+        "ecc-fe: simulation failed: the output matches the default testbench.fail_pattern: FAIL q=3\n"
+        "ecc-fe: set testbench.fail_pattern to a rule of your own, or to `none` to switch it off\n"
+    )
+
+
+def test_the_default_rule_can_be_switched_off(tmp_path, sources, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, sources, testbench_fail_pattern="none")
+    _fake_tools(monkeypatch, run=(0, "FAIL q=3\n"))
+    step = _sim_step(workspace)
+
+    SimStep().run(step, workspace)
+
+    case = _report(step)["cases"][0]
+    assert case["ok"] is True
+    assert case["judged_by"] == ["exit_status"]
+    assert "fail_pattern_source" not in case
+    # With nothing but the exit status to go by, the log says so.
+    assert "passed on its exit status alone" in (
+        Path(step.report["dir"]) / "log.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_a_rule_of_the_projects_own_replaces_the_default(tmp_path, sources, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, sources, testbench_fail_pattern="MISMATCH")
+    _fake_tools(monkeypatch, run=(0, "FAIL is only a word here\n"))
+    step = _sim_step(workspace)
+
+    SimStep().run(step, workspace)
+
+    case = _report(step)["cases"][0]
+    assert case["ok"] is True
+    assert case["fail_pattern_source"] == "project"
+
+
+@pytest.mark.parametrize("stored", ["", "   ", None])
+def test_a_project_that_stores_no_rule_gets_the_default(tmp_path, sources, stored) -> None:
+    parameters = {} if stored is None else {"testbench_fail_pattern": stored}
+
+    settings = testbench.testbench_settings(_workspace(tmp_path, sources, **parameters))
+
+    assert settings["fail_pattern"].pattern == testbench.TESTBENCH_DEFAULT_FAIL_PATTERN
+    assert settings["fail_pattern_is_default"] is True
+    assert settings["pass_pattern"] is None
+
+
+def test_none_also_switches_a_pass_pattern_off(tmp_path, sources) -> None:
+    settings = testbench.testbench_settings(
+        _workspace(tmp_path, sources, testbench_pass_pattern="NONE", testbench_fail_pattern="None")
+    )
+
+    assert settings["pass_pattern"] is None and settings["fail_pattern"] is None
+    assert settings["fail_pattern_is_default"] is False
+
+
+def test_the_rule_is_applied_by_the_step_and_the_parameter_stays_unset(project, capsys) -> None:
+    _, records = _call(capsys, "param", "show", "testbench.fail_pattern", "--project", str(project))
+
+    # An empty value means "not set"; the description says what applies then.
+    assert records[0]["value"] == "" and records[0]["default"] == ""
+    assert "FAIL, FAILED or ERROR" in records[0]["description"]
+    assert "`none` switches it off" in records[0]["description"]
+
+    exit_code, _ = _call(capsys, "param", "set", "testbench.fail_pattern", "none", "--project", str(project))
+    assert exit_code == 0
+    _, records = _call(capsys, "param", "show", "testbench.fail_pattern", "--project", str(project))
+    assert records[0]["value"] == "none"
+
+
+def test_a_project_that_recorded_an_empty_rule_is_still_valid(project, capsys) -> None:
+    with (project / "ecc-fe.toml").open("rb") as stream:
+        config = tomllib.load(stream)
+
+    # What projects created before the default rule existed hold, too.
+    assert config["defaults"]["testbench.fail_pattern"] == ""
+    exit_code, records = _call(capsys, "param", "list", "--project", str(project))
+    assert exit_code == 0, records

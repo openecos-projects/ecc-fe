@@ -80,6 +80,16 @@ def config_paths(workspace: dict[str, Any], key: str) -> list[Path]:
     return [resolve_config_path(workspace, name) for name in names if name]
 
 
+# What fails a testbench simulation when the project names no rule of its
+# own: a line that opens with a verdict word in capitals, or an error
+# Verilator itself reports. A count of zero ("FAILED: 0") is not a failure.
+TESTBENCH_DEFAULT_FAIL_PATTERN = (
+    r"^\s*(?:\[\s*)?(?:TEST\s+)?(?:FAIL(?:ED)?|ERROR)\b(?!\s*[:=]?\s*0\b)|^%Error"
+)
+# The value that switches a pattern off; an empty value means "the default".
+PATTERN_OFF = "none"
+
+
 def design_parameter_overrides(workspace: dict[str, Any]) -> list[str]:
     """Return ``NAME=value`` top-level parameter overrides, validated."""
     overrides = config_list(workspace, "design_parameters")
