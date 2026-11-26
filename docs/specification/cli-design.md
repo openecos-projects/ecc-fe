@@ -534,10 +534,9 @@ when all of these hold:
 3. the output matches `testbench.pass_pattern`, when one is set.
 
 Patterns are Python regular expressions searched in the whole output, with
-`^` and `$` matching at line boundaries. Neither has a default: a testbench
-that prints `FAIL` and then calls `$finish` passes unless a pattern says
-otherwise, and the log then ends with a line saying that the run was judged
-by its exit status alone.
+`^` and `$` matching at line boundaries. There is no default pass pattern.
+When the fail rule is switched off and no pass pattern is set, the log ends
+with a line saying that the run was judged by its exit status alone.
 
 The default fail rule is
 `^\s*(?:\[\s*)?(?:TEST\s+)?(?:FAIL(?:ED)?|ERROR)\b(?!\s*[:=]?\s*0\b)|^%Error`,
