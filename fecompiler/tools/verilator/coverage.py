@@ -133,6 +133,53 @@ def summarise(
     }
 
 
+# The owners whose code a simulation is there to exercise. The SoC harness a
+# CPU is simulated in, the adapter that fits it there and generated code are
+# the fixture, not the design.
+DESIGN_OWNERSHIPS = ("cpu", "design", "third_party")
+
+
+def design_coverage(report: Mapping[str, Any]) -> dict[str, dict[str, Any]] | None:
+    """Return line and toggle coverage of the design under test, or ``None``.
+
+    ``line`` adds up Verilator's line and branch points, which are both its
+    line coverage. ``None`` when the report holds no usable data or the
+    design has no point at all.
+    """
+    if report.get("status") != "ok":
+        return None
+    owners = report.get("by_ownership")
+    if not isinstance(owners, Mapping):
+        return None
+    totals = {"line": [0, 0], "toggle": [0, 0]}
+    for owner in DESIGN_OWNERSHIPS:
+        kinds = owners.get(owner)
+        if not isinstance(kinds, Mapping):
+            continue
+        for kind, target in (("line", "line"), ("branch", "line"), ("toggle", "toggle")):
+            numbers = kinds.get(kind)
+            if not isinstance(numbers, Mapping):
+                continue
+            try:
+                covered, total = int(numbers["covered"]), int(numbers["total"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            if covered < 0 or total < covered:
+                return None
+            totals[target][0] += covered
+            totals[target][1] += total
+    if not any(total for _, total in totals.values()):
+        return None
+    return {
+        kind: {
+            "covered": covered,
+            "total": total,
+            "percent": round(100.0 * covered / total, 2) if total else None,
+        }
+        for kind, (covered, total) in totals.items()
+    }
+
+
 def write_report(
     data_files: Iterable[str | Path],
     *,
@@ -219,10 +266,12 @@ def harness_writes_coverage(sources: Iterable[str | Path]) -> bool:
 
 __all__ = [
     "BUILD_ARGS",
+    "DESIGN_OWNERSHIPS",
     "KINDS",
     "MERGED_NAME",
     "REPORT_NAME",
     "brief",
+    "design_coverage",
     "harness_writes_coverage",
     "merge_points",
     "point_fields",

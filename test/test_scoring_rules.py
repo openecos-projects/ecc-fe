@@ -38,7 +38,7 @@ def test_a_component_that_was_not_evaluated_is_left_out_of_the_total() -> None:
         "label": "Demo",
         "value": 50,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 60,
         "components": components,
     }
@@ -117,6 +117,11 @@ def test_policy_weights_add_up_to_one_hundred_per_step() -> None:
     ) == 100
     assert total("lint", ("analysis_execution", "errors", "warnings", "rule_breadth")) == 100
     assert total("sim", ("required_cases", "difftest_confidence", "cycle_telemetry")) == 100
+    # Coverage is on top of the 100: a run that collects none is scored over
+    # the same three components as before, in the same proportions.
+    coverage = scoring.scoring_policy()["sim"]["code_coverage"]
+    assert coverage["weight"] == 25
+    assert coverage["line_share"] + coverage["toggle_share"] == 1
 
 
 # --- what that means for the steps ---------------------------------------

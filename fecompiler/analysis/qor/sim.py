@@ -33,7 +33,12 @@ from fecompiler.analysis.qor.fingerprint import (
     _simulation_harness_sources,
 )
 from fecompiler.analysis.scoring import scoring_policy
-from fecompiler.tools.verilator.sim_settings import effective_sim_cflags, effective_sim_ldflags
+from fecompiler.tools.verilator.coverage import REPORT_NAME as COVERAGE_REPORT
+from fecompiler.tools.verilator.coverage import design_coverage
+from fecompiler.tools.verilator.sim_settings import (
+    effective_sim_cflags,
+    effective_sim_ldflags,
+)
 
 
 def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
@@ -208,6 +213,23 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
                 reason,
             )
         )
+    coverage = _design_coverage(step)
+    if coverage is not None:
+        coverage_source = _source(f"report/{COVERAGE_REPORT}", "/by_ownership")
+        for kind, label in (("line", "Line Coverage"), ("toggle", "Toggle Coverage")):
+            if coverage[kind]["total"]:
+                result.metrics.append(
+                    _metric(
+                        f"{kind}_coverage",
+                        label,
+                        coverage[kind]["covered"] / coverage[kind]["total"],
+                        "ratio",
+                        "verification",
+                        "higher_is_better",
+                        "design",
+                        coverage_source,
+                    )
+                )
     if report.get("kind") == "testbench":
         # One run of the user's testbench: gated, not scored.
         result.comparison = {
@@ -215,7 +237,7 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
             "testbench": str(cases[0].get("name") or "") if cases else "",
         }
         return result
-    result.score = _simulation_score(report, cases)
+    result.score = _simulation_score(report, cases, coverage)
     sim_cflags = effective_sim_cflags(workspace)
     sim_build_directory = Path(step.directory) / "obj_dir"
     sim_dependencies = _simulation_dependency_map(workspace, sim_build_directory)
@@ -266,8 +288,58 @@ def _sim_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
     return result
 
 
+def _design_coverage(step: Any) -> dict[str, dict[str, Any]] | None:
+    """Coverage of the design under test, when this run collected any."""
+    report = _read_record(Path(step.report["dir"]) / COVERAGE_REPORT)
+    return design_coverage(report) if report is not None else None
+
+
+def _coverage_component(
+    coverage: dict[str, dict[str, Any]] | None, policy: dict[str, Any]
+) -> dict[str, Any]:
+    """Credit for how much of the design the cases exercised.
+
+    Each kind earns its share in proportion to its coverage, in full from the
+    percentage the policy names. Without coverage data the component is not
+    evaluated: collecting coverage is a choice, not a fault.
+    """
+    weight = policy["weight"]
+    label = "Code coverage"
+    if coverage is None:
+        return scoring.component(
+            "code_coverage",
+            label,
+            0,
+            weight,
+            "Not evaluated: this run collected no coverage (sim.coverage).",
+            evaluated=False,
+        )
+    shares = {"line": policy["line_share"], "toggle": policy["toggle_share"]}
+    measured = {kind: share for kind, share in shares.items() if coverage[kind]["total"]}
+    earned = 0.0
+    parts: list[str] = []
+    for kind, share in measured.items():
+        percent = 100.0 * coverage[kind]["covered"] / coverage[kind]["total"]
+        full_at = policy[f"{kind}_full_at_percent"]
+        # A kind the design has no point of passes its share to the other.
+        earned += weight * share / sum(measured.values()) * min(1.0, percent / full_at)
+        parts.append(
+            f"{kind} {percent:.1f}% ({coverage[kind]['covered']}/{coverage[kind]['total']}, "
+            f"full credit from {full_at:g}%)"
+        )
+    return scoring.component(
+        "code_coverage",
+        label,
+        earned,
+        weight,
+        "Coverage of the design under test, merged over the cases: " + "; ".join(parts) + ".",
+    )
+
+
 def _simulation_score(
-    report: dict[str, Any], cases: list[dict[str, Any]]
+    report: dict[str, Any],
+    cases: list[dict[str, Any]],
+    coverage: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     suite = report.get("suite")
     run_id = report.get("run_id")
@@ -332,6 +404,7 @@ def _simulation_score(
             policy["cycle_telemetry"],
             f"{measured_cases} of {total} cases passed and reported a cycle count.",
         ),
+        _coverage_component(coverage, policy["code_coverage"]),
     ]
     return scoring.score("Simulation verification", components)
 

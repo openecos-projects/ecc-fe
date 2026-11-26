@@ -14,7 +14,7 @@ A gate is a hard condition, such as "no elaboration errors". Quality is
 (for example the Yosys precheck did not run) or the step did not succeed, and
 `pass` otherwise. The score never changes the quality.
 
-This document describes scoring version 2 (`score.scoring_version`).
+This document describes scoring version 3 (`score.scoring_version`).
 
 ## Rules
 
@@ -66,6 +66,23 @@ existing results become stale.
 | sim (CPU) | Required cases | 60 | share of cases that passed |
 | | Difftest confidence | 25 | share of Difftest cases that matched; not evaluated when Difftest is off |
 | | Cycle telemetry | 15 | share of cases that passed and reported a cycle count |
+| | Code coverage | 25 | line (60 %) and toggle (40 %) coverage of the design, in full from 90 % and 75 %; not evaluated when the run collected none |
+
+The three components above code coverage add up to 100, and code coverage
+comes on top. A run that collects no coverage (`sim.coverage` is off, or the
+harness cannot write it) is scored over those three alone, as in version 2.
+With coverage the total weight is 125 and the score is still on a scale of
+100.
+
+Code coverage is that of the design under test, merged over the cases: the
+sources owned as `cpu`, `design` or `third_party`. The SoC harness, the
+adapter and generated code are the fixture and do not count. Verilator's line
+and branch points together are the line coverage. A kind of which the design
+has no point passes its share to the other.
+
+Turning coverage on can lower a score: a run whose single case passes scores
+100 without it and less with it, because what the case leaves unexercised is
+now measured.
 
 The simulation of an RTL design with its own testbench is gated and not
 scored.
@@ -88,6 +105,13 @@ netlist.
   loop. A real loop is found by Yosys `check` and reported as the error
   "Combinational loop reported by Yosys precheck".
 
+## What Changed From Version 2
+
+Version 3 adds the code coverage component to the simulation score and the
+`line_coverage` and `toggle_coverage` metrics. Nothing else changed: the
+score of every other step, and of a simulation that collected no coverage,
+is computed as in version 2.
+
 ## What Changed From Version 1
 
 | Version 1 | Version 2 |
@@ -101,12 +125,16 @@ netlist.
 | A wrapper around a submodule was reported as a combinational loop (error). | Instances are boundaries; a word-level candidate is a warning. |
 | "Input fingerprint recorded" was always true. | True only when a fingerprint was recorded. |
 
-Scores of the two versions are not comparable. `report compare` still shows
-both scores of a step but gives no `score_delta` when their versions differ.
+`report compare` shows both scores of a step and gives no `score_delta` when
+their versions differ.
 
 ## Not Covered
 
-- The pass rate does not consider how many cases were run: one passing case
-  earns the full case weight.
+- Without coverage, the simulation score does not reflect how much was
+  tested: one passing case earns the full case weight. Collecting coverage
+  is what makes it reflect that.
+- The simulation of an RTL design with its own testbench reports coverage
+  as metrics and is not scored.
+- Coverage has no gate: no minimum blocks a result.
 - A baseline chosen by the user for regression comparison does not exist.
 - The policy cannot be overridden per project.

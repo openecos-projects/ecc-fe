@@ -851,7 +851,9 @@ record (the report's totals, or those of one owner, `files`, `shown`,
 least covered first (default 20). `coverage_not_found` when the run
 collected none; `unknown_ownership` and `invalid_limit` exit with status 2.
 
-Coverage is not part of QoR scoring or of `report compare`.
+Coverage of the design under test is part of the simulation score of a CPU
+and appears in `report compare` as the `line_coverage` and `toggle_coverage`
+metrics; see [quality-scoring.md](quality-scoring.md). It has no gate.
 
 ### Failure Report
 
