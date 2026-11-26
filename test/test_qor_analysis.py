@@ -272,7 +272,7 @@ def test_prepare_qor_explains_full_readiness_score(tmp_path: Path) -> None:
         "label": "Preparation readiness",
         "value": 100,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 100,
         "components": [
             {
@@ -390,7 +390,7 @@ def test_review_qor_explains_structural_quality_score(tmp_path: Path) -> None:
         "label": "RTL review quality",
         "value": 89.9,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 100,
         "components": [
             {
@@ -680,7 +680,7 @@ def test_elaboration_qor_explains_authoritative_compiler_score(
         "label": "Elaboration quality",
         "value": 96,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 100,
         "components": [
             {
@@ -822,7 +822,7 @@ def test_lint_qor_scores_only_actionable_cpu_diagnostics(tmp_path: Path) -> None
         "label": "CPU lint quality",
         "value": 93,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 100,
         "components": [
             {
@@ -1053,7 +1053,7 @@ def test_sim_qor_scores_cases_reference_and_telemetry(tmp_path: Path) -> None:
         "label": "Simulation verification",
         "value": 100,
         "maximum": 100,
-        "scoring_version": 2,
+        "scoring_version": 3,
         "evaluated_weight": 100,
         "components": [
             {
@@ -1079,6 +1079,14 @@ def test_sim_qor_scores_cases_reference_and_telemetry(tmp_path: Path) -> None:
                 "possible": 15,
                 "evaluated": True,
                 "summary": "1 of 1 cases passed and reported a cycle count.",
+            },
+            {
+                "id": "code_coverage",
+                "label": "Code coverage",
+                "earned": 0,
+                "possible": 25,
+                "evaluated": False,
+                "summary": "Not evaluated: this run collected no coverage (sim.coverage).",
             },
         ],
     }
@@ -1106,6 +1114,7 @@ def test_sim_score_does_not_depend_on_earlier_runs(tmp_path: Path, has_baseline:
         ("required_cases", 60, True),
         ("difftest_confidence", 0, False),
         ("cycle_telemetry", 15, True),
+        ("code_coverage", 0, False),
     ]
 
 

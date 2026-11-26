@@ -111,6 +111,7 @@ jobs:
             test/test_sim_inputs_and_clean.py \
             test/test_failure_report.py \
             test/test_coverage.py \
+            test/test_coverage_score.py \
             test/test_run_followups.py \
             test/test_packaging_handlers.py \
             test/test_runtime_server.py \

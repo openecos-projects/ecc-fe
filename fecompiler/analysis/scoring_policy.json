@@ -1,5 +1,5 @@
 {
-  "scoring_version": 2,
+  "scoring_version": 3,
   "size": {
     "minimum_lines": 200
   },
@@ -48,6 +48,13 @@
   "sim": {
     "required_cases": 60,
     "difftest_confidence": 25,
-    "cycle_telemetry": 15
+    "cycle_telemetry": 15,
+    "code_coverage": {
+      "weight": 25,
+      "line_share": 0.6,
+      "toggle_share": 0.4,
+      "line_full_at_percent": 90,
+      "toggle_full_at_percent": 75
+    }
   }
 }
