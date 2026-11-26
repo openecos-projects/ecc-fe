@@ -29,6 +29,8 @@ from fecompiler.tools.common.sv_module import (
     module_parameter_names,
 )
 from fecompiler.tools.common.tool_config import (
+    PATTERN_OFF,
+    TESTBENCH_DEFAULT_FAIL_PATTERN,
     config_list,
     config_paths,
     config_text,
@@ -70,8 +72,15 @@ def testbench_settings(workspace: dict[str, Any]) -> dict[str, Any]:
             "testbench.files not found: " + ", ".join(missing)
         )
     patterns: dict[str, re.Pattern[str] | None] = {}
+    fail_pattern_is_default = False
     for name in ("pass_pattern", "fail_pattern"):
-        text = config_text(workspace, f"testbench_{name}")
+        text = config_text(workspace, f"testbench_{name}").strip()
+        if text.lower() == PATTERN_OFF:
+            text = ""
+        elif not text and name == "fail_pattern":
+            # A project that names no rule is judged by the default one.
+            text = TESTBENCH_DEFAULT_FAIL_PATTERN
+            fail_pattern_is_default = True
         try:
             patterns[name] = re.compile(text, re.MULTILINE) if text else None
         except re.error as error:
@@ -99,6 +108,7 @@ def testbench_settings(workspace: dict[str, Any]) -> dict[str, Any]:
         "parameters_not_applied": not_applied,
         "coverage": str(config_text(workspace, "testbench_coverage")).strip().lower()
         in {"1", "true", "yes", "on"},
+        "fail_pattern_is_default": fail_pattern_is_default,
         "plusargs": config_list(workspace, "testbench_plusargs"),
         "extra_args": config_list(workspace, "testbench_extra_args"),
         **patterns,
@@ -140,6 +150,7 @@ def judge_run(
     timed_out: bool,
     pass_pattern: re.Pattern[str] | None,
     fail_pattern: re.Pattern[str] | None,
+    fail_pattern_is_default: bool = False,
 ) -> dict[str, str] | None:
     """Return why the run failed, or ``None`` when it passed."""
     if timed_out:
@@ -157,8 +168,20 @@ def judge_run(
         if match is not None:
             return {
                 "kind": "fail_pattern",
-                "message": "the output matches testbench.fail_pattern: "
+                "message": (
+                    "the output matches the default testbench.fail_pattern: "
+                    if fail_pattern_is_default
+                    else "the output matches testbench.fail_pattern: "
+                )
                 + _line_of(output, match.start()),
+                **(
+                    {
+                        "hint": "set testbench.fail_pattern to a rule of your own, "
+                        f"or to `{PATTERN_OFF}` to switch it off"
+                    }
+                    if fail_pattern_is_default
+                    else {}
+                ),
             }
     if pass_pattern is not None and pass_pattern.search(output) is None:
         return {
@@ -349,6 +372,7 @@ class TestbenchSimStep(BaseStep):
             timed_out=timed_out,
             pass_pattern=settings["pass_pattern"],
             fail_pattern=settings["fail_pattern"],
+            fail_pattern_is_default=settings["fail_pattern_is_default"],
         )
         # Say how the run was judged where the run output and `log` show it.
         if failure is not None:
@@ -361,6 +385,8 @@ class TestbenchSimStep(BaseStep):
         else:
             verdict = "simulation passed"
         notes = [verdict]
+        if failure is not None and failure.get("hint"):
+            notes.append(failure["hint"])
         if settings["parameters"]:
             notes.append(
                 "design.parameters applied through the testbench: "
@@ -380,6 +406,10 @@ class TestbenchSimStep(BaseStep):
             "exit_status",
             *(name for name in ("pass_pattern", "fail_pattern") if settings[name] is not None),
         ]
+        if settings["fail_pattern"] is not None:
+            case["fail_pattern_source"] = (
+                "default" if settings["fail_pattern_is_default"] else "project"
+            )
         case.update(ok=failure is None, returncode=returncode, failure=failure)
         update_substep_ok(
             step,

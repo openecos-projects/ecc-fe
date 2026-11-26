@@ -131,9 +131,14 @@ PARAMETERS = (
         "testbench.fail_pattern",
         "testbench_fail_pattern",
         "string",
+        # Not set: the step applies its default rule. The rule is not this
+        # parameter's default value, so that an empty value stays valid in
+        # the projects that recorded one.
         "",
         "sim",
-        "Regular expression that fails the simulation when its output matches.",
+        "Regular expression that fails the simulation when its output matches. "
+        "Not set: a line that opens with FAIL, FAILED or ERROR in capitals, or "
+        "an error Verilator reports. `none` switches it off.",
     ),
     ParameterSchema(
         "testbench.plusargs",
