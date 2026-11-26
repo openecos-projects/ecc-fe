@@ -82,16 +82,42 @@ def handoff(command_input: CommandInput, context: CommandContext) -> CommandResu
         for step in steps
         if (reason := _blocker(step)) is not None
     ]
+    partial = None if blockers else _partial_suite_blocker(parameters, steps)
+    if partial is not None:
+        blockers.append(partial)
     if blockers and not command_input.allow_incomplete:
+        advice = (
+            {
+                "reason": "the CPU passed a selection of its test suite, not all of it",
+                # A project run keeps the settings it was created with.
+                **(
+                    {
+                        "remediation_cmd": invoked("ecc-fe param set sim.cases all"),
+                        "then_cmd": invoked("ecc-fe run"),
+                    }
+                    if context.workspace_mode
+                    else {
+                        "new_run_cmd": invoked(
+                            "ecc-fe run --run-id <new-run> --set sim.cases=all"
+                        ),
+                        "then_cmd": invoked("ecc-fe handoff --run-id <new-run>"),
+                    }
+                ),
+            }
+            if partial is not None
+            else {
+                "reason": "every step must have succeeded on the current inputs",
+                "remediation_cmd": invoked("ecc-fe run --resume"),
+            }
+        )
         return CommandResult.err(
             [
                 error_record(
                     "handoff_not_ready",
                     workspace=context.workspace_dir,
-                    reason="every step must have succeeded on the current inputs",
                     blockers=blockers,
-                    remediation_cmd=invoked("ecc-fe run --resume"),
                     override="--allow-incomplete",
+                    **advice,
                 )
             ]
         )
@@ -257,6 +283,25 @@ def _blocker(step: dict[str, Any]) -> str | None:
     if step["stale"]:
         return f"stale: {step['stale_reason']}"
     return None
+
+
+def _partial_suite_blocker(
+    parameters: dict[str, Any], steps: list[dict[str, Any]]
+) -> dict[str, str] | None:
+    """What stands in the way when a CPU was simulated on part of its suite.
+
+    A run simulates a quick selection of the CPU test suite unless it is set
+    to run all of it (``sim.cases``). The selection says little about the
+    CPU, so it is not what a design is handed off on. A design with its own
+    testbench has no suite to complete.
+    """
+    if str(parameters.get("frontend_design_kind", "")).strip() == "generic_rtl":
+        return None
+    if not any(step["step"] == "sim" for step in steps):
+        return None
+    if parameters.get("sim_build_all_programs") or parameters.get("sim_all_tests"):
+        return None
+    return {"step": "sim", "reason": "ran a selection of the CPU test suite, not all of it"}
 
 
 def _qor_summary(workspace: Path, step: str) -> dict[str, Any]:

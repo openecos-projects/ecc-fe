@@ -203,6 +203,16 @@ PARAMETERS = (
         "Collect line and toggle coverage, merged over the cases of the suite.",
     ),
     ParameterSchema(
+        "sim.cases",
+        "sim_cases",
+        "string",
+        "smoke",
+        "sim",
+        "CPU test cases a run simulates: a quick smoke selection, or all of the suite. "
+        "A CPU is handed off only after all of them passed.",
+        choices=("smoke", "all"),
+    ),
+    ParameterSchema(
         "sim.history_limit",
         "sim_history_limit",
         "integer",

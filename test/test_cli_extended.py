@@ -184,6 +184,7 @@ def test_param_list_types_validation_and_dash_prefixed_value(
         "sim.case_jobs",
         "sim.dump_waveform",
         "sim.coverage",
+        "sim.cases",
         "sim.compile_preset",
     }
 
@@ -191,7 +192,7 @@ def test_param_list_types_validation_and_dash_prefixed_value(
         capsys, "param", "list", "--all", "--workspace", str(workspace)
     )
     assert exit_code == 0
-    assert len(payload["records"]) == 24
+    assert len(payload["records"]) == 25
 
     original = (workspace / "ecc-fe.toml").read_text(encoding="utf-8")
     exit_code, payload = _json_call(

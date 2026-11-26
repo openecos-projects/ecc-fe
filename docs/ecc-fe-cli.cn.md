@@ -417,6 +417,7 @@ CLI 会根据现有 workspace 生成这份基线文件；只读命令不会修�
 | `sim.case_jobs` | `1` | 同时运行的用例数 |
 | `sim.dump_waveform` | `true` | 每个用例是否写出 `wave.vcd`（CoreMark 始终不写） |
 | `sim.coverage` | `false` | 是否收集行覆盖率和翻转覆盖率，见下文"覆盖率" |
+| `sim.cases` | `smoke` | CPU 工程跑哪些用例：`smoke` 只跑一个快速用例，`all` 跑整套用例。CPU 只有整套用例都通过后才能交接 |
 | `sim.history_limit` | `20` | `report/runs/` 下保留最近多少次运行 |
 
 几点说明：
@@ -694,6 +695,17 @@ ecc-fe handoff --bundle -o ./export    # 把 RTL 一起复制进去，目录可�
 - 只交接你自己的设计。CPU 工程交接的是 CPU 本身，top 是 CPU 的顶层；仿真用的 SoC
   外壳不在其中。
 - 默认要求所有步骤都成功、且结果没有过期，否则报 `handoff_not_ready` 并列出原因。
+- CPU 工程还要求仿真跑的是整套用例（`sim.cases` 为 `all`）。默认的运行只跑一个
+  快速用例，说明不了 CPU 是否正确，所以同样报 `handoff_not_ready`。工程里的运行
+  创建后参数不再变，要另起一个运行：
+
+  ```bash
+  ecc-fe run --run-id full --set sim.cases=all
+  ecc-fe handoff --run-id full
+  ```
+
+  想让以后新建的运行都跑整套用例，用 `ecc-fe param set sim.cases all`。整套用例
+  每个都写波形会占用很多磁盘（一次可达数 GB），可以同时设 `sim.dump_waveform false`。
 - 默认还会用 slang 只凭清单内容把设计单独编译一遍，确认它离开前端环境也成立；
   不成立时报 `handoff_design_incomplete`，日志在 `standalone_check.log`。
 - `--allow-incomplete` 可以强行生成，清单里会标明 `incomplete` 和原因。
