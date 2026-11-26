@@ -201,7 +201,11 @@ extern "C" void psram_write(int addr, int mask, int data) {
   }
 }
 
+// The value of one AXI read beat. AXI keeps every byte on the lane of its
+// address, also in a narrow read of an unaligned address, so the beat is the
+// bus word that holds the address and not the bytes that start at it.
 extern "C" long long mem_read(unsigned int raddr, unsigned int size) {
+  raddr &= (size == 3u) ? ~0x7u : ~0x3u;
   if (g_pmem_preloaded_from_payload && raddr >= kBootAliasBase &&
       static_cast<uint64_t>(raddr) < static_cast<uint64_t>(kBootAliasBase) + kBootAliasSize) {
     const uint32_t offset = raddr - kBootAliasBase;
@@ -247,6 +251,8 @@ extern "C" void mem_write(unsigned int waddr, unsigned int mask, unsigned int wd
   if (write_serial_byte(waddr, mask, wdata)) {
     return;
   }
+  // The strobes name byte lanes of the bus word, wherever in it the address is.
+  waddr &= ~0x3u;
 
   if (g_pmem_preloaded_from_payload && waddr >= kBootAliasBase &&
       static_cast<uint64_t>(waddr) < static_cast<uint64_t>(kBootAliasBase) + kBootAliasSize) {
