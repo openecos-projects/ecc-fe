@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import heapq
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from fecompiler.tools.review.probe_common import _int_or_zero
 # How many of the widest nets and cells each module lists, and the design.
 _LISTED_PER_MODULE = 8
 _LISTED = 20
+# Latches are findings, each one reported, so a design has room for many.
+_LISTED_LATCHES = 100
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -30,6 +33,47 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _with_absolute_sources(netlist: dict[str, Any], directory: str | Path) -> dict[str, Any]:
+    """*netlist* with every ``src`` attribute naming its file by absolute path.
+
+    ``read_slang`` writes the paths as given, relative to the directory Yosys
+    ran in, which is not the directory review runs in; a relative path would
+    neither open nor map to an owner.
+    """
+    base = str(directory)
+
+    def absolute(src: str) -> str:
+        return "|".join(
+            _SRC_PATH.sub(
+                lambda match: (
+                    match.group("path")
+                    if os.path.isabs(match.group("path"))
+                    else os.path.normpath(os.path.join(base, match.group("path")))
+                ) + ":",
+                part,
+                count=1,
+            )
+            for part in src.split("|")
+        )
+
+    for module in (netlist.get("modules") or {}).values() if isinstance(netlist.get("modules"), dict) else ():
+        if not isinstance(module, dict):
+            continue
+        holders = [module]
+        for key in ("cells", "netnames"):
+            items = module.get(key)
+            if isinstance(items, dict):
+                holders.extend(item for item in items.values() if isinstance(item, dict))
+        for holder in holders:
+            attributes = holder.get("attributes")
+            if isinstance(attributes, dict) and isinstance(attributes.get("src"), str):
+                attributes["src"] = absolute(attributes["src"])
+    return netlist
+
+
+_SRC_PATH = re.compile(r"^(?P<path>.*?\.(?:sv|svh|v|vh)):")
 
 
 def _metrics_from_stat(stat: dict[str, Any], log: str) -> dict[str, Any]:
@@ -89,12 +133,15 @@ def _structural_metrics_from_netlist(netlist: dict[str, Any]) -> dict[str, Any]:
     high_fanin_cells: list[dict[str, Any]] = []
     deep_comb_paths: list[dict[str, Any]] = []
     cycles: list[str] = []
+    cycle_locations: list[dict[str, Any]] = []
+    latches: list[dict[str, Any]] = []
 
     for raw_name, raw_module in modules.items():
         if not isinstance(raw_module, dict):
             continue
         module_name = str(raw_name).lstrip("\\")
         summary = _module_graph_summary(module_name, raw_module)
+        latches.extend(_latches(module_name, raw_module))
         summaries.append(summary)
         high_fanout_nets.extend(summary.get("high_fanout_nets", []))
         high_fanin_cells.extend(summary.get("high_fanin_cells", []))
@@ -109,6 +156,10 @@ def _structural_metrics_from_netlist(netlist: dict[str, Any]) -> dict[str, Any]:
             })
         if summary.get("comb_cycle"):
             cycles.append(module_name)
+            cycle_locations.append({
+                "module": module_name,
+                **_source_location_from_attrs(raw_module.get("attributes")),
+            })
 
     summaries.sort(key=lambda item: (
         _int_or_zero(item.get("max_comb_depth")),
@@ -129,8 +180,76 @@ def _structural_metrics_from_netlist(netlist: dict[str, Any]) -> dict[str, Any]:
         "high_fanin_cells": high_fanin_cells[:_LISTED],
         "deep_comb_paths": deep_comb_paths[:_LISTED],
         "comb_cycle_modules": cycles[:20],
+        # Where each module with a cycle candidate is defined.
+        "comb_cycles": cycle_locations[:20],
+        "latch_cells": len(latches),
+        # One per place in the source, however many parameterisations of a
+        # module repeat it.
+        "latches": _one_per_location(latches)[:_LISTED_LATCHES],
         "module_structure": summaries[:40],
     }
+
+
+def _latches(module_name: str, module: dict[str, Any]) -> list[dict[str, Any]]:
+    """The latch cells of a module, whichever frontend made them.
+
+    ``read_verilog`` and ``proc`` log a line for a latch they infer, but also
+    a "No latch inferred" line for every other signal of a combinational
+    block, and ``read_slang`` makes the latch cells itself without a line.
+    So the netlist, not the log, says where the latches are.
+    """
+    cells = module.get("cells", {}) if isinstance(module.get("cells"), dict) else {}
+    found = [
+        (str(name).lstrip("\\"), cell)
+        for name, cell in cells.items()
+        if isinstance(cell, dict) and "dlatch" in str(cell.get("type", "")).lower()
+    ]
+    if not found:
+        return []
+    names = _bit_names(module)
+    latches = []
+    for name, cell in found:
+        connections = cell.get("connections", {}) if isinstance(cell.get("connections"), dict) else {}
+        output = _connection_bits(connections.get("Q"))
+        latches.append({
+            "module": module_name,
+            "cell": name,
+            "net": names.get(output[0], "") if output else "",
+            **_source_location_from_attrs(cell.get("attributes")),
+        })
+    return latches
+
+
+def _one_per_location(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[Any, ...]] = set()
+    kept = []
+    for item in items:
+        key = (
+            (item["source"], item.get("line"))
+            if item.get("source")
+            else (item.get("module"), item.get("cell"))
+        )
+        if key not in seen:
+            seen.add(key)
+            kept.append(item)
+    return kept
+
+
+def _netlist_location(netlist: dict[str, Any], module_name: str, net: str = "") -> dict[str, Any]:
+    """Where a module, or one of its signals, is in the source; {} when unknown.
+
+    Names are taken as Yosys logs them: ``top`` or ``$paramod$...\\core`` for a
+    module, ``\\name`` or ``$auto...`` for a signal.
+    """
+    modules = netlist.get("modules", {}) if isinstance(netlist.get("modules"), dict) else {}
+    module = modules.get(module_name) or modules.get(module_name.lstrip("\\"))
+    if not isinstance(module, dict):
+        return {}
+    netnames = module.get("netnames", {}) if isinstance(module.get("netnames"), dict) else {}
+    wire = netnames.get(net.lstrip("\\")) if net else None
+    return (
+        _source_location_from_attrs(wire.get("attributes")) if isinstance(wire, dict) else {}
+    ) or _source_location_from_attrs(module.get("attributes"))
 
 
 def _module_graph_summary(module_name: str, module: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +494,17 @@ _CLOCK_RESET_PORTS = frozenset(
 def _is_sequential_cell(cell_type: str) -> bool:
     text = cell_type.lower()
     return any(token in text for token in ("$dff", "$adff", "$sdff", "$dlatch", "$mem", "dff", "latch"))
+
+
+def _bit_names(module: dict[str, Any]) -> dict[int, str]:
+    """The first name of each bit, as _bit_name finds it, for many bits at once."""
+    netnames = module.get("netnames", {}) if isinstance(module.get("netnames"), dict) else {}
+    names: dict[int, str] = {}
+    for raw_name, raw_net in netnames.items():
+        if isinstance(raw_net, dict):
+            for bit in _connection_bits(raw_net.get("bits")):
+                names.setdefault(bit, str(raw_name).lstrip("\\"))
+    return names
 
 
 def _bit_name(module: dict[str, Any], bit: int) -> str:

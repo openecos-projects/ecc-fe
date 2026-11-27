@@ -18,6 +18,7 @@ from fecompiler.tools.review.netlist_graph import (
     _metrics_from_stat,
     _read_json,
     _structural_metrics_from_netlist,
+    _with_absolute_sources,
 )
 from fecompiler.tools.review.probe_diagnostics import (
     _diagnostics_from_log,
@@ -247,12 +248,12 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
         # Without the slang plugin Yosys reads SystemVerilog with its own
         # limited parser. What it rejects may be valid: elab decides, not this.
         diagnostics = _as_frontend_limits(diagnostics)
-    netlist = _read_json(netlist_path)
+    netlist = _with_absolute_sources(_read_json(netlist_path), script_dir)
     metrics = _metrics_from_stat(stat, output)
     metrics.update(_structural_metrics_from_netlist(netlist))
     module_risks = _module_risks_from_stat(stat, metrics)
     quality = _quality_from_run(result.returncode, diagnostics, metrics)
-    issues = _issues_from_probe(output, diagnostics, metrics, result.returncode)
+    issues = _issues_from_probe(output, diagnostics, metrics, result.returncode, netlist)
     if scope == "design":
         issues = [_design_wording(issue) for issue in issues]
     if result.returncode == 0:

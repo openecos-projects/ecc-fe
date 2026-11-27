@@ -63,7 +63,7 @@ def build_rtl_review(workspace: dict[str, Any]) -> dict[str, Any]:
     """Return a structured RTL review report for the workspace."""
     sources = _load_sources(workspace)
     metrics = _metrics(sources, workspace)
-    issues = _issues(sources, metrics, workspace)
+    issues = _issues(sources, workspace)
     summary = _summary(issues, metrics)
     ownership_by_path = rtl_ownership_map(workspace)
 
@@ -346,7 +346,6 @@ def _metrics(sources: list[SourceFile], workspace: dict[str, Any]) -> dict[str, 
 
 def _issues(
     sources: list[SourceFile],
-    metrics: dict[str, Any],
     workspace: dict[str, Any],
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
@@ -371,7 +370,19 @@ def _issues(
     for source in sources:
         _scan_source(source, issues)
 
-    _design_level_issues(issues, metrics, workspace)
+    # A count over the whole design has no place in the source to belong to,
+    # so it would count as the user's. It is taken over the user's own sources
+    # only: the resets of a bundled core are not the user's to fix.
+    ownership_by_path = rtl_ownership_map(workspace)
+    own = [
+        source
+        for source in sources
+        if is_actionable_rtl_ownership(
+            workspace, rtl_source_ownership(workspace, source.path, ownership_by_path)
+        )
+    ]
+    if own:
+        _design_level_issues(issues, _metrics(own, workspace), workspace)
     return sorted(issues, key=_issue_sort_key)
 
 
@@ -721,11 +732,12 @@ def _decorate_issue(
     if decorated.get("ownership") in {None, "", "cpu"}:
         decorated["ownership"] = user_rtl_ownership(workspace)
     if decorated.get("source") and decorated.get("ownership") != "tool":
-        decorated["ownership"] = rtl_source_ownership(
-            workspace,
-            str(decorated["source"]),
-            ownership_by_path,
-        )
+        located = rtl_source_ownership(workspace, str(decorated["source"]), ownership_by_path)
+        # Yosys names the place of most of what it finds. A file no one is
+        # known to own, such as a module found in a library directory, leaves
+        # the finding with the user, as it was before it had a place.
+        if located != "unknown" or decorated.get("origin") != "yosys_structural":
+            decorated["ownership"] = located
     decorated["fingerprint"] = _issue_fingerprint(decorated, workspace)
     decorated["legacy_fingerprint"] = _legacy_issue_fingerprint(decorated, workspace)
     return decorated
