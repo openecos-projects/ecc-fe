@@ -114,10 +114,11 @@ How they are counted:
   Counting them made the number of registers the fanout of every module.
 - An instance of another module is a boundary. A path into it and out again
   is not a combinational path of the module that instantiates it.
-- "Combinational cycle candidate" is a warning. The graph is built from
-  whole-word cells, so bits of one bus that feed other bits of it look like a
-  loop. A real loop is found by Yosys `check` and reported as the error
-  "Combinational loop reported by Yosys precheck".
+- "Combinational cycle candidate" is a note (`info`), one per module, placed
+  where the module is defined. The graph is built from whole-word cells, so
+  bits of one bus that feed other bits of it look like a loop. A real loop is
+  found by Yosys `check` and reported as the error "Combinational loop
+  reported by Yosys precheck".
 
 ## What Changed From Version 3
 

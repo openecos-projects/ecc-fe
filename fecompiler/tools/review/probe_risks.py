@@ -4,10 +4,13 @@ verdict and review issues.
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, NamedTuple
 
 from fecompiler.tools.review.netlist_graph import (
     _extract_cell_types,
+    _netlist_location,
+    _one_per_location,
 )
 from fecompiler.tools.review.probe_common import _int_or_zero
 
@@ -188,9 +191,9 @@ def _issues_from_probe(
     diagnostics: list[dict[str, Any]],
     metrics: dict[str, Any],
     returncode: int,
+    netlist: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    text = log.lower()
 
     if returncode != 0:
         blocking_error = any(_diagnostic_blocks_review(item) for item in diagnostics)
@@ -240,41 +243,8 @@ def _issues_from_probe(
             recommendation="Confirm the selected CPU wrapper/top exists in the CPU filelist.",
         ))
 
-    if "logic loop" in text or "combinational loop" in text:
-        issues.append(_issue(
-            "error",
-            "combinational",
-            "Combinational loop reported by Yosys precheck",
-            "A combinational feedback loop can break simulation convergence and timing analysis.",
-            recommendation="Break the loop with a register or correct the ready/valid/control dependency.",
-        ))
-
-    if "multiple conflicting drivers" in text or "multiple drivers" in text:
-        issues.append(_issue(
-            "error",
-            "structural",
-            "Multiple drivers reported by Yosys precheck",
-            "Multiple drivers on the same net can create X propagation or non-synthesizable logic.",
-            recommendation="Ensure each signal has exactly one procedural or continuous driver.",
-        ))
-
-    if "no driver" in text or "undriven" in text:
-        issues.append(_issue(
-            "warning",
-            "structural",
-            "Undriven signal reported by Yosys precheck",
-            "Undriven nets can become constants, X sources, or backend optimization surprises.",
-            recommendation="Tie off unused inputs explicitly and drive every architecturally visible net.",
-        ))
-
-    if "latch inferred" in text or "inferring latch" in text:
-        issues.append(_issue(
-            "warning",
-            "combinational",
-            "Latch inference reported by Yosys precheck",
-            "Unintended latches make timing, reset, and implementation mapping harder to control.",
-            recommendation="Assign defaults in combinational blocks and cover all control branches.",
-        ))
+    issues.extend(_check_issues(log, netlist or {}))
+    issues.extend(_latch_issues(metrics))
 
     if _int_or_zero(metrics.get("mux_cells")) >= 200:
         issues.append(_issue(
@@ -306,21 +276,146 @@ def _issues_from_probe(
             recommendation="Check multiplier/divider implementation choices and pipeline long arithmetic paths.",
         ))
 
-    if metrics.get("comb_cycle_modules"):
-        # Cells are whole words here, so a bus whose bits feed one another
-        # looks like a loop. It is a place to look, not a finding: a real
-        # loop is reported by Yosys `check` as a diagnostic of its own.
+    # Cells are whole words here, so a bus whose bits feed one another looks
+    # like a loop. It is a place to look, not a finding: a real loop is
+    # reported by Yosys `check` (above), so this is a note, not a warning.
+    for cycle in _one_per_location(_records(metrics.get("comb_cycles"))):
         issues.append(_issue(
-            "warning",
+            "info",
             "combinational",
             "Combinational cycle candidate in structural graph",
-            "The word-level netlist graph could not be fully ordered. Bits of one "
-            "bus feeding other bits of it look the same as a loop at this level.",
-            evidence={"modules": metrics.get("comb_cycle_modules")},
-            recommendation="Check ready/valid feedback and combinational dependencies in the reported modules.",
+            f"The word-level netlist graph of module {cycle.get('module', '')} could not be "
+            "fully ordered. Bits of one bus feeding other bits of it look the same as a "
+            "loop at this level.",
+            path=str(cycle.get("source", "")),
+            line=_int_or_zero(cycle.get("line")),
+            column=_int_or_zero(cycle.get("column")),
+            evidence={"module": cycle.get("module", "")},
+            recommendation="Check ready/valid feedback and combinational dependencies in this module.",
         ))
 
     return issues
+
+
+class _CheckFinding(NamedTuple):
+    """A problem Yosys `check` logs, and how its log line names the place."""
+
+    pattern: re.Pattern[str]
+    phrases: tuple[str, ...]
+    severity: str
+    category: str
+    title: str
+    detail: str
+    recommendation: str
+
+
+# Group 1 is the module as Yosys logs it; group 2, when there is one, the signal.
+_CHECK_FINDINGS = (
+    _CheckFinding(
+        re.compile(r"found logic loop in module (\S+?):"),
+        ("logic loop", "combinational loop"),
+        "error",
+        "combinational",
+        "Combinational loop reported by Yosys precheck",
+        "A combinational feedback loop can break simulation convergence and timing analysis.",
+        "Break the loop with a register or correct the ready/valid/control dependency.",
+    ),
+    _CheckFinding(
+        re.compile(r"multiple conflicting drivers for (\S+?)\.([\\$][^\s\[:]*)"),
+        ("multiple conflicting drivers", "multiple drivers"),
+        "error",
+        "structural",
+        "Multiple drivers reported by Yosys precheck",
+        "Multiple drivers on the same net can create X propagation or non-synthesizable logic.",
+        "Ensure each signal has exactly one procedural or continuous driver.",
+    ),
+    _CheckFinding(
+        re.compile(r"Wire (\S+?)\.([\\$]\S+) is used but has no driver"),
+        ("no driver", "undriven"),
+        "warning",
+        "structural",
+        "Undriven signal reported by Yosys precheck",
+        "Undriven nets can become constants, X sources, or backend optimization surprises.",
+        "Tie off unused inputs explicitly and drive every architecturally visible net.",
+    ),
+)
+
+
+def _check_issues(log: str, netlist: dict[str, Any]) -> list[dict[str, Any]]:
+    """One issue per module a `check` finding names, placed in that module's source.
+
+    Without a place an issue counts as the user's, whoever owns the module.
+    Only when the log has the finding in a form no pattern reads is it
+    reported without one.
+    """
+    issues: list[dict[str, Any]] = []
+    text = log.lower()
+    for finding in _CHECK_FINDINGS:
+        named: dict[str, list[str]] = {}
+        for match in finding.pattern.finditer(log):
+            nets = named.setdefault(match.group(1), [])
+            net = match.group(2) if finding.pattern.groups > 1 else ""
+            if net and net not in nets:
+                nets.append(net)
+        if not named:
+            if any(phrase in text for phrase in finding.phrases):
+                issues.append(_issue(
+                    finding.severity,
+                    finding.category,
+                    finding.title,
+                    finding.detail,
+                    recommendation=finding.recommendation,
+                ))
+            continue
+        places = [
+            {
+                "module": module,
+                "nets": [net.lstrip("\\") for net in nets],
+                **_netlist_location(netlist, module, nets[0] if nets else ""),
+            }
+            for module, nets in named.items()
+        ]
+        for place in _one_per_location(places):
+            nets = place["nets"]
+            where = f"module {place['module']}" + (f" ({', '.join(nets[:5])})" if nets else "")
+            issues.append(_issue(
+                finding.severity,
+                finding.category,
+                finding.title,
+                f"{finding.detail} Yosys reports it in {where}.",
+                path=str(place.get("source", "")),
+                line=_int_or_zero(place.get("line")),
+                column=_int_or_zero(place.get("column")),
+                evidence={"module": place["module"], **({"net": nets[0]} if nets else {})},
+                recommendation=finding.recommendation,
+            ))
+    return issues
+
+
+def _latch_issues(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        _issue(
+            "warning",
+            "combinational",
+            "Latch inferred by Yosys precheck",
+            f"Yosys inferred a latch for {latch.get('net') or 'a signal'} in module "
+            f"{latch.get('module', '')}. Unintended latches make timing, reset, and "
+            "implementation mapping harder to control.",
+            path=str(latch.get("source", "")),
+            line=_int_or_zero(latch.get("line")),
+            column=_int_or_zero(latch.get("column")),
+            evidence={key: latch[key] for key in ("module", "net", "cell") if latch.get(key)},
+            recommendation=(
+                "Assign defaults in combinational blocks and cover all control branches; "
+                "keep a latch only where one is intended."
+            ),
+        )
+        for latch in _records(metrics.get("latches"))
+    ]
+
+
+def _records(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _first_diagnostic_location(

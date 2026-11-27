@@ -746,3 +746,172 @@ def _mock_successful_yosys_precheck(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
+
+
+# --- what the precheck finds, and where ---------------------------------
+
+
+def _netlist(*modules: tuple[str, str, dict]) -> dict:
+    """A Yosys JSON netlist of (name, src, cells) modules; each cell drives net `q`."""
+    return {
+        "modules": {
+            name: {
+                "attributes": {"src": src},
+                "ports": {},
+                "cells": cells,
+                "netnames": {
+                    "q": {"bits": [10], "attributes": {"src": src.replace(".1-", ".5-")}},
+                    "x": {"bits": [11], "attributes": {"src": src.split(":")[0] + ":7.3"}},
+                },
+            }
+            for name, src, cells in modules
+        }
+    }
+
+
+def _latch(src: str) -> dict:
+    return {
+        "type": "$dlatch",
+        "attributes": {"src": src},
+        "port_directions": {"EN": "input", "D": "input", "Q": "output"},
+        "connections": {"EN": [2], "D": [3], "Q": [10]},
+    }
+
+
+def _probe_issues(log: str, netlist: dict) -> list[dict]:
+    from fecompiler.tools.review.netlist_graph import _structural_metrics_from_netlist
+    from fecompiler.tools.review.probe_risks import _issues_from_probe
+
+    return _issues_from_probe(log, [], _structural_metrics_from_netlist(netlist), 0, netlist)
+
+
+def test_no_latch_inferred_is_not_a_latch() -> None:
+    # Yosys logs this for every signal of a combinational block.
+    log = "No latch inferred for signal `\\cpu.\\next' from process `\\cpu.$proc$cpu.v:12$1'.\n"
+
+    issues = _probe_issues(log, _netlist(("cpu", "/rtl/cpu.v:1.1-40.10", {})))
+
+    assert [issue["title"] for issue in issues] == []
+
+
+def test_a_latch_is_found_in_the_netlist_where_it_is() -> None:
+    # read_slang makes the latch cell without logging anything, and two
+    # parameterisations of a module repeat it at one place in the source.
+    netlist = _netlist(
+        ("$paramod$a\\core", "/rtl/core.sv:2.1-30.10", {"$4": _latch("/rtl/core.sv:9.3")}),
+        ("$paramod$b\\core", "/rtl/core.sv:2.1-30.10", {"$4": _latch("/rtl/core.sv:9.3")}),
+    )
+
+    issues = _probe_issues("", netlist)
+
+    assert [(i["severity"], i["title"], i["source"], i["line"]) for i in issues] == [
+        ("warning", "Latch inferred by Yosys precheck", "/rtl/core.sv", 9)
+    ]
+    assert issues[0]["evidence"] == {"module": "$paramod$a\\core", "net": "q", "cell": "$4"}
+
+
+def test_check_findings_are_placed_in_the_module_they_name() -> None:
+    log = "\n".join([
+        "Warning: found logic loop in module loopy:",
+        "Warning: multiple conflicting drivers for top.\\x [0]:",
+        "Warning: Wire top.\\q is used but has no driver.",
+        "",
+    ])
+    netlist = _netlist(("loopy", "/rtl/loopy.v:1.1-9.10", {}), ("top", "/rtl/top.v:1.1-20.10", {}))
+
+    issues = {issue["title"]: issue for issue in _probe_issues(log, netlist)}
+
+    loop = issues["Combinational loop reported by Yosys precheck"]
+    drivers = issues["Multiple drivers reported by Yosys precheck"]
+    undriven = issues["Undriven signal reported by Yosys precheck"]
+    assert (loop["source"], loop["line"], loop["evidence"]) == ("/rtl/loopy.v", 1, {"module": "loopy"})
+    assert (drivers["source"], drivers["line"], drivers["evidence"]["net"]) == ("/rtl/top.v", 7, "x")
+    assert (undriven["source"], undriven["line"], undriven["severity"]) == ("/rtl/top.v", 1, "warning")
+
+
+def test_a_check_finding_no_pattern_reads_is_still_reported() -> None:
+    issues = _probe_issues("Warning: something is undriven here\n", _netlist())
+
+    assert [(i["title"], i["source"]) for i in issues] == [("Undriven signal reported by Yosys precheck", "")]
+
+
+def test_a_cycle_candidate_is_a_note_in_the_module_it_is_in() -> None:
+    from fecompiler.resources import frontend_repo_root
+    from fecompiler.tools.review.analyzer import _decorate_issue
+
+    def gate(a: int, y: int) -> dict:
+        return {
+            "type": "$not",
+            "port_directions": {"A": "input", "Y": "output"},
+            "connections": {"A": [a], "Y": [y]},
+        }
+
+    wrapper = frontend_repo_root() / "fecompiler" / "adapters" / "demo" / "wrapper.v"
+    netlist = _netlist(("wrapper", f"{wrapper}:3.1-20.10", {"g1": gate(4, 5), "g2": gate(5, 4)}))
+
+    [issue] = _probe_issues("", netlist)
+
+    assert (issue["severity"], issue["source"], issue["line"]) == ("info", str(wrapper), 3)
+    # With a place, the issue belongs to whoever owns that file: here the
+    # adapter ECC-FE ships, not the user's CPU.
+    assert _decorate_issue(issue, {}, {})["ownership"] == "adapter"
+
+
+def test_a_yosys_finding_in_a_file_no_one_owns_stays_the_users() -> None:
+    from fecompiler.tools.review.analyzer import _decorate_issue, _normalize_probe_issue
+    from fecompiler.tools.review.probe_risks import _issue
+
+    found = _normalize_probe_issue(
+        _issue("error", "combinational", "Combinational loop reported by Yosys precheck", "",
+               path="/elsewhere/lib/unlisted.v", line=4)
+    )
+
+    assert _decorate_issue(found, {}, {})["ownership"] == "cpu"
+
+
+def test_netlist_sources_are_made_absolute_from_where_yosys_ran(tmp_path: Path) -> None:
+    from fecompiler.tools.review.netlist_graph import _with_absolute_sources
+
+    run_dir = tmp_path / "review_fe" / "script"
+    netlist = {
+        "modules": {
+            "top": {
+                # read_slang writes paths as given, relative to Yosys's directory.
+                "attributes": {"src": "../../rtl/top.sv:1.8"},
+                "cells": {"$1": {"attributes": {"src": "../../rtl/top.sv:3.3|/abs/inc.svh:2.1"}}},
+                "netnames": {"q": {"attributes": {"src": "/abs/top.sv:2.5-2.6"}}},
+            }
+        }
+    }
+
+    module = _with_absolute_sources(netlist, run_dir)["modules"]["top"]
+
+    rtl = tmp_path / "rtl" / "top.sv"
+    assert module["attributes"]["src"] == f"{rtl}:1.8"
+    assert module["cells"]["$1"]["attributes"]["src"] == f"{rtl}:3.3|/abs/inc.svh:2.1"
+    assert module["netnames"]["q"]["attributes"]["src"] == "/abs/top.sv:2.5-2.6"
+
+
+def test_design_wide_counts_leave_a_bundled_core_out(tmp_path: Path) -> None:
+    from fecompiler.tools.review.analyzer import SourceFile, _issues
+
+    filelist = tmp_path / "cpu" / "filelist.cpu.f"
+    filelist.parent.mkdir()
+    filelist.write_text("", encoding="utf-8")
+    resets = "\n".join(f"    if (rst) r{index} <= 0;" for index in range(100))
+    busy = f"module busy(input clk, input rst);\n  always @(posedge clk) begin\n{resets}\n  end\nendmodule\n"
+    mine = SourceFile(
+        tmp_path / "cpu" / "mine.v",
+        "module mine(input clk, input rst, output reg r);\n  always @(posedge clk) if (rst) r <= 0;\nendmodule\n",
+    )
+    workspace = {"cpu_filelist": str(filelist)}
+
+    def titles(*sources: SourceFile) -> set[str]:
+        return {issue["title"] for issue in _issues(list(sources), workspace)}
+
+    # A reset count over the whole design has no place in the source, so it
+    # would land on the user: it is taken over the user's own files only.
+    assert "Reset appears heavily distributed" not in titles(
+        SourceFile(tmp_path / "thirdparty" / "busy.v", busy), mine
+    )
+    assert "Reset appears heavily distributed" in titles(SourceFile(tmp_path / "cpu" / "busy.v", busy), mine)
