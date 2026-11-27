@@ -458,13 +458,17 @@ def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):
     assert probe["metrics"]["max_fanout"] >= 64
     assert probe["metrics"]["max_fanin"] >= 32
     assert probe["metrics"]["max_comb_depth"] >= 16
-    assert probe["metrics"]["high_fanout_nets"][0]["net"] == "wide_ctrl"
-    fanout_issue = next(issue for issue in data["issues"] if issue["title"] == "High fanout net candidate")
-    depth_issue = next(issue for issue in data["issues"] if issue["title"] == "Deep combinational path candidate")
-    assert fanout_issue["source"] == str(rtl)
-    assert fanout_issue["line"] > 0
-    assert depth_issue["source"] == str(rtl)
-    assert depth_issue["line"] > 0
+    widest = probe["metrics"]["high_fanout_nets"][0]
+    deepest = probe["metrics"]["deep_comb_paths"][0]
+    assert widest["net"] == "wide_ctrl"
+    assert (widest["source"], deepest["source"]) == (str(rtl), str(rtl))
+    assert widest["line"] > 0 and deepest["line"] > 0
+    # They are measurements to compare runs by, not findings.
+    assert not {issue["title"] for issue in data["issues"]} & {
+        "High fanout net candidate",
+        "Wide fanin cell candidate",
+        "Deep combinational path candidate",
+    }
 
 
 def test_yosys_precheck_error_blocks_review_step(tmp_path: Path, monkeypatch):

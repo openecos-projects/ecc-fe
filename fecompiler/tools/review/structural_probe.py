@@ -19,11 +19,6 @@ from fecompiler.tools.review.netlist_graph import (
     _read_json,
     _structural_metrics_from_netlist,
 )
-from fecompiler.tools.review.probe_common import (
-    _DEEP_COMB_DEPTH_THRESHOLD,
-    _HIGH_FANIN_THRESHOLD,
-    _HIGH_FANOUT_THRESHOLD,
-)
 from fecompiler.tools.review.probe_diagnostics import (
     _diagnostics_from_log,
     _yosys_failure_reason,
@@ -294,7 +289,6 @@ _DESIGN_WORDING = (
     ("the CPU top hierarchy", "the top hierarchy"),
     ("The CPU RTL", "The design RTL"),
     ("the CPU RTL", "the design RTL"),
-    ("A CPU net", "A net"),
 )
 
 
@@ -322,14 +316,6 @@ def _probe_mode(workspace: dict[str, Any]) -> str:
 
 
 def _write_probe(paths: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
-    payload.setdefault(
-        "risk_thresholds",
-        {
-            "max_fanout": _HIGH_FANOUT_THRESHOLD,
-            "max_fanin": _HIGH_FANIN_THRESHOLD,
-            "max_comb_depth": _DEEP_COMB_DEPTH_THRESHOLD,
-        },
-    )
     report_path = Path(paths["report"])
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

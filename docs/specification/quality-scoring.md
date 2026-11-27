@@ -14,7 +14,7 @@ A gate is a hard condition, such as "no elaboration errors". Quality is
 (for example the Yosys precheck did not run) or the step did not succeed, and
 `pass` otherwise. The score never changes the quality.
 
-This document describes scoring version 3 (`score.scoring_version`).
+This document describes scoring version 4 (`score.scoring_version`).
 
 ## Rules
 
@@ -50,10 +50,9 @@ existing results become stale.
 | | Top resolution | 20 | defined exactly once (15), its file is an input (5); not evaluated when no top is required |
 | | Interface contract | 40 | share of required ports matched (35), no unexpected port (5); not evaluated without a contract |
 | | Reproducibility | 10 | input fingerprint (5), merged filelist (2.5), manifest (2.5) |
-| review | Structural precheck | 30 | Yosys precheck passed; not evaluated when it did not run |
-| | Actionable errors | 30 | 10 off per error |
-| | Warning hygiene | 15 | density, none at 5 warnings per 1000 lines |
-| | Structural headroom | 25 | fanout, fanin and depth against their targets; not evaluated without a passing precheck |
+| review | Structural precheck | 40 | Yosys precheck passed; not evaluated when it did not run |
+| | Actionable errors | 40 | 10 off per error |
+| | Warning hygiene | 20 | density, none at 5 warnings per 1000 lines |
 | elab | Compiler execution | 25 | slang completed a full elaboration |
 | | Diagnostic errors | 30 | 10 off per error |
 | | Hierarchy closure | 20 | 5 off per unresolved module |
@@ -94,7 +93,22 @@ against them.
 ## Structural Measurements
 
 The review step measures fanout, fanin and combinational depth on the Yosys
-netlist.
+netlist. They are recorded as the metrics `max_fanout`, `max_fanin` and
+`max_combinational_depth`, so `ecc-fe report compare` shows how they move
+between runs. They are not scored and raise no warning. The netlist is
+word-level, since Yosys has only run `proc` and light clean-up:
+
+- A `case` is one cell, and its fanin is the number of all its input bits.
+- Depth counts word-level cells, not gates.
+- A synchronous reset lowered into mux selects counts as fanout.
+
+So the numbers do not describe the synthesized circuit, and no single limit
+suits both a small core and a large one. The lists `high_fanout_nets`,
+`high_fanin_cells` and `deep_comb_paths` hold the largest of each, whatever
+their size (eight per module, twenty for the design), to find them in the
+source.
+
+How they are counted:
 
 - Clock and reset pins of registers and memories are not counted as fanout.
   Counting them made the number of registers the fanout of every module.
@@ -104,6 +118,17 @@ netlist.
   whole-word cells, so bits of one bus that feed other bits of it look like a
   loop. A real loop is found by Yosys `check` and reported as the error
   "Combinational loop reported by Yosys precheck".
+
+## What Changed From Version 3
+
+Version 4 takes structural headroom out of the review score. It compared
+fanout, fanin and depth with fixed targets (64, 32 and 16) that every real
+CPU exceeded, by a margin that measured the word-level netlist rather than
+the design. The three warnings on those targets are gone as well, and with
+them their share of the warning density. The other three review components
+keep their proportions on a total of 100: 40, 40 and 20 in place of 30, 30
+and 15. An error still costs 10 points. The score of every other step is
+computed as in version 3.
 
 ## What Changed From Version 2
 

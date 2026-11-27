@@ -1,17 +1,9 @@
-"""The limits the structural precheck judges by, and helpers its parts share.
+"""Helpers the parts of the structural precheck share.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-_HIGH_FANOUT_THRESHOLD = 64
-
-
-_HIGH_FANIN_THRESHOLD = 32
-
-
-_DEEP_COMB_DEPTH_THRESHOLD = 16
 
 
 def _int_or_zero(value: Any) -> int:

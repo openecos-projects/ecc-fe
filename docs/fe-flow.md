@@ -339,6 +339,21 @@ review 看用户的设计（CPU 工程的 CPU 部分，RTL 工程的整个设计
 - 预检查默认最多跑 45 秒，超时后记为未完成，不让 review 失败。大设计需要更久
   （cva6 实测约 7 分半），可以用 `ECOS_FE_TIMEOUT_REVIEW` 设秒数，`0` 表示不限。
 
+### 结构指标只记录，不评判
+
+预检查从 Yosys 网表量出最大扇出、最大扇入和组合深度，记在 `rtl_review.json` 的
+`metrics.structural` 里，也是 QoR 指标（`max_fanout`、`max_fanin`、
+`max_combinational_depth`），`ecc-fe report compare` 能看出两次运行之间的变化。
+它们不产生警告，也不计入 review 的分数，因为网表只做了 `proc` 和简单清理，还是按整个字处理的：
+
+- 一个 `case` 是一个单元，扇入是它所有输入位的总数；
+- 深度数的是字级单元的级数，不是门的级数；
+- 同步复位展开成选择器的选择端后，会算进扇出。
+
+这些数的绝对值不对应综合后的电路，一个固定的上限也不可能同时适合小核和大核。
+`high_fanout_nets`、`high_fanin_cells`、`deep_comb_paths` 列出的是各自最大的几项
+（每个模块最多 8 个，整个设计最多 20 个），不论大小，用来找到它们在源码里的位置。
+
 ## Step 注册表
 
 每个步骤在 `fecompiler/allflow/steps.py` 里有且只有一条 `StepDefinition`，记录：

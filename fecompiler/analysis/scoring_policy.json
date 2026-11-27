@@ -1,5 +1,5 @@
 {
-  "scoring_version": 3,
+  "scoring_version": 4,
   "size": {
     "minimum_lines": 200
   },
@@ -15,16 +15,11 @@
     "prepared_manifest": 2.5
   },
   "review": {
-    "structural_precheck": 30,
-    "actionable_errors": 30,
+    "structural_precheck": 40,
+    "actionable_errors": 40,
     "points_per_error": 10,
-    "warning_hygiene": 15,
-    "warnings_per_kloc_for_zero": 5,
-    "structural_headroom": {
-      "max_fanout": 8.3,
-      "max_fanin": 8.3,
-      "max_comb_depth": 8.4
-    }
+    "warning_hygiene": 20,
+    "warnings_per_kloc_for_zero": 5
   },
   "elab": {
     "compiler_execution": 25,
