@@ -26,6 +26,7 @@
   "directory": "fecompiler/thirdparty/cva6",
   "cpu_filelist": "fecompiler/adapters/cva6/filelist.cpu.f",
   "requires_filelist": false,
+  "review_skip_files": ["instr_tracer.sv", "instr_tracer_if.sv"],
   "tags": [
     "riscv",
     "application",

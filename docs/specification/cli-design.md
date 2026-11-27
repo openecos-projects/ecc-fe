@@ -281,8 +281,11 @@ disables that limit):
 | Simulator compile | 2 h | `ECOS_FE_TIMEOUT_SIM_COMPILE` |
 | One test program build | 30 min | `ECOS_FE_TIMEOUT_PROGRAM_BUILD` |
 | One simulation case | 4 h | `ECOS_FE_TIMEOUT_SIM_CASE` |
+| Yosys structural precheck of review | 45 s | `ECOS_FE_TIMEOUT_REVIEW` |
 
-The Yosys precheck keeps its fixed 45 second review bound.
+The precheck is a quick look before elaboration, so its limit is short. When
+it is reached the precheck is recorded as timed out and review does not fail;
+a large CPU can need minutes (CVA6 took about 7.5 minutes).
 
 ## Resource Contract
 

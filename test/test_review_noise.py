@@ -314,10 +314,42 @@ def test_review_takes_the_users_sources_from_the_prepare_result(tmp_path) -> Non
 
     assert inputs is not None
     assert inputs["rtl_files"] == [str(cpu)]
-    assert inputs["incdirs"] == [
-        str(tmp_path / "inc"), str(tmp_path / "hdr"), str(tmp_path / "cpu"), str(tmp_path / "lib"),
-    ]
+    assert inputs["incdirs"] == [str(tmp_path / "inc"), str(tmp_path / "hdr"), str(tmp_path / "cpu")]
+    # Library directories stay library directories, as elaboration uses them.
+    assert inputs["libdirs"] == [str(tmp_path / "lib")]
     assert inputs["defines"] == ["A=1"]
+
+
+def test_review_reads_every_source_of_the_design_but_the_harness(tmp_path) -> None:
+    # A catalog CPU: the core is vendored (third_party), the wrapper is ours.
+    files = {
+        "core": (tmp_path / "thirdparty" / "core.v", "third_party"),
+        "wrapper": (tmp_path / "adapters" / "wrapper.v", "adapter"),
+        "soc": (tmp_path / "soc" / "top.v", "soc"),
+    }
+    for path, _ in files.values():
+        path.parent.mkdir(parents=True)
+        path.write_text("module x; endmodule\n", encoding="utf-8")
+    workspace: dict = {"cpu_filelist": "", "soc_filelist": ""}
+    manifest = tmp_path / "prepared_inputs.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "rtl_files": [str(path) for path, _ in files.values()],
+                "rtl_sources": [
+                    {"path": str(path), "ownership": owner} for path, owner in files.values()
+                ],
+                "source_fingerprint": workspace_input_fingerprint(workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+    workspace["prepared_manifest"] = str(manifest)
+
+    inputs = prepared_review_inputs(workspace)
+
+    assert inputs is not None
+    assert inputs["rtl_files"] == [str(files["core"][0]), str(files["wrapper"][0])]
 
 
 def test_review_falls_back_without_a_prepare_result(tmp_path) -> None:

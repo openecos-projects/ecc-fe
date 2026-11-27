@@ -215,103 +215,107 @@ def test_rtl_review_tracks_delta_confidence_and_exact_waivers(tmp_path: Path, mo
     assert third["delta"]["resolved"] >= 1
 
 
-def test_yosys_precheck_inferrs_cpu_top_when_wrapper_is_outside_cpu_filelist(tmp_path: Path, monkeypatch):
-    leaf = tmp_path / "leaf.v"
-    cpu_top = tmp_path / "CpuTop.v"
-    soc_wrapper = tmp_path / "SocWrapper.v"
-    cpu_filelist = tmp_path / "filelist.cpu.f"
-    soc_filelist = tmp_path / "filelist.soc.f"
-    leaf.write_text("module Leaf(input clk, output y); assign y = clk; endmodule\n", encoding="utf-8")
-    cpu_top.write_text("module CpuTop(input clk, output y); Leaf u_leaf(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
-    soc_wrapper.write_text("module SocWrapper(input clk, output y); CpuTop u_cpu(.clk(clk), .y(y)); endmodule\n", encoding="utf-8")
-    cpu_filelist.write_text(f"{leaf}\n{cpu_top}\n", encoding="utf-8")
-    soc_filelist.write_text(f"{soc_wrapper}\n", encoding="utf-8")
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
-    monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: False)
-
-    def fake_run(cmd, cwd, capture_output, text, env, timeout):
-        script = Path(cmd[cmd.index("-s") + 1])
-        script_text = script.read_text(encoding="utf-8")
-        assert "hierarchy -top CpuTop -check" in script_text
-        assert "hierarchy -top SocWrapper -check" not in script_text
-        assert str(cpu_top) in script_text
-        assert str(soc_wrapper) not in script_text
-        stat_path = _stat_path_from_script(script_text)
-        netlist_path = _netlist_path_from_script(script_text)
-        stat_path.write_text(json.dumps({"modules": {"\\CpuTop": {"num_cells": 1}}, "design": {"num_cells": 1}}), encoding="utf-8")
-        netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
-
-    spec = CreateWorkspaceData(
-        directory=str(tmp_path / "ws_cpu_wrapper_outside_filelist"),
-        parameters={"Design": "demo", "Top module": "ecos_sim_top"},
-        cpu_filelist=str(cpu_filelist),
-        soc_filelist=str(soc_filelist),
-    )
-    workspace = create_workspace(spec)
-    assert workspace is not None
-
-    loaded = load_workspace(str(tmp_path / "ws_cpu_wrapper_outside_filelist"))
-    assert loaded is not None
-    loaded["cpu_wrapper_top"] = "SocWrapper"
-    loaded["top_module"] = "ecos_sim_top"
-    engine = EngineFlow(workspace=loaded)
-    engine.create_step_workspaces()
-
-    assert engine.run_step("review", rerun=True) == StateEnum.Success
-
-    report = tmp_path / "ws_cpu_wrapper_outside_filelist" / "review_fe" / "report" / "rtl_review.json"
-    data = json.loads(report.read_text(encoding="utf-8"))
-    assert data["structural_probe"]["top_module"] == "CpuTop"
-
-
-def test_yosys_precheck_autodiscovers_same_name_local_helper_sources(tmp_path: Path, monkeypatch):
-    cpu_top = tmp_path / "CpuTop.sv"
-    helper = tmp_path / "difftest_wrapper.sv"
-    cpu_filelist = tmp_path / "filelist.cpu.f"
-    cpu_top.write_text(
-        "module CpuTop(input logic clk, output logic y); difftest_wrapper difftest(.clk(clk), .y(y)); endmodule\n",
-        encoding="utf-8",
-    )
-    helper.write_text("module difftest_wrapper(input logic clk, output logic y); assign y = clk; endmodule\n", encoding="utf-8")
-    cpu_filelist.write_text(f"{cpu_top}\n", encoding="utf-8")
+def _review_script(tmp_path: Path, monkeypatch, name: str, **workspace_fields) -> tuple[str, dict]:
+    """Run review on a CPU workspace with a fake Yosys; return its script and report."""
+    scripts: list[str] = []
     monkeypatch.setattr("fecompiler.tools.review.structural_probe._resolve_yosys", lambda: "/usr/bin/yosys")
     monkeypatch.setattr("fecompiler.tools.review.yosys_env._yosys_supports_slang", lambda yosys: True)
 
     def fake_run(cmd, cwd, capture_output, text, env, timeout):
-        script = Path(cmd[cmd.index("-s") + 1])
-        script_text = script.read_text(encoding="utf-8")
-        assert str(cpu_top) in script_text
-        assert str(helper) in script_text
-        assert "--top CpuTop" in script_text
-        stat_path = _stat_path_from_script(script_text)
-        netlist_path = _netlist_path_from_script(script_text)
-        stat_path.write_text(json.dumps({"modules": {"\\CpuTop": {"num_cells": 1}}, "design": {"num_cells": 1}}), encoding="utf-8")
-        netlist_path.write_text(json.dumps({"modules": {}}), encoding="utf-8")
+        script_text = Path(cmd[cmd.index("-s") + 1]).read_text(encoding="utf-8")
+        scripts.append(script_text)
+        _stat_path_from_script(script_text).write_text(
+            json.dumps({"modules": {}, "design": {"num_cells": 1}}), encoding="utf-8"
+        )
+        _netlist_path_from_script(script_text).write_text(json.dumps({"modules": {}}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("fecompiler.tools.review.structural_probe.run_tool", as_run_tool(fake_run))
-
     spec = CreateWorkspaceData(
-        directory=str(tmp_path / "ws_autodiscover_helper"),
-        parameters={"Design": "demo", "Top module": "CpuTop"},
-        cpu_filelist=str(cpu_filelist),
+        directory=str(tmp_path / name),
+        parameters={
+            "Design": "demo",
+            "Top module": "ecos_sim_top",
+            **workspace_fields.pop("parameters", {}),
+        },
+        cpu_filelist=workspace_fields.pop("cpu_filelist"),
+        soc_filelist=workspace_fields.pop("soc_filelist", ""),
     )
-    workspace = create_workspace(spec)
-    assert workspace is not None
-
-    loaded = load_workspace(str(tmp_path / "ws_autodiscover_helper"))
+    assert create_workspace(spec) is not None
+    loaded = load_workspace(str(tmp_path / name))
     assert loaded is not None
+    loaded.update(workspace_fields)
     engine = EngineFlow(workspace=loaded)
     engine.create_step_workspaces()
+    engine.run_step("review", rerun=True)
+    report = tmp_path / name / "review_fe" / "report" / "rtl_review.json"
+    return scripts[0], json.loads(report.read_text(encoding="utf-8"))
 
-    assert engine.run_step("review", rerun=True) == StateEnum.Success
 
-    report = tmp_path / "ws_autodiscover_helper" / "review_fe" / "report" / "rtl_review.json"
-    data = json.loads(report.read_text(encoding="utf-8"))
-    assert str(helper) in data["structural_probe"]["inputs"]["auto_discovered_rtl_files"]
+def test_yosys_precheck_elaborates_the_configured_cpu_top_and_guesses_nothing(tmp_path: Path, monkeypatch):
+    # CpuTop looks like a top by name and is instantiated by nothing, but the
+    # project names MyCore: that is what prepare checks and handoff hands off.
+    (tmp_path / "CpuTop.v").write_text("module CpuTop(input clk); endmodule\n", encoding="utf-8")
+    (tmp_path / "MyCore.v").write_text("module MyCore(input clk); endmodule\n", encoding="utf-8")
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    cpu_filelist.write_text(f"{tmp_path / 'CpuTop.v'}\n{tmp_path / 'MyCore.v'}\n", encoding="utf-8")
+
+    script, data = _review_script(
+        tmp_path, monkeypatch, "ws_configured_top",
+        cpu_filelist=str(cpu_filelist), required_cpu_top_module="MyCore",
+    )
+
+    assert "hierarchy -top MyCore -check" in script
+    assert data["structural_probe"]["top_module"] == "MyCore"
+
+
+def test_yosys_precheck_reads_what_elaboration_reads(tmp_path: Path, monkeypatch):
+    cpu_top = tmp_path / "CpuTop.sv"
+    nearby = tmp_path / "difftest_wrapper.sv"
+    library = tmp_path / "lib"
+    library.mkdir()
+    cpu_top.write_text(
+        "module CpuTop(input logic clk); difftest_wrapper d(.clk(clk)); lib_cell c(.clk(clk)); endmodule\n",
+        encoding="utf-8",
+    )
+    # Next to the top but not listed: elaboration would not read it, so review does not either.
+    nearby.write_text("module difftest_wrapper(input logic clk); endmodule\n", encoding="utf-8")
+    (library / "lib_cell.sv").write_text("module lib_cell(input logic clk); endmodule\n", encoding="utf-8")
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    cpu_filelist.write_text(f"-y {library}\n+libext+.sv\n{cpu_top}\n", encoding="utf-8")
+
+    script, data = _review_script(
+        tmp_path, monkeypatch, "ws_library", cpu_filelist=str(cpu_filelist), cpu_wrapper_top="CpuTop",
+    )
+
+    assert str(nearby) not in script
+    assert f"-y {library}" in script
+    assert "-Y .sv" in script
+    inputs = data["structural_probe"]["inputs"]
+    assert inputs["rtl_files"] == [str(cpu_top)]
+    assert inputs["libdirs"] == [str(library)]
+    assert "auto_discovered_rtl_files" not in inputs
+
+
+def test_yosys_precheck_skips_the_files_the_catalog_names(tmp_path: Path, monkeypatch):
+    from fecompiler.catalog import registry as catalog_registry
+
+    # Another test may have left a catalog of its own in the cache.
+    catalog_registry._catalog.cache_clear()
+    core = tmp_path / "core.v"
+    tracer = tmp_path / "instr_tracer.sv"
+    core.write_text("module cpu_top(input clk); endmodule\n", encoding="utf-8")
+    tracer.write_text("module instr_tracer; initial $fopen(fn); endmodule\n", encoding="utf-8")
+    cpu_filelist = tmp_path / "filelist.cpu.f"
+    cpu_filelist.write_text(f"{core}\n{tracer}\n", encoding="utf-8")
+
+    script, data = _review_script(
+        tmp_path, monkeypatch, "ws_skip",
+        cpu_filelist=str(cpu_filelist), parameters={"frontend_core_id": "cva6"},
+    )
+
+    assert str(core) in script
+    assert str(tracer) not in script
 
 
 def test_yosys_precheck_collects_stat_metrics(tmp_path: Path, monkeypatch):

@@ -291,8 +291,21 @@ CPU 模式下的端口契约检查同样带上 filelist 里的宏定义。接口
 
 ## review 的判断规则
 
-review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整个设计），源文件、include
-目录、库目录和宏定义都取自 prepare 的结果；只有 prepare 结果不是最新时才自己读 filelist。
+review 看用户的设计（CPU 工程的 CPU 部分，RTL 工程的整个设计），源文件、include
+目录、库目录和宏定义都取自 prepare 的结果；只有 prepare 结果不是最新时才用同一个解析器
+自己读 filelist。
+
+- 读的是设计的全部源文件，只去掉 SoC 外壳，不论文件归属是 `cpu`、`third_party`
+  还是 `adapter`：Yosys 要从 top 往下把层次读全。哪些问题算用户的，之后再按归属判断。
+- 库目录（`-y`）和后缀（`+libext+`）按库目录传给 Yosys，与 elab 一致：`read_slang`
+  用 `-y`/`-Y`；没有 slang 插件、用 `read_verilog` 时由 `hierarchy -libdir` 查找
+  `<模块名>.v`。不会再按文件名到源文件旁边的目录里猜着补文件。
+- top 用工程配置的那个：RTL 设计的 top；CPU 是自定义 CPU 指定的顶层，否则是
+  catalog CPU 的包装模块，也就是 prepare 检查、handoff 交出去的那个模块。
+  源文件里没有它时由 Yosys 报出来，不会改用别的模块。
+- catalog 里的 CPU 可以列出 Yosys 读不了的纯仿真文件（`review_skip_files`，按文件名），
+  例如 cva6 的 `instr_tracer.sv`、`instr_tracer_if.sv`。只有结构预检查跳过它们，
+  elab 和 lint 照常读。
 
 源码启发式检查先去掉注释再逐行看，所以注释掉的代码不会被报告。它们给出的都是
 `warning` 或 `info`，不会是 `error`：
@@ -323,6 +336,8 @@ review 只看用户自己的 RTL（CPU 工程的 CPU 部分，RTL 工程的整�
   完全合法。这种情况下预检查的错误记为工具限制，review 不会失败，由 elab 把关。
 - 源文件或 include 路径里有空格时（Yosys 脚本表达不了），预检查跳过并说明原因，
   结构指标不可用，其余检查照常。
+- 预检查默认最多跑 45 秒，超时后记为未完成，不让 review 失败。大设计需要更久
+  （cva6 实测约 7 分半），可以用 `ECOS_FE_TIMEOUT_REVIEW` 设秒数，`0` 表示不限。
 
 ## Step 注册表
 
