@@ -117,14 +117,7 @@ def _prepare_readiness(
                 "summary": {
                     "actionable_errors": 0,
                     "actionable_warnings": 2,
-                    "yosys_precheck": {
-                        "status": "success",
-                        "risk_thresholds": {
-                            "max_fanout": 64,
-                            "max_fanin": 32,
-                            "max_comb_depth": 16,
-                        },
-                    },
+                    "yosys_precheck": {"status": "success"},
                 },
                 "metrics": {
                     "structural": {
@@ -272,7 +265,7 @@ def test_prepare_qor_explains_full_readiness_score(tmp_path: Path) -> None:
         "label": "Preparation readiness",
         "value": 100,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 100,
         "components": [
             {
@@ -353,33 +346,33 @@ def test_prepare_qor_keeps_partial_score_blocked_by_failed_contract(
     }
 
 
-def test_review_qor_explains_structural_quality_score(tmp_path: Path) -> None:
+def _review_report(
+    *,
+    errors: int = 0,
+    warnings: int = 0,
+    structural: dict | None = None,
+    precheck: dict | None = None,
+) -> dict:
+    return {
+        "summary": {
+            "actionable_errors": errors,
+            "actionable_warnings": warnings,
+            "total_lines": 1000,
+        },
+        "metrics": {"structural": structural or {}},
+        "yosys_precheck": precheck or {"status": "success"},
+        "issues": [],
+    }
+
+
+def test_review_qor_explains_its_score(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "review", "fe")
     _write(
         Path(step.report["dir"]) / "rtl_review.json",
-        {
-            "summary": {
-                "actionable_errors": 0,
-                "actionable_warnings": 2,
-                "total_lines": 1000,
-            },
-            "metrics": {
-                "structural": {
-                    "max_fanout": 64,
-                    "max_fanin": 64,
-                    "max_comb_depth": 8,
-                }
-            },
-            "yosys_precheck": {
-                "status": "success",
-                "risk_thresholds": {
-                    "max_fanout": 64,
-                    "max_fanin": 32,
-                    "max_comb_depth": 16,
-                },
-            },
-            "issues": [],
-        },
+        _review_report(
+            warnings=2,
+            structural={"max_fanout": 64, "max_fanin": 64, "max_comb_depth": 8},
+        ),
     )
 
     write_step_qor(step, workspace, True)
@@ -388,105 +381,98 @@ def test_review_qor_explains_structural_quality_score(tmp_path: Path) -> None:
     assert summary["quality_status"] == "pass"
     assert summary["score"] == {
         "label": "RTL review quality",
-        "value": 89.9,
+        "value": 92,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 100,
         "components": [
             {
                 "id": "structural_precheck",
                 "label": "Structural precheck",
-                "earned": 30,
-                "possible": 30,
+                "earned": 40,
+                "possible": 40,
                 "evaluated": True,
                 "summary": "Yosys completed the CPU-only structural precheck.",
             },
             {
                 "id": "actionable_errors",
                 "label": "Actionable errors",
-                "earned": 30,
-                "possible": 30,
+                "earned": 40,
+                "possible": 40,
                 "evaluated": True,
                 "summary": "0 actionable RTL errors reported.",
             },
             {
                 "id": "warning_hygiene",
                 "label": "Warning hygiene",
-                "earned": 9,
-                "possible": 15,
+                "earned": 12,
+                "possible": 20,
                 "evaluated": True,
                 "summary": "2 actionable RTL warnings in 1000 lines (2.0 per 1000 lines).",
-            },
-            {
-                "id": "structural_headroom",
-                "label": "Structural headroom",
-                "earned": 20.9,
-                "possible": 25,
-                "evaluated": True,
-                "summary": (
-                    "Fanout 64/64, fanin 64/32, depth 8/16 (measured/target); "
-                    "clock and reset nets are not counted as fanout."
-                ),
             },
         ],
     }
 
 
-def test_review_qor_keeps_partial_score_blocked_by_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "structural",
+    [
+        {"max_fanout": 3, "max_fanin": 2, "max_comb_depth": 1},
+        {"max_fanout": 585, "max_fanin": 3463, "max_comb_depth": 282},
+        {},
+    ],
+)
+def test_review_score_does_not_depend_on_structural_measurements(
+    tmp_path: Path, structural: dict
+) -> None:
+    # They are word-level counts with no limit that suits every design, so
+    # they are recorded for comparing runs and nothing more.
     workspace, step = _step(tmp_path, "review", "fe")
     _write(
         Path(step.report["dir"]) / "rtl_review.json",
-        {
-            "summary": {
-                "actionable_errors": 1,
-                "actionable_warnings": 0,
-            },
-            "metrics": {
-                "structural": {
-                    "max_fanout": 16,
-                    "max_fanin": 8,
-                    "max_comb_depth": 4,
-                }
-            },
-            "yosys_precheck": {
-                "status": "success",
-                "risk_thresholds": {
-                    "max_fanout": 64,
-                    "max_fanin": 32,
-                    "max_comb_depth": 16,
-                },
-            },
-            "issues": [],
-        },
+        _review_report(structural=structural),
     )
+
+    write_step_qor(step, workspace, True)
+
+    summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
+    metrics = json.loads(Path(step.analysis["qor_metrics"]).read_text(encoding="utf-8"))
+    assert summary["score"]["value"] == 100
+    assert [item["id"] for item in summary["score"]["components"]] == [
+        "structural_precheck",
+        "actionable_errors",
+        "warning_hygiene",
+    ]
+    recorded = {
+        item["id"]: item["value"]
+        for item in metrics["metrics"]
+        if item["id"] in {"max_fanout", "max_fanin", "max_combinational_depth"}
+    }
+    assert recorded == {
+        {"max_comb_depth": "max_combinational_depth"}.get(key, key): value
+        for key, value in structural.items()
+    }
+
+
+def test_review_qor_keeps_partial_score_blocked_by_error(tmp_path: Path) -> None:
+    workspace, step = _step(tmp_path, "review", "fe")
+    _write(Path(step.report["dir"]) / "rtl_review.json", _review_report(errors=1))
 
     write_step_qor(step, workspace, False)
 
     summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
     assert summary["quality_status"] == "blocked"
     assert summary["score"]["value"] == 90
-    assert summary["score"]["components"][1]["earned"] == 20
+    assert summary["score"]["components"][1]["earned"] == 30
 
 
-def test_review_qor_does_not_score_unmeasured_structural_headroom(
-    tmp_path: Path,
-) -> None:
+def test_review_qor_gives_a_failed_precheck_no_points(tmp_path: Path) -> None:
     workspace, step = _step(tmp_path, "review", "fe")
     _write(
         Path(step.report["dir"]) / "rtl_review.json",
-        {
-            "summary": {
-                "actionable_errors": 1,
-                "actionable_warnings": 0,
-            },
-            "metrics": {
-                "structural": {
-                    "max_fanout": 0,
-                    "max_fanin": 0,
-                    "max_comb_depth": 0,
-                }
-            },
-            "yosys_precheck": {
+        _review_report(
+            errors=1,
+            precheck={
                 "status": "failed",
                 "quality": {"gate": "failed"},
                 "diagnostics": [
@@ -496,31 +482,24 @@ def test_review_qor_does_not_score_unmeasured_structural_headroom(
                         "message": "unexpected token",
                     }
                 ],
-                "risk_thresholds": {
-                    "max_fanout": 64,
-                    "max_fanin": 32,
-                    "max_comb_depth": 16,
-                },
             },
-            "issues": [],
-        },
+        ),
     )
 
     write_step_qor(step, workspace, False)
 
     summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
     assert summary["quality_status"] == "blocked"
-    # 20 of 30 for one error, 0 of 30 for the precheck, 15 of 15 for no
-    # warnings; the 25 points of headroom are not part of the total.
-    assert summary["score"]["value"] == 46.7
-    assert summary["score"]["evaluated_weight"] == 75
-    assert summary["score"]["components"][3] == {
-        "id": "structural_headroom",
-        "label": "Structural headroom",
+    # 0 of 40 for the precheck, 30 of 40 for one error, 20 of 20 for no warnings.
+    assert summary["score"]["value"] == 50
+    assert summary["score"]["evaluated_weight"] == 100
+    assert summary["score"]["components"][0] == {
+        "id": "structural_precheck",
+        "label": "Structural precheck",
         "earned": 0,
-        "possible": 25,
-        "evaluated": False,
-        "summary": "Not evaluated: structural measurements need a passing Yosys precheck.",
+        "possible": 40,
+        "evaluated": True,
+        "summary": "Yosys reported a structural problem.",
     }
 
 
@@ -563,14 +542,7 @@ def test_qor_metrics_reference_their_exact_report_fields(tmp_path: Path) -> None
                     "max_comb_depth": 7,
                 }
             },
-            "yosys_precheck": {
-                "status": "success",
-                "risk_thresholds": {
-                    "max_fanout": 64,
-                    "max_fanin": 32,
-                    "max_comb_depth": 16,
-                },
-            },
+            "yosys_precheck": {"status": "success"},
             "issues": [],
         },
     )
@@ -680,7 +652,7 @@ def test_elaboration_qor_explains_authoritative_compiler_score(
         "label": "Elaboration quality",
         "value": 96,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 100,
         "components": [
             {
@@ -822,7 +794,7 @@ def test_lint_qor_scores_only_actionable_cpu_diagnostics(tmp_path: Path) -> None
         "label": "CPU lint quality",
         "value": 93,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 100,
         "components": [
             {
@@ -1053,7 +1025,7 @@ def test_sim_qor_scores_cases_reference_and_telemetry(tmp_path: Path) -> None:
         "label": "Simulation verification",
         "value": 100,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 100,
         "components": [
             {

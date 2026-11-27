@@ -1,19 +1,26 @@
 """Measure the netlist Yosys wrote: cells, fanout, fanin and logic depth per module.
+
+The netlist is word-level: Yosys has only run ``proc`` and light clean-up, so
+one cell is a whole word, or a whole ``case``. Fanin counts every input bit of
+such a cell, depth counts word-level cells, and a synchronous reset lowered
+into mux selects counts as fanout. So the numbers are recorded, and one run can
+be compared with another, but no limit is applied to them: one that fits a
+small core would flag every large one.
 """
 
 from __future__ import annotations
 
+import heapq
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from fecompiler.tools.review.probe_common import (
-    _DEEP_COMB_DEPTH_THRESHOLD,
-    _HIGH_FANIN_THRESHOLD,
-    _HIGH_FANOUT_THRESHOLD,
-    _int_or_zero,
-)
+from fecompiler.tools.review.probe_common import _int_or_zero
+
+# How many of the widest nets and cells each module lists, and the design.
+_LISTED_PER_MODULE = 8
+_LISTED = 20
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -91,7 +98,7 @@ def _structural_metrics_from_netlist(netlist: dict[str, Any]) -> dict[str, Any]:
         summaries.append(summary)
         high_fanout_nets.extend(summary.get("high_fanout_nets", []))
         high_fanin_cells.extend(summary.get("high_fanin_cells", []))
-        if _int_or_zero(summary.get("max_comb_depth")) >= _DEEP_COMB_DEPTH_THRESHOLD:
+        if _int_or_zero(summary.get("max_comb_depth")):
             deep_comb_paths.append({
                 "module": module_name,
                 "depth": summary.get("max_comb_depth", 0),
@@ -112,14 +119,15 @@ def _structural_metrics_from_netlist(netlist: dict[str, Any]) -> dict[str, Any]:
     high_fanin_cells.sort(key=lambda item: _int_or_zero(item.get("fanin")), reverse=True)
     deep_comb_paths.sort(key=lambda item: _int_or_zero(item.get("depth")), reverse=True)
 
+    # The lists keep their names, but hold the largest of each, however small.
     return {
         "netlist_source": "yosys_write_json",
-        "max_fanout": _max_int(high_fanout_nets, "fanout") or _max_int(summaries, "max_fanout"),
-        "max_fanin": _max_int(high_fanin_cells, "fanin") or _max_int(summaries, "max_fanin"),
-        "max_comb_depth": _max_int(deep_comb_paths, "depth") or _max_int(summaries, "max_comb_depth"),
-        "high_fanout_nets": high_fanout_nets[:20],
-        "high_fanin_cells": high_fanin_cells[:20],
-        "deep_comb_paths": deep_comb_paths[:20],
+        "max_fanout": _max_int(summaries, "max_fanout"),
+        "max_fanin": _max_int(summaries, "max_fanin"),
+        "max_comb_depth": _max_int(summaries, "max_comb_depth"),
+        "high_fanout_nets": high_fanout_nets[:_LISTED],
+        "high_fanin_cells": high_fanin_cells[:_LISTED],
+        "deep_comb_paths": deep_comb_paths[:_LISTED],
         "comb_cycle_modules": cycles[:20],
         "module_structure": summaries[:40],
     }
@@ -202,12 +210,10 @@ def _module_graph_summary(module_name: str, module: dict[str, Any]) -> dict[str,
         # its inputs and outputs is that module's business, so it is neither a
         # combinational cell here nor part of a path or a cycle through it.
 
-    max_fanout = 0
-    high_fanout: list[dict[str, Any]] = []
-    for bit, sinks in consumers.items():
+    fanouts = {
         # A clock or reset reaches every register by design; counting those
         # pins would make the register count the fanout of every module.
-        fanout = len(
+        bit: len(
             [
                 sink
                 for sink, port in sinks
@@ -215,37 +221,34 @@ def _module_graph_summary(module_name: str, module: dict[str, Any]) -> dict[str,
                 and not (sink in seq_cells and port.lstrip("\\").upper() in _CLOCK_RESET_PORTS)
             ]
         )
-        if fanout > max_fanout:
-            max_fanout = fanout
-        if fanout >= _HIGH_FANOUT_THRESHOLD:
-            location = (
+        for bit, sinks in consumers.items()
+    }
+    high_fanout = [
+        {
+            "module": module_name,
+            "net": _bit_name(module, bit),
+            "bit": bit,
+            "fanout": fanout,
+            "drivers": drivers.get(bit, [])[:6],
+            **(
                 bit_locations.get(bit)
                 or _first_cell_location(drivers.get(bit, []), cell_locations)
-                or _first_cell_location([sink for sink, _ in sinks], cell_locations)
-            )
-            high_fanout.append({
-                "module": module_name,
-                "net": _bit_name(module, bit),
-                "bit": bit,
-                "fanout": fanout,
-                "drivers": drivers.get(bit, [])[:6],
-                **location,
-            })
+                or _first_cell_location([sink for sink, _ in consumers[bit]], cell_locations)
+            ),
+        }
+        for bit, fanout in _largest(fanouts)
+    ]
 
-    max_fanin = 0
-    high_fanin: list[dict[str, Any]] = []
-    for cell_name, bits in cell_inputs.items():
-        fanin = len(bits)
-        if fanin > max_fanin:
-            max_fanin = fanin
-        if fanin >= _HIGH_FANIN_THRESHOLD:
-            location = cell_locations.get(cell_name, {})
-            high_fanin.append({
-                "module": module_name,
-                "cell": cell_name,
-                "fanin": fanin,
-                **location,
-            })
+    fanins = {cell_name: len(bits) for cell_name, bits in cell_inputs.items()}
+    high_fanin = [
+        {
+            "module": module_name,
+            "cell": cell_name,
+            "fanin": fanin,
+            **cell_locations.get(cell_name, {}),
+        }
+        for cell_name, fanin in _largest(fanins)
+    ]
 
     graph: dict[str, set[str]] = {cell: set() for cell in comb_cells}
     indegree: dict[str, int] = {cell: 0 for cell in comb_cells}
@@ -280,17 +283,26 @@ def _module_graph_summary(module_name: str, module: dict[str, Any]) -> dict[str,
         "cell_count": len(cells),
         "comb_cells": len(comb_cells),
         "sequential_cells": len(seq_cells),
-        "max_fanout": max_fanout,
-        "max_fanin": max_fanin,
+        "max_fanout": max(fanouts.values(), default=0),
+        "max_fanin": max(fanins.values(), default=0),
         "max_comb_depth": max(depth.values()) if depth else 0,
         "deepest_endpoint": deepest_endpoint,
         "deepest_source": deepest_location.get("source", ""),
         "deepest_line": deepest_location.get("line", 0),
         "deepest_column": deepest_location.get("column", 0),
         "comb_cycle": has_cycle,
-        "high_fanout_nets": sorted(high_fanout, key=lambda item: _int_or_zero(item.get("fanout")), reverse=True)[:8],
-        "high_fanin_cells": sorted(high_fanin, key=lambda item: _int_or_zero(item.get("fanin")), reverse=True)[:8],
+        "high_fanout_nets": high_fanout,
+        "high_fanin_cells": high_fanin,
     }
+
+
+def _largest(counts: dict[Any, int]) -> list[tuple[Any, int]]:
+    """The entries with the largest nonzero counts, largest first; ties keep their order."""
+    return [
+        (key, count)
+        for key, count in heapq.nlargest(_LISTED_PER_MODULE, counts.items(), key=lambda item: item[1])
+        if count
+    ]
 
 
 def _first_cell_location(names: list[str], locations: dict[str, dict[str, Any]]) -> dict[str, Any]:

@@ -192,7 +192,7 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
         )
         for index, item in issues
     )
-    result.score = _rtl_review_score(summary, structural, precheck, precheck_state)
+    result.score = _rtl_review_score(summary, precheck, precheck_state)
     result.comparison = {
         "input_fingerprint": _prepared_input_fingerprint(step),
         "top_module": str(precheck.get("top_module") or ""),
@@ -203,40 +203,19 @@ def _review_qor(step: Any, workspace: dict[str, Any]) -> _QorResult:
 
 def _rtl_review_score(
     summary: dict[str, Any],
-    structural: dict[str, Any],
     precheck: dict[str, Any],
     precheck_state: str,
 ) -> dict[str, Any] | None:
+    # Fanout, fanin and depth are recorded as metrics but not scored: they are
+    # word-level counts, and no one limit suits both a small and a large core.
     if not _valid_count_fields(summary, ("actionable_errors", "actionable_warnings")):
         return None
     policy = scoring_policy()["review"]
-    thresholds = _record(precheck.get("risk_thresholds"))
-    headroom_parts = tuple(policy["structural_headroom"].items())
-    structural_fields = tuple(field for field, _ in headroom_parts)
     # The precheck is evaluated when Yosys ran: it then passed or failed.
     precheck_evaluated = precheck_state in {"pass", "failed"}
-    headroom_available = (
-        precheck_state == "pass"
-        and _valid_count_fields(structural, structural_fields)
-        and _valid_count_fields(thresholds, structural_fields)
-        and all(int(thresholds[field]) > 0 for field in structural_fields)
-    )
-    if precheck_state == "pass" and not headroom_available:
-        return None
-
     errors = int(summary["actionable_errors"])
     warnings = int(summary["actionable_warnings"])
     lines = int(summary["total_lines"]) if _is_count(summary.get("total_lines")) else 0
-    headroom_possible = sum(possible for _, possible in headroom_parts)
-    headroom_earned = (
-        sum(
-            possible
-            * min(1.0, int(thresholds[field]) / max(int(structural[field]), 1))
-            for field, possible in headroom_parts
-        )
-        if headroom_available
-        else 0
-    )
     components = [
         scoring.component(
             "structural_precheck",
@@ -273,21 +252,6 @@ def _rtl_review_score(
             ),
             policy["warning_hygiene"],
             scoring.density_summary(warnings, lines, "actionable RTL warning"),
-        ),
-        scoring.component(
-            "structural_headroom",
-            "Structural headroom",
-            headroom_earned,
-            headroom_possible,
-            (
-                f"Fanout {structural['max_fanout']}/{thresholds['max_fanout']}, "
-                f"fanin {structural['max_fanin']}/{thresholds['max_fanin']}, "
-                f"depth {structural['max_comb_depth']}/{thresholds['max_comb_depth']} "
-                "(measured/target); clock and reset nets are not counted as fanout."
-                if headroom_available
-                else "Not evaluated: structural measurements need a passing Yosys precheck."
-            ),
-            evaluated=headroom_available,
         ),
     ]
     return scoring.score("RTL review quality", components)

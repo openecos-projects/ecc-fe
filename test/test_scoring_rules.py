@@ -38,7 +38,7 @@ def test_a_component_that_was_not_evaluated_is_left_out_of_the_total() -> None:
         "label": "Demo",
         "value": 50,
         "maximum": 100,
-        "scoring_version": 3,
+        "scoring_version": 4,
         "evaluated_weight": 60,
         "components": components,
     }
@@ -103,7 +103,7 @@ def test_policy_weights_add_up_to_one_hundred_per_step() -> None:
     ) == 100
     assert total(
         "review",
-        ("structural_precheck", "actionable_errors", "warning_hygiene", "structural_headroom"),
+        ("structural_precheck", "actionable_errors", "warning_hygiene"),
     ) == 100
     assert total(
         "elab",
@@ -206,15 +206,14 @@ def test_review_without_yosys_is_not_scored_down(tmp_path) -> None:
 
     summary = json.loads(Path(step.analysis["qor_summary"]).read_text(encoding="utf-8"))
     score = summary["score"]
-    # What Yosys would have measured is not evaluated, and says so; the
+    # The precheck Yosys would have run is not evaluated, and says so; the
     # quality stays incomplete because the precheck gate is.
     assert summary["quality_status"] == "incomplete"
-    assert (score["value"], score["evaluated_weight"]) == (100, 45)
+    assert (score["value"], score["evaluated_weight"]) == (100, 60)
     assert [(item["id"], item["evaluated"]) for item in score["components"]] == [
         ("structural_precheck", False),
         ("actionable_errors", True),
         ("warning_hygiene", True),
-        ("structural_headroom", False),
     ]
 
 
@@ -244,6 +243,25 @@ def test_clock_pins_do_not_count_as_fanout() -> None:
     assert summary["max_fanout"] == 8
     module["cells"] = {f"r{index}": _register(2, 20 + index, 10 + index) for index in range(8)}
     assert _module_graph_summary("demo", module)["max_fanout"] == 1
+
+
+def test_the_widest_nets_and_cells_are_listed_however_narrow() -> None:
+    # Ten registers, each reading a data bit of its own (20 to 29); bit 3 feeds
+    # two of them. No limit decides what is listed, only the eight largest.
+    module = {
+        "ports": {"d": {"direction": "input", "bits": [3]}},
+        "cells": {
+            f"r{index}": _register(2, 3 if index < 2 else 20 + index, 10 + index)
+            for index in range(10)
+        },
+    }
+
+    summary = _module_graph_summary("demo", module)
+
+    assert (summary["max_fanout"], summary["max_fanin"]) == (2, 2)
+    assert [item["fanout"] for item in summary["high_fanout_nets"]] == [2, 1, 1, 1, 1, 1, 1, 1]
+    assert summary["high_fanout_nets"][0]["bit"] == 3
+    assert [item["cell"] for item in summary["high_fanin_cells"]] == [f"r{index}" for index in range(8)]
 
 
 def test_a_path_through_a_submodule_instance_is_not_a_combinational_cycle() -> None:

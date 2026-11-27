@@ -111,7 +111,7 @@ def test_a_run_without_coverage_is_scored_as_before(tmp_path) -> None:
     # Difftest off and no coverage: cases and cycle counts are all there is.
     assert result["summary"]["score"]["value"] == 100
     assert result["summary"]["score"]["evaluated_weight"] == 75
-    assert result["summary"]["score"]["scoring_version"] == 3 == scoring.scoring_version()
+    assert result["summary"]["score"]["scoring_version"] == 4 == scoring.scoring_version()
     assert "line_coverage" not in result["metrics"]
 
 

@@ -9,12 +9,7 @@ from typing import Any
 from fecompiler.tools.review.netlist_graph import (
     _extract_cell_types,
 )
-from fecompiler.tools.review.probe_common import (
-    _DEEP_COMB_DEPTH_THRESHOLD,
-    _HIGH_FANIN_THRESHOLD,
-    _HIGH_FANOUT_THRESHOLD,
-    _int_or_zero,
-)
+from fecompiler.tools.review.probe_common import _int_or_zero
 
 
 def _module_risks_from_stat(stat: dict[str, Any], metrics: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -53,9 +48,6 @@ def _module_risks_from_stat(stat: dict[str, Any], metrics: dict[str, Any] | None
             mux_cells=mux_cells,
             arithmetic_cells=arithmetic_cells,
             memory_cells=memory_cells,
-            max_fanout=_int_or_zero(structure.get("max_fanout")),
-            max_fanin=_int_or_zero(structure.get("max_fanin")),
-            max_comb_depth=_int_or_zero(structure.get("max_comb_depth")),
             comb_cycle=bool(structure.get("comb_cycle")),
         )
         if not reasons and score < 100:
@@ -91,9 +83,6 @@ def _module_risk_reasons(
     mux_cells: int,
     arithmetic_cells: int,
     memory_cells: int,
-    max_fanout: int = 0,
-    max_fanin: int = 0,
-    max_comb_depth: int = 0,
     comb_cycle: bool = False,
 ) -> list[str]:
     reasons: list[str] = []
@@ -109,12 +98,8 @@ def _module_risk_reasons(
         reasons.append("inferred memory candidate")
     if processes >= 20:
         reasons.append("many lowered procedural blocks")
-    if max_fanout >= _HIGH_FANOUT_THRESHOLD:
-        reasons.append("high fanout net candidate")
-    if max_fanin >= _HIGH_FANIN_THRESHOLD:
-        reasons.append("wide fanin cell candidate")
-    if max_comb_depth >= _DEEP_COMB_DEPTH_THRESHOLD:
-        reasons.append("deep combinational path candidate")
+    # Fanout, fanin and depth are word-level counts with no limit that holds
+    # across designs (see netlist_graph), so they only rank the modules.
     if comb_cycle:
         reasons.append("combinational cycle candidate")
     return reasons
@@ -321,60 +306,6 @@ def _issues_from_probe(
             recommendation="Check multiplier/divider implementation choices and pipeline long arithmetic paths.",
         ))
 
-    if _int_or_zero(metrics.get("max_fanout")) >= _HIGH_FANOUT_THRESHOLD:
-        worst = _first_metric_item(metrics, "high_fanout_nets")
-        issues.append(_issue(
-            "warning",
-            "fanout",
-            "High fanout net candidate",
-            "A CPU net drives many structural consumers after Yosys lowering, which can hurt buffering, placement, and routing.",
-            path=str(worst.get("source", "")),
-            line=_int_or_zero(worst.get("line")),
-            column=_int_or_zero(worst.get("column")),
-            evidence={
-                "module": worst.get("module", ""),
-                "net": worst.get("net", ""),
-                "fanout": worst.get("fanout", metrics.get("max_fanout")),
-            },
-            recommendation="Inspect this control/reset/enable style signal and consider register replication or localized decode.",
-        ))
-
-    if _int_or_zero(metrics.get("max_fanin")) >= _HIGH_FANIN_THRESHOLD:
-        worst = _first_metric_item(metrics, "high_fanin_cells")
-        issues.append(_issue(
-            "warning",
-            "fanin",
-            "Wide fanin cell candidate",
-            "A lowered logic cell depends on many input bits, which often corresponds to wide compares, decode cones, or priority logic.",
-            path=str(worst.get("source", "")),
-            line=_int_or_zero(worst.get("line")),
-            column=_int_or_zero(worst.get("column")),
-            evidence={
-                "module": worst.get("module", ""),
-                "cell": worst.get("cell", ""),
-                "fanin": worst.get("fanin", metrics.get("max_fanin")),
-            },
-            recommendation="Review the decode/compare expression and consider predecode, staging, or splitting the logic cone.",
-        ))
-
-    if _int_or_zero(metrics.get("max_comb_depth")) >= _DEEP_COMB_DEPTH_THRESHOLD:
-        worst = _first_metric_item(metrics, "deep_comb_paths")
-        issues.append(_issue(
-            "warning",
-            "timing",
-            "Deep combinational path candidate",
-            "The Yosys structural graph found a long combinational cell chain before a sequential boundary.",
-            path=str(worst.get("source", "")),
-            line=_int_or_zero(worst.get("line")),
-            column=_int_or_zero(worst.get("column")),
-            evidence={
-                "module": worst.get("module", ""),
-                "endpoint": worst.get("endpoint", ""),
-                "depth": worst.get("depth", metrics.get("max_comb_depth")),
-            },
-            recommendation="Pipeline or rebalance the indicated module, especially decode, bypass, CSR, branch, or memory address logic.",
-        ))
-
     if metrics.get("comb_cycle_modules"):
         # Cells are whole words here, so a bus whose bits feed one another
         # looks like a loop. It is a place to look, not a finding: a real
@@ -390,13 +321,6 @@ def _issues_from_probe(
         ))
 
     return issues
-
-
-def _first_metric_item(metrics: dict[str, Any], key: str) -> dict[str, Any]:
-    value = metrics.get(key)
-    if isinstance(value, list) and value and isinstance(value[0], dict):
-        return value[0]
-    return {}
 
 
 def _first_diagnostic_location(
