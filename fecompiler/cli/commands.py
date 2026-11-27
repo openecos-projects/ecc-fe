@@ -180,10 +180,19 @@ def _init_workspace(
         "next_cmd": disclosure_cmd("ecc-fe doctor", context.workspace_dir),
     }
     return (
-        CommandResult.ok([record])
+        CommandResult.ok([*_init_warnings(result), record])
         if result.response == "success"
         else CommandResult.err([record])
     )
+
+
+def _init_warnings(result: object) -> list[dict[str, object]]:
+    """What the checks of the inputs accepted but want the user to know."""
+    data = getattr(result, "data", None)
+    warnings = data.get("validation_warnings") if isinstance(data, dict) else None
+    if not isinstance(warnings, list):
+        return []
+    return [{"kind": "init_issue", **issue} for issue in warnings if isinstance(issue, dict)]
 
 
 def _init_project(command_input: InitInput) -> CommandResult:
@@ -262,6 +271,7 @@ def _init_project(command_input: InitInput) -> CommandResult:
     project_arg = name
     return CommandResult.ok(
         [
+            *_init_warnings(result),
             {
                 "kind": "project_init",
                 "status": "created",

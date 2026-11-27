@@ -49,6 +49,15 @@ prints the replacement, `ecc-fe init` followed by `ecc-fe run`, without
 creating anything. `ecc-fe init --cpu-top-module` names the top module of a
 custom CPU given by `--cpu-filelist` or `--rtl`.
 
+The top module of a custom CPU must have every port of the SoC socket
+interface, with its direction and width. Outputs beyond the interface are
+allowed: the socket leaves them unconnected, `init` reports them in an
+`init_issue` record with code `cpu_top_outputs_unconnected` (severity
+`warning`), and prepare records them as `unconnected_outputs` of its
+`cpu_top` contract without counting them as extra ports. Any other port beyond
+the interface would be left undriven and is refused (`cpu_top_ports_mismatch`
+at `init`, a port contract mismatch in prepare).
+
 ## Output Contract
 
 Inspection and mutation commands support four output modes:

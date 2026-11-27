@@ -258,6 +258,41 @@ def test_unevaluated_width_is_not_a_mismatch_but_a_wrong_one_is() -> None:
     assert [item["name"] for item in differences["mismatches"]] == ["b", "c"]
 
 
+def _check_top(tmp_path, monkeypatch, ports: str) -> dict:
+    top = _write(tmp_path / "core.sv", f"module core({ports}); endmodule\n")
+    workspace = {
+        "required_cpu_top_module": "core",
+        "required_cpu_top_port_contract": [
+            {"name": "clock", "direction": "input", "width": 1},
+            {"name": "valid", "direction": "output", "width": 1},
+        ],
+    }
+
+    def refuse(step, message, info, prepared) -> None:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(PrepareStep, "_fail_cpu_top_contract", staticmethod(refuse))
+    return PrepareStep()._validate_frontend_cpu_top(
+        None, workspace, {"rtl_files": [str(top)], "defines": []}
+    )
+
+
+def test_outputs_beyond_the_cpu_interface_are_allowed_and_recorded(tmp_path, monkeypatch) -> None:
+    result = _check_top(
+        tmp_path, monkeypatch, "input clock, output valid, output [2:0] prot, output lock"
+    )
+
+    assert result["status"] == "pass"
+    assert result["unconnected_outputs"] == ["prot", "lock"]
+    # Not counted as extra: the readiness score does not drop for them.
+    assert result["differences"]["extra"] == []
+
+
+def test_inputs_beyond_the_cpu_interface_are_refused(tmp_path, monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="would leave undriven: irq$|would leave undriven: irq\\)"):
+        _check_top(tmp_path, monkeypatch, "input clock, output valid, output lock, input irq")
+
+
 # --- unprepared fallback --------------------------------------------------
 
 

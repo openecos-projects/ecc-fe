@@ -12,11 +12,13 @@ from fecompiler.tools.common.filelist import read_complete_filelist
 from fecompiler.tools.common.rtl_inputs import workspace_input_fingerprint
 from fecompiler.tools.common.rtl_ownership import classify_rtl_source, ownership_summary
 from fecompiler.tools.common.sv_module import (
+    UNDRIVEN_PORTS_TEXT,
     compare_port_contracts,
     is_simple_sv_identifier,
     macro_names,
     module_definitions,
     module_port_contract_from_files,
+    outputs_beyond,
 )
 from fecompiler.tools.fe.subflow import update_substep_ok
 from fecompiler.tools.prepare.subflow import PrepareSubFlowEnum, init_prepare_subflow
@@ -344,6 +346,13 @@ class PrepareStep(BaseStep):
             return result
 
         differences = compare_port_contracts(expected, actual)
+        unconnected = outputs_beyond((port["name"] for port in expected), actual)
+        if unconnected:
+            # The socket leaves them unconnected: allowed, and recorded.
+            differences["extra"] = [
+                name for name in differences["extra"] if name not in unconnected
+            ]
+            result["unconnected_outputs"] = unconnected
         result["differences"] = differences
         if not any(differences.values()):
             return result
@@ -352,7 +361,7 @@ class PrepareStep(BaseStep):
         if differences["missing"]:
             details.append(f"missing ports: {', '.join(differences['missing'])}")
         if differences["extra"]:
-            details.append(f"extra ports: {', '.join(differences['extra'])}")
+            details.append(f"{UNDRIVEN_PORTS_TEXT}: {', '.join(differences['extra'])}")
         for mismatch in differences["mismatches"]:
             expected_port = mismatch["expected"]
             actual_port = mismatch["actual"]
