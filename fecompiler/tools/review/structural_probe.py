@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fecompiler.allflow.profile import GENERIC_RTL, normalize_frontend_design_kind
-from fecompiler.tools.common.process import run_tool
+from fecompiler.tools.common.process import run_tool, tool_timeout
 from fecompiler.tools.review.netlist_graph import (
     _metrics_from_stat,
     _read_json,
@@ -70,7 +70,6 @@ _STRUCTURAL_REPORT = "yosys_precheck.json"
 _STRUCTURAL_SCRIPT = "yosys_precheck.ys"
 
 
-_TIMEOUT_SECONDS = 45
 
 
 def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]:
@@ -172,6 +171,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
         encoding="utf-8",
     )
 
+    timeout = tool_timeout("review")
     try:
         command = [yosys, "-s", str(script_path)]
         result = run_tool(
@@ -179,7 +179,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             log_path=log_path,
             cwd=str(script_dir),
             env=_yosys_runtime_env(yosys),
-            timeout=_TIMEOUT_SECONDS,
+            timeout=timeout,
             session_dir=script_dir,
         )
         output = result.output
@@ -209,7 +209,12 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "artifacts": paths,
         })
     if result.timed_out:
-        log_path.write_text(output + f"\n[rtl-review] Yosys precheck timed out after {_TIMEOUT_SECONDS}s\n", encoding="utf-8")
+        log_path.write_text(
+            output
+            + f"\n[rtl-review] Yosys precheck timed out after {timeout:g}s"
+            + " (ECOS_FE_TIMEOUT_REVIEW sets the limit in seconds; 0 removes it)\n",
+            encoding="utf-8",
+        )
         return _write_probe(paths, {
             "status": "timeout",
             "mode": mode,
@@ -217,7 +222,7 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
             "tool": "yosys",
             "frontend": frontend,
             "title": "Yosys Precheck",
-            "reason": "Yosys precheck timed out",
+            "reason": f"Yosys precheck timed out after {timeout:g} seconds",
             "top_module": top_module,
             "inputs": inputs,
             "metrics": {},
@@ -228,8 +233,11 @@ def run_structural_probe(workspace: dict[str, Any], step: Any) -> dict[str, Any]
                 "warning",
                 "tooling",
                 "Yosys precheck timed out",
-                f"The {subject} Yosys precheck did not finish within the bounded review timeout.",
-                recommendation="Run elaboration/lint for detailed diagnostics, then retry Review after reducing unsupported constructs.",
+                f"The {subject} Yosys precheck did not finish within {timeout:g} seconds.",
+                recommendation=(
+                    "A large design can need longer: set ECOS_FE_TIMEOUT_REVIEW to more seconds "
+                    "(0 removes the limit) and run review again. Elaboration and lint are not affected."
+                ),
             )],
             "artifacts": paths,
         })

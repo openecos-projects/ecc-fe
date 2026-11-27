@@ -615,6 +615,19 @@ def _required_user_cpu_top_port_contract(core: CatalogEntry | None) -> list[dict
     return ports
 
 
+def core_review_skip_files(core_id: object) -> list[str]:
+    """The sources of a catalog core that the Yosys precheck of review skips.
+
+    A core names them (``review_skip_files``, by file name) when they are
+    simulation-only and Yosys cannot read them; elaboration and lint still
+    read them. Read when review runs, so a project made before a core named
+    them gets them too.
+    """
+    core = _find(_catalog()["cores"], str(core_id or "").strip())
+    raw = core.data.get("review_skip_files") if core is not None else None
+    return [str(item).strip() for item in raw if str(item).strip()] if isinstance(raw, list) else []
+
+
 def cpu_filelist_supports_difftest(filelist_path: str | Path) -> bool:
     """Return whether a CPU filelist explicitly provides the ECC DPI adapter."""
     path = Path(filelist_path).expanduser()

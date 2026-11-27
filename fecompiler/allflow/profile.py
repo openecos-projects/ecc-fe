@@ -86,6 +86,27 @@ def has_testbench(parameters: Mapping[str, object]) -> bool:
     return bool(str(parameters.get("testbench_top") or "").strip())
 
 
+def user_top_module(parameters: Mapping[str, object]) -> str:
+    """The top module of the user's own design.
+
+    For an RTL design it is the design's top. For a CPU it is the CPU top the
+    SoC socket instantiates: the one a custom CPU names, else the wrapper of
+    a catalog CPU. A CPU workspace without a SoC harness names its CPU as the
+    top module itself. Otherwise it is the socket's default ``cpu_top``.
+    Prepare checks that module and handoff hands it off.
+    """
+    top = str(parameters.get("top_module") or parameters.get("Top module") or "").strip()
+    if normalize_frontend_design_kind(parameters.get("frontend_design_kind")) == GENERIC_RTL:
+        return top
+    harness_top = str(parameters.get("soc_wrapper_top") or "").strip() or "ecos_sim_top"
+    return (
+        str(parameters.get("required_cpu_top_module") or "").strip()
+        or str(parameters.get("cpu_wrapper_top") or "").strip()
+        or (top if top != harness_top else "")
+        or "cpu_top"
+    )
+
+
 def flow_profile(parameters: Mapping[str, object]) -> FrontendFlowProfile:
     """Return the profile of the design *parameters* describe.
 

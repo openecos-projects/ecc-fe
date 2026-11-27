@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from fecompiler.allflow.profile import GENERIC_RTL, user_top_module
 from fecompiler.allflow.steps import step_definitions
 from fecompiler.cli.core.inputs import CommandInput, HandoffInput
 from fecompiler.cli.core.records import (
@@ -466,14 +467,9 @@ def _include_closure(
 def _design(
     parameters: dict[str, Any], workspace: dict[str, Any], inputs: dict[str, Any]
 ) -> dict[str, Any]:
-    if inputs["is_cpu"]:
-        top = (
-            str(parameters.get("required_cpu_top_module", "") or "").strip()
-            or str(parameters.get("cpu_wrapper_top", "") or "").strip()
-            or "cpu_top"
-        )
-    else:
-        top = str(parameters.get("Top module", "") or "").strip()
+    top = user_top_module(
+        {**parameters, "frontend_design_kind": "cpu_core" if inputs["is_cpu"] else GENERIC_RTL}
+    )
     clock, clock_source = _clock_port(parameters, inputs, top)
     frequency = parameters.get("Frequency max [MHz]")
     try:

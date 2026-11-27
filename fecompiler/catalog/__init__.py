@@ -3,6 +3,7 @@
 from fecompiler.catalog.contract import check_catalog_contracts
 from fecompiler.catalog.registry import (
     catalog_payload,
+    core_review_skip_files,
     cpu_filelist_supports_difftest,
     validate_frontend_config,
 )
@@ -10,6 +11,7 @@ from fecompiler.catalog.registry import (
 __all__ = [
     "catalog_payload",
     "check_catalog_contracts",
+    "core_review_skip_files",
     "cpu_filelist_supports_difftest",
     "validate_frontend_config",
 ]

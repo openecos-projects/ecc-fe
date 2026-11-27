@@ -38,6 +38,9 @@ _DEFAULT_TIMEOUT_SECONDS = {
     "sim_compile": 2 * 60 * 60,
     "program_build": 30 * 60,
     "sim_case": 4 * 60 * 60,
+    # The Yosys structural precheck of review: a quick look before
+    # elaboration, so its limit is short.
+    "review": 45,
 }
 
 
