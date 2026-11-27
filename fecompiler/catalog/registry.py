@@ -21,10 +21,12 @@ from fecompiler.resources import (
 from fecompiler.tools.common.filelist import parse_filelist
 from fecompiler.tools.common.rtl_inputs import rtl_sources_provide_difftest_adapter
 from fecompiler.tools.common.sv_module import (
+    UNDRIVEN_PORTS_TEXT,
     is_simple_sv_identifier,
     macro_names,
     module_definitions,
     module_port_contract_from_files,
+    outputs_beyond,
 )
 
 CATALOG_VERSION = 1
@@ -34,6 +36,8 @@ DEFAULT_TOOLCHAIN_ID = "riscv32-unknown-elf"
 DEFAULT_TEST_SUITE_ID = "cpu-tests"
 ECOS_CPU_TOP = "cpu_top"
 ECOS_DIFFTEST_DEFINE = "ECOS_DIFFTEST"
+# Outputs of a custom CPU top beyond the socket interface: allowed, and reported.
+UNCONNECTED_OUTPUTS_CODE = "cpu_top_outputs_unconnected"
 
 _CATEGORY_FILES = {
     "cores": "cores.json",
@@ -236,7 +240,13 @@ def validate_frontend_config(config: dict[str, Any]) -> ValidationResult:
             )
 
     has_errors = any(issue.severity == "error" for issue in issues)
-    warnings = [issue for issue in issues if issue.severity == "warning"]
+    # Unconnected outputs say something about the user's CPU, not about how
+    # well the combination is supported.
+    warnings = [
+        issue
+        for issue in issues
+        if issue.severity == "warning" and issue.code != UNCONNECTED_OUTPUTS_CODE
+    ]
     if has_errors:
         support_level = "unsupported"
     elif warnings:
@@ -501,13 +511,16 @@ def _validate_user_cpu_filelist_contract(
         )
         found_ports = [str(port.get("name", "")) for port in found_contract]
         missing = [port for port in required_ports if port not in found_ports]
-        extra = [port for port in found_ports if port not in required_ports]
+        extra_outputs = outputs_beyond(required_ports, found_contract)
+        extra = [
+            port for port in found_ports if port not in required_ports and port not in extra_outputs
+        ]
         if missing or extra:
             detail = []
             if missing:
                 detail.append(f"missing: {', '.join(missing)}")
             if extra:
-                detail.append(f"extra: {', '.join(extra)}")
+                detail.append(f"{UNDRIVEN_PORTS_TEXT}: {', '.join(extra)}")
             issues.append(
                 ValidationIssue(
                     "error",
@@ -517,6 +530,17 @@ def _validate_user_cpu_filelist_contract(
                 )
             )
         else:
+            if extra_outputs:
+                issues.append(
+                    ValidationIssue(
+                        "warning",
+                        UNCONNECTED_OUTPUTS_CODE,
+                        f"CPU top module {required_top} has outputs beyond the required "
+                        f"interface; the SoC socket leaves them unconnected: "
+                        f"{', '.join(extra_outputs)}.",
+                        "cpu_filelist",
+                    )
+                )
             expected_contract = {
                 str(port["name"]): port
                 for port in _required_user_cpu_top_port_contract(core)

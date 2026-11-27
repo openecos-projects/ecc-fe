@@ -483,12 +483,17 @@ def _create_request(request: dict[str, Any], base_dir: Path) -> CliResult:
     if cpu_rtl_files:
         normalized.pop("cpu_filelist", None)
     _apply_default_soc_runtime_options(normalized)
-    return _create_normalized_workspace(
+    result = _create_normalized_workspace(
         normalized,
         design_kind=design_kind,
         catalog_config=validation.normalized,
         cpu_rtl_files=cpu_rtl_files,
     )
+    warnings = [issue.to_dict() for issue in validation.issues if issue.severity == "warning"]
+    if warnings and result.response == "success":
+        # Accepted, but worth telling the user about.
+        result.data["validation_warnings"] = warnings
+    return result
 
 
 def _create_normalized_workspace(

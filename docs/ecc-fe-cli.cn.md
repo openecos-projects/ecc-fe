@@ -135,6 +135,11 @@ ecc-fe init ./my-cpu \
 
 `--cpu-top-module` 省略时，filelist 形式默认顶层模块名为 `cpu_top`。
 
+顶层模块的端口要和 SoC 插槽的接口一致：接口里的端口一个不能少，方向和位宽要对上。
+接口之外多出的**输出**端口可以有（比如完整 AXI 的 `io_master_awlock`、`awcache`、
+`awprot`），插槽不接它们；`init` 会用 `cpu_top_outputs_unconnected` 提示列出这些端口。
+多出的**输入**端口不行，插槽里没有信号驱动它们，`init` 会报 `cpu_top_ports_mismatch`。
+
 ### 不是 CPU 的 RTL 设计
 
 任意 RTL 设计也可以建工程，流程是 prepare、review、elab、lint；给了 testbench 时再加上 sim（见下一小节）：

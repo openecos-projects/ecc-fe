@@ -186,6 +186,65 @@ def test_custom_filelist_requires_cpu_top_ports(tmp_path):
     assert any(issue.code == "cpu_top_ports_mismatch" for issue in result.issues)
 
 
+def _validate_custom_top(tmp_path, source: str):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cpu_top = tmp_path / "cpu_top.sv"
+    cpu_top.write_text(source, encoding="utf-8")
+    user_filelist = tmp_path / "filelist.f"
+    user_filelist.write_text("cpu_top.sv\n", encoding="utf-8")
+    return validate_frontend_config({
+        "core_id": "custom-filelist",
+        "soc_harness_id": "ysyx-am-soc",
+        "toolchain_id": "riscv32-unknown-elf",
+        "test_suite_id": "cpu-tests",
+        "cpu_filelist": str(user_filelist),
+    })
+
+
+def _with_ports(source: str, *lines: str) -> str:
+    return source.replace("\n);\n", "".join(f",\n  {line}" for line in lines) + "\n);\n", 1)
+
+
+def test_custom_filelist_accepts_outputs_beyond_the_interface_and_names_them(tmp_path):
+    plain = _validate_custom_top(tmp_path / "plain", _custom_top_source())
+    result = _validate_custom_top(
+        tmp_path / "extra",
+        _with_ports(_custom_top_source(), "output io_master_awlock", "output [3:0] io_master_awcache"),
+    )
+
+    assert result.ok is True
+    # A note about the user's CPU, not a weaker kind of support.
+    assert result.support_level == plain.support_level
+    assert result.summary == plain.summary
+    [issue] = [issue for issue in result.issues if issue.code == "cpu_top_outputs_unconnected"]
+    assert issue.severity == "warning"
+    assert "io_master_awlock, io_master_awcache" in issue.message
+    assert "leaves them unconnected" in issue.message
+
+
+def test_custom_filelist_rejects_inputs_beyond_the_interface(tmp_path):
+    result = _validate_custom_top(
+        tmp_path,
+        _with_ports(_custom_top_source(), "output io_master_awlock", "input io_slave_awlock"),
+    )
+
+    assert result.ok is False
+    [issue] = [issue for issue in result.issues if issue.code == "cpu_top_ports_mismatch"]
+    assert "extra ports the SoC socket would leave undriven: io_slave_awlock" in issue.message
+    # Only the inputs are what is wrong.
+    assert "io_master_awlock" not in issue.message
+
+
+def test_extra_outputs_do_not_hide_a_wrong_required_port(tmp_path):
+    source = _custom_top_source().replace(
+        "output [31:0] io_master_awaddr", "output [15:0] io_master_awaddr"
+    )
+    result = _validate_custom_top(tmp_path, _with_ports(source, "output io_master_awlock"))
+
+    assert result.ok is False
+    assert any(issue.code == "cpu_top_port_contract_mismatch" for issue in result.issues)
+
+
 @pytest.mark.parametrize(
     "before,after",
     [

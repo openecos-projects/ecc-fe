@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +215,25 @@ def compare_port_contracts(
         "extra": extra,
         "mismatches": sorted(mismatches, key=lambda item: str(item["name"])),
     }
+
+
+def outputs_beyond(expected_names: Iterable[str], actual: list[dict[str, Any]]) -> list[str]:
+    """Name the outputs of *actual* that an interface of *expected_names* lacks.
+
+    A socket built for the interface leaves such a port unconnected. That is
+    harmless for an output; any other port beyond the interface would be left
+    undriven.
+    """
+    known = set(expected_names)
+    return [
+        str(port["name"])
+        for port in actual
+        if port.get("name") and port["name"] not in known and port.get("direction") == "output"
+    ]
+
+
+# The words both checks of a custom CPU top use for ports it cannot have.
+UNDRIVEN_PORTS_TEXT = "extra ports the SoC socket would leave undriven"
 
 
 def strip_sv_comments(text: str) -> str:

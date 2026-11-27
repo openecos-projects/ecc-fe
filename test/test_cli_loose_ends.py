@@ -91,6 +91,42 @@ def test_failed_workspace_init_leaves_no_directory(tmp_path, capsys) -> None:
     assert not workspace.exists()
 
 
+def test_init_tells_which_outputs_the_soc_leaves_unconnected(tmp_path, capsys) -> None:
+    example = Path(__file__).resolve().parents[1] / "examples" / "ysyx_00000000"
+    cpu = tmp_path / "cpu"
+    cpu.mkdir()
+    for item in (example / "rtl").iterdir():
+        (cpu / item.name).write_text(item.read_text(encoding="utf-8"), encoding="utf-8")
+    top = cpu / "ysyx_00000000.sv"
+    text = top.read_text(encoding="utf-8")
+    anchor = "  output logic        io_master_awvalid,"
+    assert text.count(anchor) == 1
+    top.write_text(
+        text.replace(anchor, anchor + "\n  output logic        io_master_awlock,")
+        .replace("endmodule", "  assign io_master_awlock = 1'b0;\nendmodule", 1),
+        encoding="utf-8",
+    )
+    filelist = cpu / "filelist.cpu.f"
+    filelist.write_text(
+        (example / "filelist.cpu.f").read_text(encoding="utf-8").replace("rtl/", ""),
+        encoding="utf-8",
+    )
+
+    exit_code = cli_main.run(
+        [
+            "init", str(tmp_path / "project"), "--cpu-filelist", str(filelist),
+            "--cpu-top-module", "ysyx_00000000", "--json",
+        ]
+    )
+
+    records = _records(capsys)
+    assert exit_code == 0
+    assert [record["kind"] for record in records] == ["init_issue", "project_init"]
+    assert records[0]["code"] == "cpu_top_outputs_unconnected"
+    assert records[0]["severity"] == "warning"
+    assert "io_master_awlock" in records[0]["message"]
+
+
 # --- ecc-fe.toml ----------------------------------------------------------
 
 
